@@ -1,0 +1,1 @@
+{"title":"learner_model","type":"object","required":["subject","updated_at"],"properties":{"subject":{},"updated_at":{}},"additionalProperties":true}

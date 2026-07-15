@@ -1,0 +1,22 @@
+schema_version: 1
+book_id: demo-book
+title: 示例教材
+edition: ""
+subject: ""
+source_type: paper_photo
+capture:
+  mode: mobile_document
+  one_page_per_image: true
+  preserve_original: true
+paths:
+  incoming: incoming
+  accepted: accepted
+  rejected: rejected
+page_mapping:
+  printed_page_offset: null
+  overrides: []
+ocr:
+  provider: mistral
+  model: mistral-ocr-4-0
+  include_blocks: true
+  table_format: html

@@ -1,0 +1,20 @@
+{
+  "title": "learner_event",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "occurred_at",
+    "subject",
+    "chapter_title",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {"type": "string"},
+    "event_type": {"type": "string"},
+    "occurred_at": {"type": "string"},
+    "subject": {"type": "string"},
+    "chapter_title": {"type": "string"},
+    "payload": {"type": "object"}
+  }
+}

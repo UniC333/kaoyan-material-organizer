@@ -1,0 +1,1 @@
+{"title":"file","type":"object","required":["file_id","source_id","relative_path","sha256","size_bytes","updated_at"],"properties":{"file_id":{},"source_id":{},"subject":{},"relative_path":{},"absolute_path":{},"sha256":{},"size_bytes":{},"suffix":{},"is_image":{},"updated_at":{}},"additionalProperties":false}

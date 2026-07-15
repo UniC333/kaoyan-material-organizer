@@ -1,0 +1,1 @@
+{"title":"syllabus_definition","type":"object","required":["subject","definition_version","source_status","mapping_overrides","nodes"],"properties":{"subject":{},"definition_version":{},"source_status":{},"mapping_overrides":{},"nodes":{}},"additionalProperties":false}

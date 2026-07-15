@@ -1,0 +1,16 @@
+{
+  "title": "ocr-run",
+  "type": "object",
+  "required": [
+    "ocr_run_id",
+    "request_key",
+    "provider",
+    "exact_model",
+    "source_file",
+    "source_file_sha256",
+    "pages",
+    "created_at",
+    "remote_call_count",
+    "published_evidence"
+  ]
+}

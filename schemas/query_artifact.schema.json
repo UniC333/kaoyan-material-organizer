@@ -1,0 +1,1 @@
+{"title":"query_artifact","type":"object","required":["answer_contract_version","subject","query","answer_mode","citation_coverage_ok","sections","citations"],"properties":{"answer_contract_version":{},"subject":{},"query":{},"answer_mode":{},"citation_coverage_ok":{},"sections":{},"citations":{}},"additionalProperties":true}

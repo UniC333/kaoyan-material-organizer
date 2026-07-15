@@ -1,0 +1,18 @@
+{
+  "schema_version": "0.4.0",
+  "schemas": [
+    "source.schema.json",
+    "file.schema.json",
+    "chapter.schema.json",
+    "chunk.schema.json",
+    "evidence.schema.json",
+    "syllabus_node.schema.json",
+    "syllabus_definition.schema.json",
+    "claim.schema.json",
+    "canonical_card.schema.json",
+    "query_artifact.schema.json",
+    "conflict.schema.json",
+    "learner_model.schema.json",
+    "learner_event.schema.json"
+  ]
+}

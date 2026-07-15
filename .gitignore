@@ -1,0 +1,42 @@
+/.pytest_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+
+/.venv/
+.env
+.env.*
+
+# Machine-local runtime state and recovery snapshots.
+/.kaoyan-kb/
+/.kaoyan-backups/
+/.kaoyan-kb/ocr/
+/_migration/
+/vault/
+/tmp/
+/tmp/ocr/
+/tmp/smoke/
+/tmp/signed-urls/
+/.tmp/
+/.local-api-smoke/
+
+# Machine-local paths and remote-OCR policy. Commit the example only.
+/kaoyan.config.json
+!/kaoyan.config.example.json
+
+*.signed-url.txt
+*.bak
+
+# Local user-owned subject definitions and book profiles.
+/profiles/
+/syllabus-definitions/
+
+# Maintainer-only material is intentionally excluded from the public skill.
+/AGENTS.md
+/CODEX_START_HERE.md
+/docs/
+/examples/
+/references/
+/reports/
+/tasks/
+/tests/

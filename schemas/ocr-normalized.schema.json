@@ -1,0 +1,17 @@
+{
+  "title": "ocr-normalized",
+  "type": "object",
+  "required": [
+    "request_key",
+    "provider",
+    "exact_model",
+    "source_file",
+    "source_file_sha256",
+    "page_count",
+    "pages",
+    "chunk_candidates",
+    "normalizer_version",
+    "normalized_at",
+    "published_evidence"
+  ]
+}

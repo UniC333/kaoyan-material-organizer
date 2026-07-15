@@ -1,0 +1,13 @@
+{
+  "title": "book-manifest",
+  "type": "object",
+  "required": [
+    "book_id",
+    "book_title",
+    "source_root",
+    "metadata_root",
+    "created_at",
+    "updated_at",
+    "status"
+  ]
+}

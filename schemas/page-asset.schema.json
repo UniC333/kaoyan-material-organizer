@@ -1,0 +1,17 @@
+{
+  "title": "page-asset",
+  "type": "object",
+  "required": [
+    "page_id",
+    "book_id",
+    "source_image_path",
+    "source_image_sha256",
+    "scan_index",
+    "capture_time",
+    "quality_status",
+    "quality_reasons",
+    "classification_status",
+    "asset_created_at",
+    "asset_updated_at"
+  ]
+}

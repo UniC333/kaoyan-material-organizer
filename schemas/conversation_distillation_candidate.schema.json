@@ -1,0 +1,66 @@
+{
+  "title": "conversation_distillation_candidate",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "candidate_id",
+    "status",
+    "subject",
+    "chapter_title",
+    "topic",
+    "accepted_core",
+    "derivation_route",
+    "unhelpful_routes",
+    "teaching_preferences",
+    "self_checks",
+    "next_questions",
+    "teaching_scope",
+    "review_after",
+    "supersedes_candidate_ids",
+    "source",
+    "created_at",
+    "updated_at",
+    "fact_write_allowed"
+  ],
+  "properties": {
+    "contract_version": {"const": "r54.conversation-distillation.v1"},
+    "candidate_id": {"type": "string"},
+    "status": {"enum": ["draft", "published", "rejected"]},
+    "subject": {"type": "string"},
+    "chapter_title": {"type": "string"},
+    "topic": {"type": "string"},
+    "accepted_core": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "derivation_route": {"type": "array", "items": {"type": "string"}},
+    "unhelpful_routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["method", "reason"],
+        "properties": {
+          "method": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "teaching_preferences": {"type": "array", "items": {"type": "string"}},
+    "self_checks": {"type": "array", "items": {"type": "string"}},
+    "next_questions": {"type": "array", "items": {"type": "string"}},
+    "teaching_scope": {"enum": ["topic", "chapter", "subject"]},
+    "review_after": {"type": "string", "format": "date"},
+    "supersedes_candidate_ids": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+    "source": {
+      "type": "object",
+      "required": ["kind", "session_id", "source_digest", "message_ids"],
+      "properties": {
+        "kind": {"const": "codex_session"},
+        "session_id": {"type": "string"},
+        "source_digest": {"type": "string"},
+        "message_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"},
+    "fact_write_allowed": {"const": false}
+  },
+  "additionalProperties": false
+}

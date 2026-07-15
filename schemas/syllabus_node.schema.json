@@ -1,0 +1,1 @@
+{"title":"syllabus_node","type":"object","required":["node_id","subject","title","aliases","keywords","children","definition_version","source_status","mapping_overrides"],"properties":{"node_id":{},"subject":{},"title":{},"aliases":{},"keywords":{},"children":{},"definition_version":{},"source_status":{},"mapping_overrides":{}},"additionalProperties":true}

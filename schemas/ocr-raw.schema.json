@@ -1,0 +1,9 @@
+{
+  "title": "ocr-raw",
+  "type": "object",
+  "required": [
+    "provider",
+    "exact_model",
+    "pages"
+  ]
+}

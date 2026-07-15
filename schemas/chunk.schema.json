@@ -1,0 +1,1 @@
+{"title":"chunk","type":"object","required":["chunk_kb_id","chapter_id","chunk_id","logical_chunk_id","image_start","image_end","page_start","page_end","updated_at"],"properties":{"chunk_kb_id":{},"chapter_id":{},"chunk_id":{},"logical_chunk_id":{},"image_start":{},"image_end":{},"page_start":{},"page_end":{},"updated_at":{}},"additionalProperties":true}

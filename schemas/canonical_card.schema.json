@@ -1,0 +1,1 @@
+{"title":"canonical_card","type":"object","required":["subject","syllabus_node_id","title","card_path","claim_ids","published_cluster_ids","blocked_cluster_ids"],"properties":{"subject":{},"syllabus_node_id":{},"title":{},"card_path":{},"claim_ids":{},"published_cluster_ids":{},"blocked_cluster_ids":{}},"additionalProperties":true}
