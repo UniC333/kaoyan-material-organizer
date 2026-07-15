@@ -103,3 +103,7 @@ $env:MISTRAL_API_KEY = "your-key"
 - API key 只放在进程环境或系统密钥管理工具中，不写入配置、日志或 Markdown。
 
 当前主要支持 Windows、本地 Obsidian vault 和中文考研资料。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。你可以使用、复制、修改和分发本项目，但需保留版权与许可声明。
