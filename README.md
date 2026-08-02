@@ -94,6 +94,14 @@ $env:MISTRAL_API_KEY = "your-key"
 .\.venv\Scripts\python.exe scripts\kb.py migrate-vault --help
 ```
 
+精确教材定位可同时提供书名与印刷页：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\kb.py query --subject 数学 --book-title 李正元数一 --printed-page 49 --query "例2.29 隐函数微分" --format json
+```
+
+显式页码是硬约束。只有 `page_anchor.match_status` 为 `exact_evidence` 或 `exact_asset` 才表示原页已经确认；其他状态不会回退到无关页。
+
 ## 数据与隐私
 
 - 原始资料保留在使用者自己的目录中，不通过移动原文件表达章节归属。

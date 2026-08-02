@@ -7,9 +7,12 @@ from datetime import datetime
 from pathlib import Path
 import subprocess
 
-from answer_local_question import ANSWER_CONTRACT_VERSION, direct_conclusion, intuitive_explanation, next_steps, personalized_reminder
+from answer_local_question import ANSWER_CONTRACT_VERSION, build_answer_contract, direct_conclusion, intuitive_explanation, next_steps, personalized_reminder
 from common import default_vault_root_arg, normalize_context, preferred_python_executable, resolve_subject, run_utf8_subprocess, runtime_subprocess_env, sanitize_name
 from query_local_knowledge import query_knowledge
+
+
+SAVEABLE_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "chapter_fallback"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -17,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vault-root", default=default_vault_root_arg())
     parser.add_argument("--subject", required=True)
     parser.add_argument("--chapter")
+    parser.add_argument("--book-title")
     parser.add_argument("--question", required=True)
     parser.add_argument("--topk", type=int, default=3)
     parser.add_argument("--printed-page", type=int)
@@ -75,7 +79,21 @@ def page_anchor_metadata(result: dict) -> dict[str, str]:
     }
 
 
-def render_note(result: dict) -> str:
+def save_eligibility(contract: dict) -> tuple[bool, str]:
+    """Return before any write whether this answer may enter learner history."""
+    answer_mode = str(contract.get("answer_mode", ""))
+    assessment = dict(contract.get("evidence_assessment") or {})
+    if answer_mode not in SAVEABLE_ANSWER_MODES:
+        return False, "当前回答没有可保存的结构化证据；请先补齐教材映射或 OCR 后再保存。"
+    if answer_mode in {"canonical_claim", "accepted_evidence"} and not bool(contract.get("citation_coverage_ok")):
+        return False, "正式事实回答缺少完整引用，不能保存。"
+    if assessment.get("level") in {"page_asset_only", "page_ambiguous", "page_unmapped", "page_not_found", "structured_unconfirmed"}:
+        return False, "当前只能确认资料定位或检索边界，不能保存为学习问答。"
+    return True, ""
+
+
+def render_note(contract: dict) -> str:
+    result = dict(contract["query_result"])
     anchor = page_anchor_metadata(result)
     lines = [
         f"# {result['query']}",
@@ -86,6 +104,7 @@ def render_note(result: dict) -> str:
         f"- 证据 ID：{anchor.get('evidence_id', '未指定')}",
         f"- 图片范围：{anchor.get('image_span', '未指定')}",
         f"- 分片 ID：{anchor.get('chunk_id', '未指定')}",
+        f"- 依据级别：{contract['evidence_assessment']['level']}",
         "",
         "## 考纲定位",
         "",
@@ -97,6 +116,12 @@ def render_note(result: dict) -> str:
         lines.append("- 当前没有稳定命中考纲节点。")
     lines.extend(
         [
+            "",
+            "## 证据边界",
+            "",
+            f"- 能确认：{contract['evidence_assessment']['can_confirm']}",
+            f"- 不能确认：{contract['evidence_assessment']['cannot_confirm']}",
+            f"- 下一步：{contract['evidence_assessment']['next_action']}",
             "",
             "## 直接结论",
             "",
@@ -125,27 +150,35 @@ def render_note(result: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def main() -> int:
-    args = parse_args()
-    vault_root = Path(args.vault_root)
-    subject, config = resolve_subject(args.subject)
-    result = query_knowledge(vault_root, subject, args.chapter, args.question, args.topk, args.printed_page)
-    if args.printed_page is not None:
-        anchor = page_anchor_metadata(result)
-        if not anchor:
-            raise SystemExit(f"[ERROR] printed page {args.printed_page} was not uniquely resolved; no saved-QA write was made")
+def save_answer_contract(
+    *,
+    contract: dict,
+    vault_root: Path,
+    subject: str,
+    chapter: str | None,
+    question: str,
+    saved_at: str | None,
+) -> Path:
+    allowed, reason = save_eligibility(contract)
+    if not allowed:
+        raise ValueError(reason)
+
+    _, config = resolve_subject(subject)
+    result = dict(contract["query_result"])
     subject_root = vault_root / config["dir"]
     qa_root = subject_root / "00_课程入口" / "10_问答沉淀"
-    chapter_slug = sanitize_name(args.chapter or result["chapter"] or "未分章")
+    chapter_slug = sanitize_name(chapter or result["chapter"] or "未分章")
     chapter_dir = qa_root / chapter_slug
+    note_path = chapter_dir / f"{saved_at_label(saved_at)}_{trim_question(question)}.md"
+
+    # All eligibility checks complete before this point; blocked answers leave no QA files behind.
     chapter_dir.mkdir(parents=True, exist_ok=True)
-    note_path = chapter_dir / f"{saved_at_label(args.saved_at)}_{trim_question(args.question)}.md"
-    note_path.write_text(render_note(result), encoding="utf-8")
+    note_path.write_text(render_note(contract), encoding="utf-8")
 
     chapter_index = chapter_dir / "00_本章问答入口.md"
-    write_index(chapter_index, f"{args.chapter or result['chapter'] or '本章'}问答入口", sorted(path for path in chapter_dir.glob("*.md") if path.name != chapter_index.name), vault_root)
+    write_index(chapter_index, f"{chapter or result['chapter'] or '本章'}问答入口", sorted(path for path in chapter_dir.glob("*.md") if path.name != chapter_index.name), vault_root)
     subject_index = qa_root / "00_知识问答入口.md"
-    write_index(subject_index, f"{subject}知识问答入口", sorted(path for path in qa_root.rglob("00_本章问答入口.md")), vault_root)
+    write_index(subject_index, f"{subject}知识问答入口", sorted(qa_root.rglob("00_本章问答入口.md")), vault_root)
 
     context_path = None
     if result["references"]:
@@ -154,14 +187,14 @@ def main() -> int:
             candidate = Path(layout_hint.get("context_json_path", ""))
             if candidate.exists():
                 context_path = candidate
-    if context_path is None and args.chapter:
+    if context_path is None and chapter:
         for candidate in vault_root.rglob("00_批次上下文.json"):
             payload = normalize_context(json.loads(candidate.read_text(encoding="utf-8")))
             chapter_title = str(payload.get("chapter_title", ""))
             if payload.get("subject") == subject and (
-                norm(chapter_title) == norm(args.chapter)
-                or norm(args.chapter) in norm(chapter_title)
-                or norm(chapter_title) in norm(args.chapter)
+                norm(chapter_title) == norm(chapter)
+                or norm(chapter) in norm(chapter_title)
+                or norm(chapter_title) in norm(chapter)
             ):
                 context_path = candidate
                 break
@@ -169,12 +202,12 @@ def main() -> int:
         metadata = json.dumps(
             {
                 "source_kind": "learner_safe_query_answer",
-                "answer_contract_version": ANSWER_CONTRACT_VERSION,
-                "intent": result["intent"],
-                "answer_mode": result["answer_mode"],
-                "citation_coverage_ok": result["answer_mode"] == "chapter_fallback" or bool(result["references"]),
-                "syllabus_route": result["syllabus_route"],
-                "references": result["references"],
+                "answer_contract_version": contract["answer_contract_version"],
+                "intent": contract["intent"],
+                "answer_mode": contract["answer_mode"],
+                "citation_coverage_ok": contract["citation_coverage_ok"],
+                "syllabus_route": contract["syllabus_route"],
+                "references": contract["references"],
             },
             ensure_ascii=False,
         )
@@ -183,7 +216,7 @@ def main() -> int:
             "--context-json",
             str(context_path),
             "--question",
-            args.question,
+            question,
             "--answer-metadata",
             metadata,
             "--saved-note",
@@ -192,6 +225,26 @@ def main() -> int:
             "quiet",
         )
         run_script("review_refinement_candidates.py", "--format", "quiet")
+    return subject_index
+
+
+def main() -> int:
+    args = parse_args()
+    vault_root = Path(args.vault_root)
+    subject, _ = resolve_subject(args.subject)
+    result = query_knowledge(vault_root, subject, args.chapter, args.question, args.topk, args.printed_page, args.book_title)
+    contract = build_answer_contract(result)
+    try:
+        subject_index = save_answer_contract(
+            contract=contract,
+            vault_root=vault_root,
+            subject=subject,
+            chapter=args.chapter,
+            question=args.question,
+            saved_at=args.saved_at,
+        )
+    except ValueError as exc:
+        raise SystemExit(f"[ERROR] no saved-QA write was made: {exc}") from exc
     print(str(subject_index))
     return 0
 

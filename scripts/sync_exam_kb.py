@@ -74,7 +74,8 @@ def main() -> int:
     run_script("build_claim_registry.py", "--format", "quiet")
     run_script("build_conflict_registry.py", "--format", "quiet")
     run_script("lint_kb_entities.py", "--format", "quiet")
-    steps.extend(["build_claim_registry", "build_conflict_registry", "lint_kb_entities"])
+    run_script("build_page_locator_index.py", "--format", "quiet")
+    steps.extend(["build_claim_registry", "build_conflict_registry", "lint_kb_entities", "build_page_locator_index"])
     if args.publish_canonical:
         publish_args = ["--format", "quiet"]
         if args.subject:

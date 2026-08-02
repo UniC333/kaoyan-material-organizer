@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, learner_file_map, load_all_json, load_json, resolve_subject
+from kaoyan_kb.domain.page_locator import evidence_matches_locator, parse_exercise_label, resolve_page_locator
 from kaoyan_kb.domain.teaching_context import build_bounded_teaching_context
 from learner_events import load_events
 from retrieve_knowledge import retrieve as retrieve_index
@@ -19,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vault-root", default=default_vault_root_arg())
     parser.add_argument("--subject")
     parser.add_argument("--chapter")
+    parser.add_argument("--book-title")
     parser.add_argument("--query")
     parser.add_argument("--printed-page", type=int)
     parser.add_argument("--topk", type=int, default=3)
@@ -80,6 +82,8 @@ def chinese_number_to_int(token: str) -> int | None:
 
 def detect_intent(query: str) -> str:
     text = normalize_text(query)
+    if any(token in text for token in ("书上有", "书里有", "教材有", "书上怎么", "书里怎么", "教材怎么", "原文", "类似例题", "类似推导")):
+        return "source_verify"
     if any(token in text for token in ("区分", "区别", "容易混", "易混", "比较", "对比")):
         return "compare"
     if any(token in text for token in ("下一步", "怎么学", "计划", "先看什么", "先追")):
@@ -91,8 +95,8 @@ def detect_intent(query: str) -> str:
 
 def parse_page_anchor(query: str) -> dict[str, Any]:
     text = str(query or "")
-    match = re.search(r"第?\s*([0-9]+)\s*页", text)
-    requested_page = int(match.group(1)) if match else None
+    match = re.search(r"(?:第?\s*([0-9]+)\s*页|\b[Pp]\s*[.．]?\s*([0-9]+)\b)", text)
+    requested_page = int(match.group(1) or match.group(2)) if match else None
     requested_position = None
     if any(token in text for token in ("最下方", "最下面", "页底", "底部", "最底下", "下方")):
         requested_position = "bottom"
@@ -103,6 +107,7 @@ def parse_page_anchor(query: str) -> dict[str, Any]:
     return {
         "requested_page": requested_page,
         "requested_position": requested_position,
+        "requested_exercise_label": parse_exercise_label(text),
     }
 
 
@@ -211,6 +216,65 @@ def build_page_anchor(evidences: list[dict[str, Any]], anchor: dict[str, Any]) -
             snippets.append(text)
     payload["snippets"] = snippets[:3]
     return payload
+
+
+def exact_evidence_hits_for_locator(subject: str, chapter: str | None, locator: dict[str, Any]) -> list[dict[str, Any]]:
+    layout = ensure_kb_layout()
+    matches: list[dict[str, Any]] = []
+    for evidence_id in locator.get("evidence_ids", []) or []:
+        path = layout["evidence"] / f"{evidence_id}.json"
+        if not path.is_file():
+            continue
+        evidence = load_json(path)
+        if is_stale_evidence(evidence) or evidence.get("subject") != subject:
+            continue
+        if chapter and not evidence_matches_chapter(evidence, chapter):
+            continue
+        if evidence_matches_locator(evidence, locator):
+            matches.append(evidence)
+    return sorted(matches, key=lambda item: item.get("evidence_id", ""))
+
+
+def apply_hard_page_route(
+    *,
+    subject: str,
+    chapter: str | None,
+    book_title: str | None,
+    request: dict[str, Any],
+    retrieval_hits: list[dict],
+    claims: list[dict],
+) -> tuple[dict[str, Any], list[dict], list[dict], list[dict]]:
+    locator = resolve_page_locator(
+        subject=subject,
+        book_title=book_title,
+        printed_page=int(request["requested_page"]),
+        exercise_label=str(request.get("requested_exercise_label") or ""),
+    )
+    locator["requested_position"] = request.get("requested_position")
+    if locator["match_status"] != "exact_asset":
+        return locator, [], [], []
+
+    exact_evidences = exact_evidence_hits_for_locator(subject, chapter, locator)
+    exact_ids = {item.get("evidence_id") for item in exact_evidences}
+    exact_claims = [
+        claim for claim in claims
+        if exact_ids.intersection(set(claim.get("evidence_ids", []) or []))
+    ]
+    exact_retrieval = [
+        hit for hit in retrieval_hits
+        if hit.get("entity_id") in exact_ids or exact_ids.intersection(set(hit.get("references", []) or []))
+    ]
+    if exact_evidences:
+        legacy_anchor = build_page_anchor(exact_evidences, request)
+        for key in ("matched_evidence_id", "matched_chunk_id", "snippets"):
+            locator[key] = legacy_anchor.get(key, locator.get(key))
+        locator["match_status"] = "exact_evidence"
+        label = str(locator.get("requested_exercise_label") or "")
+        if label:
+            normalized_label = normalize_text(label).replace(" ", "")
+            haystack = normalize_text("\n".join(locator.get("snippets", []))).replace(" ", "")
+            locator["exercise_match_status"] = "matched" if normalized_label in haystack else "unverified"
+    return locator, exact_retrieval, exact_claims, exact_evidences
 
 
 def tokenize(query: str) -> list[str]:
@@ -753,7 +817,13 @@ def _resolve_answer_fallback(
 
 
 def query_knowledge(
-    vault_root: Path, subject: str, chapter: str | None, query: str, topk: int, printed_page: int | None = None
+    vault_root: Path,
+    subject: str,
+    chapter: str | None,
+    query: str,
+    topk: int,
+    printed_page: int | None = None,
+    book_title: str | None = None,
 ) -> dict:
     intent = detect_intent(query)
     page_anchor_request = parse_page_anchor(query)
@@ -765,18 +835,49 @@ def query_knowledge(
     retrieval_hits, routed, claims, evidences, index_routed = _resolve_query_hits(
         subject, chapter, query, topk, intent, tokens, full_query, page_anchor_request
     )
-    page_anchor = build_page_anchor(evidences, page_anchor_request)
+    hard_page_route = page_anchor_request.get("requested_page") is not None
+    if hard_page_route:
+        page_anchor, retrieval_hits, claims, evidences = apply_hard_page_route(
+            subject=subject,
+            chapter=chapter,
+            book_title=book_title,
+            request=page_anchor_request,
+            retrieval_hits=retrieval_hits,
+            claims=claims,
+        )
+    else:
+        page_anchor = build_page_anchor(evidences, page_anchor_request)
     compare_bundle = build_compare_bundle(routed, claims, evidences, parts) if intent == "compare" else None
     refine_candidates = learner_compare_candidates(subject, chapter)
     answer_mode, fallback_note, fallback = _resolve_answer_fallback(
         vault_root, subject, chapter, tokens, full_query, topk, intent, claims, evidences, compare_bundle
     )
+    if hard_page_route:
+        fallback = []
+        status = page_anchor.get("match_status")
+        if status == "exact_evidence":
+            answer_mode = "accepted_evidence"
+            fallback_note = ""
+        elif status == "exact_asset":
+            answer_mode = "page_asset"
+            fallback_note = "已精确定位教材原页，但该页尚无可用的结构化 OCR 证据；请基于原图核对，不应声称逐字引用。"
+        elif status == "ambiguous":
+            answer_mode = "page_ambiguous"
+            fallback_note = "多本教材包含该印刷页，需要先确认教材名称。"
+        elif status == "unmapped":
+            answer_mode = "page_unmapped"
+            fallback_note = "已识别教材，但该印刷页尚未建立正式页码映射。"
+        else:
+            answer_mode = "page_not_found"
+            fallback_note = "正式页定位索引中没有找到该印刷页。"
     query_path = {
         "retrieval_candidate_set_used": index_routed,
         "retrieval_hit_count": len(retrieval_hits),
         "normal_path": "retrieval/search index -> candidate doc ids -> targeted json reads",
         "full_json_scan_used_for_answer": not index_routed,
         "full_json_scan_policy": "index-miss fallback only; normal indexed path is targeted reads",
+        "page_locator_index_used": hard_page_route,
+        "hard_page_filter_applied": hard_page_route,
     }
     teaching_context = build_bounded_teaching_context(
         load_events(),
@@ -788,6 +889,7 @@ def query_knowledge(
     return {
         "subject": subject,
         "chapter": chapter or "",
+        "book_title": book_title or "",
         "query": query,
         "intent": intent,
         "answer_mode": answer_mode,
@@ -819,6 +921,20 @@ def render_text(result: dict) -> str:
     ]
     if result["fallback_note"]:
         lines.extend(["## 回退说明", "", f"- {result['fallback_note']}", ""])
+    page_anchor = dict(result.get("page_anchor") or {})
+    if page_anchor.get("requested_page") is not None:
+        lines.extend(
+            [
+                "## 教材原页定位",
+                "",
+                f"- 状态：{page_anchor.get('match_status', 'not_found')}",
+                f"- 教材：{page_anchor.get('book_title') or page_anchor.get('requested_book_title') or '未确定'}",
+                f"- 印刷页：{page_anchor.get('requested_page')}",
+            ]
+        )
+        if page_anchor.get("source_image_path"):
+            lines.append(f"- 原图：{page_anchor['source_image_path']}")
+        lines.append("")
     teaching_context = dict(result.get("teaching_context") or {})
     if teaching_context.get("history_used"):
         lines.extend(
@@ -862,7 +978,7 @@ def main() -> int:
     if not args.subject:
         raise SystemExit("[ERROR] --subject is required")
     subject, _ = resolve_subject(args.subject)
-    result = query_knowledge(Path(args.vault_root), subject, args.chapter, args.query or "", args.topk, args.printed_page)
+    result = query_knowledge(Path(args.vault_root), subject, args.chapter, args.query or "", args.topk, args.printed_page, args.book_title)
     if args.format == "json":
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:

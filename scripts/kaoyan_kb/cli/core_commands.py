@@ -14,6 +14,7 @@ def add_core_commands(subparsers: argparse._SubParsersAction, *, formatter_class
     ask.add_argument("--vault-root")
     ask.add_argument("--subject", required=True)
     ask.add_argument("--chapter")
+    ask.add_argument("--book-title")
     ask.add_argument("--question", required=True)
     ask.add_argument("--topk", type=int, default=3)
     ask.add_argument("--printed-page", type=int)
@@ -36,6 +37,7 @@ def add_core_commands(subparsers: argparse._SubParsersAction, *, formatter_class
     query.add_argument("--vault-root")
     query.add_argument("--subject")
     query.add_argument("--chapter")
+    query.add_argument("--book-title")
     query.add_argument("--query", required=True)
     query.add_argument("--topk", type=int, default=3)
     query.add_argument("--printed-page", type=int)
@@ -54,7 +56,7 @@ def dispatch_core(
 
     if args.command == "ask":
         forwarded = ["--subject", args.subject, "--question", args.question, "--topk", str(args.topk), "--format", args.format]
-        for key in ("vault_root", "chapter", "saved_at", "printed_page"):
+        for key in ("vault_root", "chapter", "book_title", "saved_at", "printed_page"):
             value = getattr(args, key)
             if value:
                 forwarded.extend([f"--{key.replace('_', '-')}", str(value)])
@@ -75,7 +77,7 @@ def dispatch_core(
 
     if args.command == "query":
         forwarded = []
-        for key in ("vault_root", "subject", "chapter", "query", "printed_page"):
+        for key in ("vault_root", "subject", "chapter", "book_title", "query", "printed_page"):
             value = getattr(args, key)
             if value:
                 forwarded.extend([f"--{key.replace('_', '-')}", str(value)])
