@@ -12,6 +12,7 @@ from query_local_knowledge import preferred_page_ref, query_knowledge, should_pr
 
 
 ANSWER_CONTRACT_VERSION = "m5.answer.v1"
+STRUCTURED_ANSWER_MODES = {"canonical_claim", "accepted_evidence"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vault-root", default=default_vault_root_arg())
     parser.add_argument("--subject", required=True)
     parser.add_argument("--chapter")
+    parser.add_argument("--book-title")
     parser.add_argument("--question", required=True)
     parser.add_argument("--topk", type=int, default=3)
     parser.add_argument("--printed-page", type=int)
@@ -45,6 +47,11 @@ def direct_conclusion(result: dict) -> str:
     anchor_snippets = page_anchor_snippets(result)
     if anchor_snippets:
         return anchor_snippets[0]
+    anchor = result.get("page_anchor", {}) or {}
+    if anchor.get("match_status") == "exact_asset":
+        return f"已精确定位教材原页：{anchor.get('source_image_path', '')}；该页尚无结构化 OCR，需直接查看原图。"
+    if anchor.get("match_status") in {"ambiguous", "unmapped", "not_found"}:
+        return result.get("fallback_note") or "当前无法唯一定位教材原页。"
     bundle = result.get("compare_bundle")
     if bundle:
         return bundle["summary"]
@@ -59,6 +66,8 @@ def direct_conclusion(result: dict) -> str:
 
 
 def intuitive_explanation(result: dict) -> str:
+    if result.get("answer_mode") == "page_asset":
+        return "页码和原图已经确认，但正文尚未进入正式证据层；可以查看原图讲解，不能把未核对的语义检索结果当作书上原文。"
     if result["answer_mode"] == "chapter_fallback":
         return "当前未命中正式主张，这次回答只基于章节层回退，不应把它当作正式知识结论。"
     bundle = result.get("compare_bundle")
@@ -255,14 +264,73 @@ def build_citations(result: dict, *, limit: int = 3) -> list[dict[str, Any]]:
     return citations
 
 
+def build_evidence_assessment(result: dict, citations: list[dict[str, Any]]) -> dict[str, str]:
+    """Describe what the local structured layer can prove without reading an image."""
+    answer_mode = str(result.get("answer_mode", ""))
+    source_verify = result.get("intent") == "source_verify"
+    anchor = dict(result.get("page_anchor") or {})
+    page_status = str(anchor.get("match_status", ""))
+
+    if answer_mode in STRUCTURED_ANSWER_MODES and citations:
+        return {
+            "level": "structured_evidence",
+            "can_confirm": "本地已整理的主张或证据支持本次结论。",
+            "cannot_confirm": "当前结论仅覆盖已列出的引用范围。",
+            "next_action": "可沿引用继续核对条件、例题或原始上下文。",
+        }
+    if page_status == "exact_asset":
+        return {
+            "level": "page_asset_only",
+            "can_confirm": "已确认教材原页的位置，但该页尚无结构化 OCR 或正式证据。",
+            "cannot_confirm": "不能仅据页码映射确认书上是否出现了某个公式、推导或原文表述。",
+            "next_action": "如仍需核对，请明确要求人工阅图；也可先补该页 OCR 后重新查询。",
+        }
+    if page_status in {"ambiguous", "unmapped", "not_found"}:
+        labels = {
+            "ambiguous": "存在多个可能教材页",
+            "unmapped": "该教材页尚未建立正式映射",
+            "not_found": "正式页码索引未找到该页",
+        }
+        return {
+            "level": f"page_{page_status}",
+            "can_confirm": labels[page_status] + "。",
+            "cannot_confirm": "当前无法确认书中具体内容。",
+            "next_action": "请补充教材名或页码；映射完成后再进行结构化核验。",
+        }
+    if source_verify:
+        return {
+            "level": "structured_unconfirmed",
+            "can_confirm": "当前本地结构化资料没有给出可核验的教材结论。",
+            "cannot_confirm": "不能把章节摘要、检索不到的结果或补充讲解说成书上原文。",
+            "next_action": "可补充书名、章节或页码后重查；如已定位原页，可再明确要求人工阅图。",
+        }
+    if answer_mode == "chapter_fallback":
+        return {
+            "level": "chapter_summary",
+            "can_confirm": "当前只命中章节级概览，可用于确定大致主题。",
+            "cannot_confirm": "章节概览不能证明具体公式、原文或例题就在书中出现。",
+            "next_action": "先补充章节提取或 OCR，再回到本地检索。",
+        }
+    return {
+        "level": "unconfirmed",
+        "can_confirm": "当前没有足够稳定的本地证据。",
+        "cannot_confirm": "不能据此给出教材事实结论。",
+        "next_action": "补充检索条件或资料证据后再回答。",
+    }
+
+
 def build_answer_contract(result: dict) -> dict[str, Any]:
     citations = build_citations(result)
+    evidence_assessment = build_evidence_assessment(result, citations)
+    direct = direct_conclusion(result)
+    if result.get("intent") == "source_verify" and evidence_assessment["level"] != "structured_evidence":
+        direct = evidence_assessment["can_confirm"]
     sections = {
         "syllabus_position": [
             {"node_id": item.get("node_id", ""), "title": item.get("title", ""), "score": item.get("score", 0)}
             for item in result.get("syllabus_route", [])
         ],
-        "direct_conclusion": direct_conclusion(result),
+        "direct_conclusion": direct,
         "intuitive_explanation": intuitive_explanation(result),
         "strict_explanation": strict_explanation(result),
         "typical_examples": example_lines(result),
@@ -282,6 +350,7 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "answer_mode": result.get("answer_mode", ""),
         "fallback_note": result.get("fallback_note", ""),
         "citation_coverage_ok": coverage_ok,
+        "evidence_assessment": evidence_assessment,
         "sections": sections,
         "citations": citations,
         "teaching_context": dict(result.get("teaching_context") or {}),
@@ -292,6 +361,7 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "claim_hits": result.get("claim_hits", []),
         "evidence_hits": result.get("evidence_hits", []),
         "fallback_hits": result.get("fallback_hits", []),
+        "page_anchor": result.get("page_anchor", {}),
         "query_result": result,
     }
     validate_entity_contract("query_artifact", contract)
@@ -305,7 +375,7 @@ def render_text(contract: dict) -> str:
         "",
         f"- 问题：{contract['question']}",
         f"- 学科：{contract['subject']}",
-        f"- 命中层：{contract['answer_mode']}",
+        f"- 依据级别：{contract['evidence_assessment']['level']}",
         f"- 契约版本：{contract['answer_contract_version']}",
         "",
         "## 考纲定位",
@@ -318,6 +388,17 @@ def render_text(contract: dict) -> str:
         lines.append("- 当前没有稳定命中正式考纲节点。")
     if contract.get("fallback_note"):
         lines.extend(["", "## 回退说明", "", f"- {contract['fallback_note']}"])
+    assessment = contract["evidence_assessment"]
+    lines.extend(
+        [
+            "",
+            "## 证据边界",
+            "",
+            f"- 能确认：{assessment['can_confirm']}",
+            f"- 不能确认：{assessment['cannot_confirm']}",
+            f"- 下一步：{assessment['next_action']}",
+        ]
+    )
     lines.extend(["", "## 直接结论", "", str(sections["direct_conclusion"])])
     lines.extend(["", "## 直观解释", "", str(sections["intuitive_explanation"])])
     lines.extend(["", "## 严格说明", ""])
@@ -355,7 +436,7 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = parse_args()
     subject, _ = resolve_subject(args.subject)
-    result = query_knowledge(Path(args.vault_root), subject, args.chapter, args.question, args.topk, args.printed_page)
+    result = query_knowledge(Path(args.vault_root), subject, args.chapter, args.question, args.topk, args.printed_page, args.book_title)
     contract = build_answer_contract(result)
     if args.format == "json":
         print(json.dumps(contract, ensure_ascii=False, indent=2))

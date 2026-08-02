@@ -40,3 +40,12 @@ __pycache__/
 /reports/
 /tasks/
 /tests/
+!/tests/
+/tests/*
+!/tests/unit/
+/tests/unit/*
+!/tests/unit/test_page_locator.py
+!/tests/unit/test_answer_chain.py
+!/tests/integration/
+/tests/integration/*
+!/tests/integration/test_exact_page_query.py

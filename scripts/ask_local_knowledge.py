@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import sys
-from contextlib import redirect_stdout
+from pathlib import Path
 
-from answer_local_question import main as answer_main
-from save_local_answer import main as save_main, saved_at_label
+from answer_local_question import build_answer_contract, render_text
+from common import default_vault_root_arg, resolve_subject
+from query_local_knowledge import query_knowledge
+from save_local_answer import save_answer_contract, saved_at_label
 
 
 def parse_args() -> argparse.Namespace:
@@ -16,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vault-root")
     parser.add_argument("--subject", required=True)
     parser.add_argument("--chapter")
+    parser.add_argument("--book-title")
     parser.add_argument("--question", required=True)
     parser.add_argument("--topk", type=int, default=3)
     parser.add_argument("--printed-page", type=int)
@@ -25,70 +27,37 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_embedded(func, argv: list[str]) -> str:
-    previous = sys.argv[:]
-    capture = io.StringIO()
-    try:
-        sys.argv = argv
-        with redirect_stdout(capture):
-            func()
-    finally:
-        sys.argv = previous
-    return capture.getvalue()
-
-
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = parse_args()
-    answer_argv = [
-        "answer_local_question.py",
-        "--subject",
-        args.subject,
-        "--question",
-        args.question,
-        "--topk",
-        str(args.topk),
-        "--format",
-        args.format,
-    ]
-    if args.vault_root:
-        answer_argv.extend(["--vault-root", args.vault_root])
-    if args.chapter:
-        answer_argv.extend(["--chapter", args.chapter])
-    if args.printed_page is not None:
-        answer_argv.extend(["--printed-page", str(args.printed_page)])
-    answer_output = run_embedded(answer_main, answer_argv)
+    vault_root = Path(args.vault_root or default_vault_root_arg())
+    subject, _ = resolve_subject(args.subject)
+    result = query_knowledge(vault_root, subject, args.chapter, args.question, args.topk, args.printed_page, args.book_title)
+    contract = build_answer_contract(result)
 
     if args.save:
-        save_argv = [
-            "save_local_answer.py",
-            "--subject",
-            args.subject,
-            "--question",
-            args.question,
-            "--topk",
-            str(args.topk),
-        ]
-        if args.vault_root:
-            save_argv.extend(["--vault-root", args.vault_root])
-        if args.chapter:
-            save_argv.extend(["--chapter", args.chapter])
-        if args.printed_page is not None:
-            save_argv.extend(["--printed-page", str(args.printed_page)])
-        if args.saved_at:
-            save_argv.extend(["--saved-at", args.saved_at])
-        run_embedded(save_main, save_argv)
+        try:
+            save_answer_contract(
+                contract=contract,
+                vault_root=vault_root,
+                subject=subject,
+                chapter=args.chapter,
+                question=args.question,
+                saved_at=args.saved_at,
+            )
+        except ValueError as exc:
+            raise SystemExit(f"[ERROR] no saved-QA write was made: {exc}") from exc
 
     if args.format == "json":
         payload = {
             "saved": args.save,
             "saved_at": saved_at_label(args.saved_at) if args.save else "",
-            "answer": json.loads(answer_output or "{}"),
+            "answer": contract,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
-        print(answer_output, end="")
+        print(render_text(contract), end="")
         if args.save:
             print(f"\n已沉淀到本地问答入口，记录日期：{saved_at_label(args.saved_at)}")
     return 0
