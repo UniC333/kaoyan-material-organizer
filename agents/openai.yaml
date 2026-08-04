@@ -1,4 +1,4 @@
 interface:
   display_name: "考研资料整理入口"
   short_description: "像老师一样轻量理解目标，并复用本地资料与可视化能力"
-  default_prompt: "使用 $kaoyan-material-organizer 像老师一样理解我的自然语言学习目标，优先复用现有入口进行讲解、整理或可视化，不建立冗余数据库或无必要持久化。"
+  default_prompt: "使用 $kaoyan-material-organizer 像老师一样理解我的自然语言学习目标，优先复用现有入口进行讲解、整理或可视化；当我说“整理今天对话”时，自动沉淀本次已确认的学习结果，不建立冗余数据库或无必要持久化。"
