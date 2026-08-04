@@ -11,8 +11,14 @@ from common import default_vault_root_arg, ensure_kb_layout, load_json, resolve_
 from query_local_knowledge import preferred_page_ref, query_knowledge, should_prefer_evidence_chapter
 
 
-ANSWER_CONTRACT_VERSION = "m5.answer.v1"
+ANSWER_CONTRACT_VERSION = "m6.answer.v1"
 STRUCTURED_ANSWER_MODES = {"canonical_claim", "accepted_evidence"}
+CONTENT_SOURCE_LABELS = {
+    "textbook_structured_evidence": "教材结构化证据",
+    "page_asset_only": "仅原页定位",
+    "supplementary_derivation": "补充推导",
+    "learner_feedback": "学习者反馈",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,7 +55,7 @@ def direct_conclusion(result: dict) -> str:
         return anchor_snippets[0]
     anchor = result.get("page_anchor", {}) or {}
     if anchor.get("match_status") == "exact_asset":
-        return f"已精确定位教材原页：{anchor.get('source_image_path', '')}；该页尚无结构化 OCR，需直接查看原图。"
+        return f"已精确定位教材原页：{anchor.get('source_image_path', '')}；该页尚无结构化 OCR，教材正文未确认。"
     if anchor.get("match_status") in {"ambiguous", "unmapped", "not_found"}:
         return result.get("fallback_note") or "当前无法唯一定位教材原页。"
     bundle = result.get("compare_bundle")
@@ -146,6 +152,12 @@ def personalized_teaching_guidance(result: dict) -> list[str]:
     routes = [str(item).strip() for item in context.get("preferred_routes", []) if str(item).strip()]
     if routes:
         guidance.append(f"优先按这条路线展开：{' -> '.join(routes)}")
+    handoff = dict(context.get("learning_handoff") or {})
+    original = dict(handoff.get("original_problem") or {})
+    if original.get("title"):
+        guidance.append(f"续接上次原题：{original['title']}（{original.get('mastery_status') or '待验证'}）")
+    if handoff.get("handoff_summary"):
+        guidance.append(f"真实停点：{handoff['handoff_summary']}")
     for item in context.get("avoid_as_first_explanation", []):
         if not isinstance(item, dict):
             continue
@@ -281,7 +293,7 @@ def build_evidence_assessment(result: dict, citations: list[dict[str, Any]]) -> 
     if page_status == "exact_asset":
         return {
             "level": "page_asset_only",
-            "can_confirm": "已确认教材原页的位置，但该页尚无结构化 OCR 或正式证据。",
+            "can_confirm": "已确认教材原页的位置，但该页尚无结构化 OCR 或正式证据，教材正文未确认。",
             "cannot_confirm": "不能仅据页码映射确认书上是否出现了某个公式、推导或原文表述。",
             "next_action": "如仍需核对，请明确要求人工阅图；也可先补该页 OCR 后重新查询。",
         }
@@ -319,9 +331,56 @@ def build_evidence_assessment(result: dict, citations: list[dict[str, Any]]) -> 
     }
 
 
+def content_provenance(result: dict, assessment: dict[str, str]) -> list[dict[str, Any]]:
+    """Keep textbook assertions and supplemental teaching material separately labelled."""
+    level = str(assessment.get("level", ""))
+    anchor = dict(result.get("page_anchor") or {})
+    if level == "structured_evidence":
+        source_type = "textbook_structured_evidence"
+    elif level == "page_asset_only":
+        source_type = "page_asset_only"
+    else:
+        source_type = "learner_feedback" if result.get("intent") == "learner_feedback" else "supplementary_derivation"
+    items: list[dict[str, Any]] = [
+        {
+            "content_id": "primary-answer",
+            "content_type": "original_problem" if anchor.get("requested_page") is not None else "answer",
+            "source_type": source_type,
+            "source_label": CONTENT_SOURCE_LABELS[source_type],
+            "textbook_assertion_allowed": source_type == "textbook_structured_evidence",
+            "printed_page": anchor.get("requested_page"),
+            "exercise_label": anchor.get("exercise_label", ""),
+        }
+    ]
+    for index, raw in enumerate(result.get("supplementary_content", []) or [], start=1):
+        if not isinstance(raw, dict):
+            continue
+        title = str(raw.get("title", "")).strip()
+        explanation = str(raw.get("explanation", "")).strip()
+        if not title and not explanation:
+            continue
+        items.append(
+            {
+                "content_id": str(raw.get("content_id", "")).strip() or f"supplement-{index}",
+                "content_type": "supplementary_derivation",
+                "source_type": "supplementary_derivation",
+                "source_label": CONTENT_SOURCE_LABELS["supplementary_derivation"],
+                "textbook_assertion_allowed": False,
+                "title": title,
+                "explanation": explanation,
+                "related_to": str(raw.get("related_to", "primary-answer")).strip() or "primary-answer",
+                # A generic derivation must never inherit the original problem's identity.
+                "printed_page": None,
+                "exercise_label": "",
+            }
+        )
+    return items
+
+
 def build_answer_contract(result: dict) -> dict[str, Any]:
     citations = build_citations(result)
     evidence_assessment = build_evidence_assessment(result, citations)
+    provenance = content_provenance(result, evidence_assessment)
     direct = direct_conclusion(result)
     if result.get("intent") == "source_verify" and evidence_assessment["level"] != "structured_evidence":
         direct = evidence_assessment["can_confirm"]
@@ -337,6 +396,7 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "personalized_reminder": personalized_reminder(result),
         "source_differences": source_differences(result),
         "next_steps": next_steps(result),
+        "content_boundaries": provenance,
     }
     citation_required = result.get("answer_mode") in {"canonical_claim", "accepted_evidence"}
     coverage_ok = (not citation_required) or bool(citations)
@@ -351,6 +411,7 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "fallback_note": result.get("fallback_note", ""),
         "citation_coverage_ok": coverage_ok,
         "evidence_assessment": evidence_assessment,
+        "content_provenance": provenance,
         "sections": sections,
         "citations": citations,
         "teaching_context": dict(result.get("teaching_context") or {}),
@@ -399,6 +460,16 @@ def render_text(contract: dict) -> str:
             f"- 下一步：{assessment['next_action']}",
         ]
     )
+    lines.extend(["", "## 内容来源", ""])
+    for item in contract.get("content_provenance", []):
+        identity: list[str] = []
+        if item.get("printed_page") is not None:
+            identity.append(f"印刷页 {item['printed_page']}")
+        if item.get("exercise_label"):
+            identity.append(f"题号 {item['exercise_label']}")
+        relation = f"；关联 {item['related_to']}" if item.get("related_to") else ""
+        suffix = f"（{'，'.join(identity)}）" if identity else ""
+        lines.append(f"- {item['source_label']}{suffix}{relation}")
     lines.extend(["", "## 直接结论", "", str(sections["direct_conclusion"])])
     lines.extend(["", "## 直观解释", "", str(sections["intuitive_explanation"])])
     lines.extend(["", "## 严格说明", ""])

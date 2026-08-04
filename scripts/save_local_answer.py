@@ -106,9 +106,22 @@ def render_note(contract: dict) -> str:
         f"- 分片 ID：{anchor.get('chunk_id', '未指定')}",
         f"- 依据级别：{contract['evidence_assessment']['level']}",
         "",
-        "## 考纲定位",
+        "## 内容来源",
         "",
     ]
+    for item in contract.get("content_provenance", []):
+        source_label = str(item.get("source_label", "")).strip()
+        if not source_label:
+            continue
+        identity: list[str] = []
+        if item.get("printed_page") is not None:
+            identity.append(f"印刷页 {item['printed_page']}")
+        if item.get("exercise_label"):
+            identity.append(f"题号 {item['exercise_label']}")
+        relation = f"；关联 {item['related_to']}" if item.get("related_to") else ""
+        suffix = f"（{'，'.join(identity)}）" if identity else ""
+        lines.append(f"- {source_label}{suffix}{relation}")
+    lines.extend(["", "## 考纲定位", ""])
     if result["syllabus_route"]:
         for item in result["syllabus_route"]:
             lines.append(f"- {item['title']} (`{item['node_id']}`)")

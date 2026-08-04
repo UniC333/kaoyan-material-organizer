@@ -46,6 +46,7 @@ __pycache__/
 /tests/unit/*
 !/tests/unit/test_page_locator.py
 !/tests/unit/test_answer_chain.py
+!/tests/unit/test_conversation_distillation.py
 !/tests/integration/
 /tests/integration/*
 !/tests/integration/test_exact_page_query.py
