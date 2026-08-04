@@ -29,6 +29,8 @@ CONTROL_PREFIXES = (
 )
 ALLOWED_TEACHING_SCOPES = {"topic", "chapter", "subject"}
 DEFAULT_REVIEW_DAYS = 90
+CONTENT_SOURCE_TYPES = {"textbook_structured_evidence", "page_asset_only", "supplementary_derivation", "learner_feedback"}
+MASTERY_STATUSES = {"explained", "guided_complete", "independently_written", "pending_verification"}
 
 
 class DistillationError(ValueError):
@@ -201,6 +203,54 @@ def _review_after(payload: dict[str, Any], created_at: str) -> str:
     return (created_date + timedelta(days=DEFAULT_REVIEW_DAYS)).isoformat()
 
 
+def _learning_items(payload: dict[str, Any]) -> list[dict[str, str]]:
+    raw = payload.get("learning_items", [])
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > 8:
+        raise DistillationError("learning_items must be a bounded list")
+    items: list[dict[str, str]] = []
+    item_ids: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise DistillationError("learning_items items must be objects")
+        item_id = _required_text(item, "item_id", limit=80)
+        if item_id in item_ids:
+            raise DistillationError("learning_items item_id must be unique")
+        item_ids.add(item_id)
+        kind = str(item.get("kind", "original_problem")).strip() or "original_problem"
+        if kind not in {"original_problem", "supplementary_derivation"}:
+            raise DistillationError("learning_items kind is invalid")
+        source_type = str(item.get("source_type", "")).strip()
+        if source_type not in CONTENT_SOURCE_TYPES:
+            raise DistillationError("learning_items source_type is invalid")
+        mastery_status = str(item.get("mastery_status", "pending_verification")).strip() or "pending_verification"
+        if mastery_status not in MASTERY_STATUSES:
+            raise DistillationError("learning_items mastery_status is invalid")
+        related_to = str(item.get("related_to", "")).strip()
+        if kind == "supplementary_derivation" and not related_to:
+            raise DistillationError("supplementary learning_items require related_to")
+        if kind == "original_problem" and related_to:
+            raise DistillationError("original_problem learning_items cannot set related_to")
+        items.append(
+            {
+                "item_id": item_id,
+                "kind": kind,
+                "source_type": source_type,
+                "mastery_status": mastery_status,
+                "title": _required_text(item, "title", limit=160),
+                "source_summary": str(item.get("source_summary", "")).strip()[:500],
+                "handoff_summary": str(item.get("handoff_summary", "")).strip()[:500],
+                "self_check": str(item.get("self_check", "")).strip()[:500],
+                "related_to": related_to,
+            }
+        )
+    known_ids = {item["item_id"] for item in items}
+    if any(item["related_to"] and item["related_to"] not in known_ids for item in items):
+        raise DistillationError("learning_items related_to must reference an item in the same candidate")
+    return items
+
+
 def build_distillation_candidate(bundle: dict[str, Any], payload: dict[str, Any], *, now: str | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise DistillationError("candidate payload must be an object")
@@ -232,6 +282,7 @@ def build_distillation_candidate(bundle: dict[str, Any], payload: dict[str, Any]
         "teaching_preferences": _string_list(payload, "teaching_preferences"),
         "self_checks": _string_list(payload, "self_checks"),
         "next_questions": _string_list(payload, "next_questions"),
+        "learning_items": _learning_items(payload),
         "teaching_scope": _teaching_scope(payload),
         "review_after": _review_after(payload, created_at),
         "supersedes_candidate_ids": _string_list(payload, "supersedes_candidate_ids"),
@@ -262,6 +313,29 @@ def render_candidate_note(candidate: dict[str, Any]) -> str:
         "",
     ]
     lines.extend(f"- {item}" for item in candidate["accepted_core"])
+    if candidate["learning_items"]:
+        labels = {
+            "textbook_structured_evidence": "教材结构化证据",
+            "page_asset_only": "仅原页定位",
+            "supplementary_derivation": "补充推导",
+            "learner_feedback": "学习者反馈",
+        }
+        mastery = {
+            "explained": "已讲解",
+            "guided_complete": "跟随完成",
+            "independently_written": "独立写过",
+            "pending_verification": "待验证",
+        }
+        lines.extend(["", "## 原题、补充内容与掌握状态", ""])
+        for item in candidate["learning_items"]:
+            relation = f"；关联 {item['related_to']}" if item["related_to"] else ""
+            lines.append(f"- {item['item_id']}｜{item['title']}｜{labels[item['source_type']]}｜{mastery[item['mastery_status']]}{relation}")
+            if item["source_summary"]:
+                lines.append(f"  - 来源：{item['source_summary']}")
+            if item["handoff_summary"]:
+                lines.append(f"  - 下次续接：{item['handoff_summary']}")
+            if item["self_check"]:
+                lines.append(f"  - 可选自测：{item['self_check']}")
     if candidate["derivation_route"]:
         lines.extend(["", "## 最短推导路线", ""])
         lines.extend(f"- {item}" for item in candidate["derivation_route"])
@@ -347,6 +421,7 @@ def validate_stored_candidate(candidate: Any) -> dict[str, Any]:
             "teaching_preferences": candidate.get("teaching_preferences"),
             "self_checks": candidate.get("self_checks"),
             "next_questions": candidate.get("next_questions"),
+            "learning_items": candidate.get("learning_items", []),
             "teaching_scope": candidate.get("teaching_scope", "chapter"),
             "review_after": candidate.get("review_after", ""),
             "supersedes_candidate_ids": candidate.get("supersedes_candidate_ids", []),
@@ -443,6 +518,7 @@ def publish_candidate(candidate_id: str, *, vault_root: Path, confirmed: bool) -
                 "review_after": candidate["review_after"],
                 "history_status": "active",
                 "supersedes_candidate_ids": candidate["supersedes_candidate_ids"],
+                "learning_items": candidate["learning_items"],
                 "saved_note": str(note_path),
                 "source_session_id": candidate["source"]["session_id"],
                 "source_digest": candidate["source"]["source_digest"],

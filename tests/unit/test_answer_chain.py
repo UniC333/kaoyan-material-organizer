@@ -59,6 +59,29 @@ def test_exact_asset_is_never_presented_as_structured_textbook_evidence(monkeypa
     assert contract["evidence_assessment"]["level"] == "page_asset_only"
     assert "不能仅据页码映射确认" in contract["evidence_assessment"]["cannot_confirm"]
     assert not contract["citation_coverage_ok"] or not contract["citations"]
+    assert contract["content_provenance"][0]["source_type"] == "page_asset_only"
+    assert contract["content_provenance"][0]["textbook_assertion_allowed"] is False
+    assert "教材正文未确认" in answer_module.render_text(contract)
+
+
+def test_supplemental_derivation_has_its_own_identity(monkeypatch) -> None:
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [])
+    result = _result(
+        answer_mode="page_asset",
+        page_anchor={"match_status": "exact_asset", "requested_page": 72, "exercise_label": "例3.15"},
+    )
+    result["supplementary_content"] = [
+        {"title": "根式的泛化换元", "explanation": "这是补充同类结构。"}
+    ]
+    contract = answer_module.build_answer_contract(result)
+
+    primary, supplement = contract["content_provenance"]
+    assert primary["printed_page"] == 72
+    assert primary["exercise_label"] == "例3.15"
+    assert supplement["source_type"] == "supplementary_derivation"
+    assert supplement["printed_page"] is None
+    assert supplement["exercise_label"] == ""
+    assert supplement["related_to"] == "primary-answer"
 
 
 def test_blocked_page_asset_save_has_zero_writes(tmp_path: Path) -> None:

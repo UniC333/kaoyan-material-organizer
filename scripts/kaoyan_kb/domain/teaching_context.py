@@ -37,10 +37,14 @@ def _topic_key(value: Any) -> str:
 
 def _topic_matches(topic: Any, query: Any) -> bool:
     topic_key = _topic_key(topic)
-    query_key = _normalized(query)
+    query_key = _topic_key(query)
     if len(topic_key) < 2 or len(query_key) < 2:
         return False
-    return topic_key in query_key or query_key in topic_key
+    return (
+        topic_key in query_key
+        or query_key in topic_key
+        or (len(topic_key) >= 4 and len(query_key) >= 4 and (topic_key.startswith(query_key) or query_key.startswith(topic_key)))
+    )
 
 
 def _chapter_matches(expected: Any, actual: Any) -> bool:
@@ -93,6 +97,7 @@ def _empty_context(summary: dict[str, int] | None = None) -> dict[str, Any]:
         "preferred_routes": [],
         "avoid_as_first_explanation": [],
         "self_check": "",
+        "learning_handoff": {},
         "history_used": [],
         "effect_scope": "presentation_only",
         "fact_write_allowed": False,
@@ -137,6 +142,7 @@ def build_bounded_teaching_context(
     preferred_routes: list[str] = []
     avoid_first: list[dict[str, str]] = []
     self_check = ""
+    learning_handoff: dict[str, Any] = {}
     history_used: list[str] = []
     strongest_scope = "none"
     scope_rank = {"none": 0, "subject": 1, "chapter": 2, "exact_topic": 3}
@@ -211,6 +217,33 @@ def build_bounded_teaching_context(
                         self_check = check
                         event_selected = True
                         break
+            if not learning_handoff:
+                learning_items = [item for item in payload.get("learning_items", []) if isinstance(item, dict)]
+                originals = [item for item in learning_items if item.get("kind") == "original_problem"]
+                if originals:
+                    original = originals[0]
+                    related = [
+                        {
+                            "item_id": str(item.get("item_id", "")).strip(),
+                            "title": str(item.get("title", "")).strip(),
+                            "source_type": str(item.get("source_type", "")).strip(),
+                            "mastery_status": str(item.get("mastery_status", "")).strip(),
+                        }
+                        for item in learning_items
+                        if item.get("kind") == "supplementary_derivation" and item.get("related_to") == original.get("item_id")
+                    ]
+                    learning_handoff = {
+                        "source_session_id": str(payload.get("source_session_id", "")).strip(),
+                        "original_problem": {
+                            "item_id": str(original.get("item_id", "")).strip(),
+                            "title": str(original.get("title", "")).strip(),
+                            "source_type": str(original.get("source_type", "")).strip(),
+                            "mastery_status": str(original.get("mastery_status", "")).strip(),
+                        },
+                        "supplementary_content": related,
+                        "handoff_summary": str(original.get("handoff_summary", "")).strip(),
+                        "self_check": str(original.get("self_check", "")).strip(),
+                    }
 
         preference_allowed = (
             (teaching_scope == "topic" and exact_topic)
@@ -245,6 +278,7 @@ def build_bounded_teaching_context(
         "preferred_routes": preferred_routes[:MAX_PREFERRED_ROUTES],
         "avoid_as_first_explanation": avoid_first[:MAX_AVOID_FIRST],
         "self_check": self_check,
+        "learning_handoff": learning_handoff,
         "history_used": history_used,
         "effect_scope": "presentation_only",
         "fact_write_allowed": False,
