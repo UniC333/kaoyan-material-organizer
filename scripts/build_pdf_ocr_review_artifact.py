@@ -74,10 +74,28 @@ def _page_summary(page_id: str, items: list[dict[str, Any]]) -> dict[str, Any]:
         "printed_page": first.get("printed_page"),
         "printed_page_label": first.get("printed_page_label", ""),
         "chapter_id": first.get("chapter_id"),
-        "chapter_title": first.get("chapter_title"),
+        "chapter_title": first.get("chapter_title", ""),
         "request_key": first.get("request_key", ""),
         "review_status": review_status,
         **counts,
+    }
+
+
+def _no_review_required_page_summary(page: dict[str, Any], classification: dict[str, Any]) -> dict[str, Any]:
+    """Keep completed OCR pages visible when no block triggers manual review."""
+    return {
+        "page_id": page.get("page_id", ""),
+        "book_id": page.get("book_id", ""),
+        "printed_page": page.get("printed_page"),
+        "printed_page_label": page.get("printed_page_label", ""),
+        "chapter_id": classification.get("chapter_id", ""),
+        "chapter_title": classification.get("chapter_title", ""),
+        "request_key": page.get("request_key", ""),
+        "review_status": "not-required",
+        "pending_count": 0,
+        "accepted_count": 0,
+        "rejected_count": 0,
+        "ignored_count": 0,
     }
 
 
@@ -119,13 +137,31 @@ def build_pdf_ocr_review_artifact(
         page_id = _page_key(item)
         if page_id:
             grouped[page_id].append(item)
-    page_summaries = [_page_summary(page_id, grouped[page_id]) for page_id in sorted(grouped)]
+    classifications_by_page_id = {
+        str(item.get("page_id", "")).strip(): item
+        for item in load_json_or_default(Path(str(bridge.get("page_classifications_path", ""))), {}).get("items", [])
+        if isinstance(item, dict) and item.get("page_id")
+    }
+    completed_pages = [
+        item
+        for item in load_json_or_default(Path(str(bridge.get("page_ocr_status_path", ""))), {}).get("items", [])
+        if isinstance(item, dict) and str(item.get("status", "")).strip() == "completed" and item.get("page_id")
+    ]
+    page_summaries = []
+    for page in completed_pages:
+        page_id = _page_key(page)
+        if page_id in grouped:
+            page_summaries.append(_page_summary(page_id, grouped[page_id]))
+        else:
+            page_summaries.append(_no_review_required_page_summary(page, classifications_by_page_id.get(page_id, {})))
+    page_summaries.sort(key=lambda item: (int(item.get("printed_page") or 0), str(item.get("page_id", ""))))
 
     review_ready_pages = [item for item in page_summaries if item["review_status"] == "accepted"]
     candidate_review_pages = [
         item for item in page_summaries if item["review_status"] != "accepted" and int(item.get("pending_count", 0) or 0) > 0
     ]
     blocked_review_pages = [item for item in page_summaries if item["review_status"] in {"rejected", "ignored"}]
+    review_not_required_pages = [item for item in page_summaries if item["review_status"] == "not-required"]
     classify_handoff = _classify_handoff_ledger(page_summaries)
 
     output_root = layout["indexes"] / "pdf_ocr_review_artifacts"
@@ -145,6 +181,7 @@ def build_pdf_ocr_review_artifact(
         "review_ready_pages": review_ready_pages,
         "candidate_review_pages": candidate_review_pages,
         "blocked_review_pages": blocked_review_pages,
+        "review_not_required_pages": review_not_required_pages,
         "classify_handoff_ledger": classify_handoff,
         "review_layer_boundary": {
             "evidence_acceptance_written": False,
@@ -179,6 +216,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- accepted_count: {summary.get('accepted_count', 0)}",
         f"- rejected_count: {summary.get('rejected_count', 0)}",
         f"- ignored_count: {summary.get('ignored_count', 0)}",
+        f"- review_not_required_count: {len(payload.get('review_not_required_pages', []))}",
         "",
         "## Boundary",
         "",

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,44 @@ def page_anchor_snippets(result: dict) -> list[str]:
     return dedupe([str(item).strip() for item in snippets])
 
 
+def evidence_excerpt(evidence: dict, question: str) -> tuple[int, str]:
+    """Return a short, question-relevant textbook sentence from one page."""
+    raw_lines = [re.sub(r"\s+", " ", str(line)).strip() for line in str(evidence.get("content", "")).splitlines()]
+    lines = [line for line in raw_lines if len(line) >= 12 and not line.startswith(("#", "!["))]
+    normalized_question = re.sub(r"[？?。！，、：:\s]", "", question)
+    definition_topic = normalized_question.split("的定义", 1)[0] if "的定义" in normalized_question else ""
+    for index, heading in enumerate(raw_lines):
+        heading = heading.lstrip("#").strip()
+        if not definition_topic or f"{definition_topic}的定义" not in heading:
+            continue
+        following = next(
+            (
+                candidate
+                for candidate in raw_lines[index + 1 :]
+                if len(candidate) >= 12 and not candidate.startswith(("#", "![", "考点追踪"))
+            ),
+            "",
+        )
+        if following:
+            lines.append(f"{heading}：{following}")
+    bigrams = {normalized_question[index : index + 2] for index in range(max(0, len(normalized_question) - 1))}
+    ranked = sorted(
+        (
+            (
+                sum(line.count(token) for token in bigrams if token)
+                + (10 if definition_topic and f"{definition_topic}的定义" in line else 0),
+                line,
+            )
+            for line in lines
+        ),
+        key=lambda item: (-item[0], len(item[1])),
+    )
+    if not ranked:
+        return 0, ""
+    score, line = ranked[0]
+    return score, line[:320]
+
+
 def direct_conclusion(result: dict) -> str:
     anchor_snippets = page_anchor_snippets(result)
     if anchor_snippets:
@@ -65,6 +104,15 @@ def direct_conclusion(result: dict) -> str:
         texts = dedupe([claim["text"] for claim in result["claim_hits"]])
         return "；".join(texts[:3])
     if result["evidence_hits"]:
+        excerpts = [
+            (score, text, evidence.get("title", ""))
+            for evidence in result["evidence_hits"][:5]
+            for score, text in [evidence_excerpt(evidence, str(result.get("query", "")))]
+        ]
+        excerpts.sort(key=lambda item: (-item[0], len(item[1])))
+        if excerpts and excerpts[0][1]:
+            _, text, title = excerpts[0]
+            return f"{text}（来源：{title}）"
         return "；".join(item.get("title", "") for item in result["evidence_hits"][:3])
     if result["fallback_hits"]:
         return result["fallback_hits"][0].get("chapter_overview", "") or "当前只能回退到章节级概览。"

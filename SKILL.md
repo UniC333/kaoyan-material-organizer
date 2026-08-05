@@ -24,6 +24,12 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 
 仓库中的 Markdown 和 JSON 使用 UTF-8。在 PowerShell 中读取中文时显式使用 `Get-Content -Encoding utf8`；若显示异常，先运行 `scripts/kb.py doctor` 查看终端编码提示。
 
+## Markdown 与数学公式规范
+
+在创建或编辑包含数学内容的 Markdown 时，所有数学表达式一律使用 LaTeX：行内公式写作 `$...$`，独立推导或公式组写作 `$$...$$`。不要用反引号包裹公式，不要在公式中保留 Unicode 上标、积分号或三角函数纯文本；分别写成 `x^2`、`\int`、`\sin`、`\cos` 等 LaTeX 命令。微分统一写作 `\,\mathrm{d}x`（按变量替换）。
+
+这条规范适用于新建内容和本次编辑所触及的数学 Markdown；历史笔记只在后续实际维护到对应段落时逐步规范化，避免为格式进行无范围的大规模改写。
+
 ## 稳定入口
 
 默认只通过 `scripts/kb.py` 调用功能：
