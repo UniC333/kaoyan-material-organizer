@@ -36,6 +36,10 @@ def evidence_publishability_errors(evidence: dict[str, Any]) -> list[str]:
     evidence_id = str(evidence.get("evidence_id", "")).strip()
     origin_type = str(evidence.get("origin_type") or evidence.get("origin") or "").strip()
     verification_status = str(evidence.get("verification_status", "")).strip()
+    # Stale records are retained for auditability but are intentionally excluded
+    # from search and must not be treated as publishable evidence.
+    if verification_status == "stale" or str(evidence.get("mapping_status", "")).strip() == "stale":
+        return []
     source_spans = evidence.get("source_spans", [])
     provenance = evidence.get("provenance") if isinstance(evidence.get("provenance"), dict) else {}
     source_grounded = bool(evidence.get("source_grounded"))
