@@ -423,6 +423,7 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "evidence_hits": result.get("evidence_hits", []),
         "fallback_hits": result.get("fallback_hits", []),
         "page_anchor": result.get("page_anchor", {}),
+        "page_verification": result.get("page_verification", {}),
         "query_result": result,
     }
     validate_entity_contract("query_artifact", contract)
@@ -460,6 +461,20 @@ def render_text(contract: dict) -> str:
             f"- 下一步：{assessment['next_action']}",
         ]
     )
+    verification = dict(contract.get("page_verification") or {})
+    if verification:
+        lines.extend(
+            [
+                "",
+                "## 页码核验摘要",
+                "",
+                f"- 页面定位：{verification.get('page_location_status', '未确认')}",
+                f"- 题号正文核验：{verification.get('exercise_verification_status', '未确认')}",
+                f"- 命中层：{verification.get('answer_mode', contract.get('answer_mode', ''))}",
+                f"- 可否按教材正文讲解：{'可以' if verification.get('textbook_explanation_allowed') else '不可以'}",
+                f"- 结论：{verification.get('summary', '')}",
+            ]
+        )
     lines.extend(["", "## 内容来源", ""])
     for item in contract.get("content_provenance", []):
         identity: list[str] = []

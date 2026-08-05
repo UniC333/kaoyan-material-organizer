@@ -111,6 +111,44 @@ def parse_page_anchor(query: str) -> dict[str, Any]:
     }
 
 
+def explicit_page_subject_error(*, subject: str | None, query: str, printed_page: int | None) -> str:
+    """Return a safe CLI error when an explicit-page request lacks its subject."""
+    if str(subject or "").strip():
+        return ""
+    requested_page = printed_page if printed_page is not None else parse_page_anchor(query).get("requested_page")
+    if requested_page is None:
+        return ""
+    return (
+        "[ERROR] explicit page requests require --subject; "
+        f"for example: --subject 数学 --printed-page {requested_page} "
+        "--book-title <教材名>"
+    )
+
+
+def build_page_verification_summary(page_anchor: dict[str, Any], answer_mode: str) -> dict[str, Any]:
+    """Expose page location, exercise verification, and teaching permission separately."""
+    status = str(page_anchor.get("match_status") or "not_requested")
+    exercise_status = str(page_anchor.get("exercise_match_status") or "not_requested")
+    textbook_explanation_allowed = status == "exact_evidence" and exercise_status in {"not_requested", "matched"}
+    if status == "exact_asset":
+        summary = "教材原页已定位；教材正文未确认，不能按书上原题讲解。"
+    elif status == "exact_evidence" and not textbook_explanation_allowed:
+        summary = "教材页正文已有证据，但请求的题号尚未在正文中核验。"
+    elif textbook_explanation_allowed:
+        summary = "教材原页与所需结构化证据已核验，可在证据范围内按教材讲解。"
+    elif status == "not_requested":
+        summary = "本次未请求按页核验。"
+    else:
+        summary = "教材原页尚未完成可用于按书讲解的核验。"
+    return {
+        "page_location_status": status,
+        "exercise_verification_status": exercise_status,
+        "answer_mode": answer_mode,
+        "textbook_explanation_allowed": textbook_explanation_allowed,
+        "summary": summary,
+    }
+
+
 def _page_number_from_value(value: Any) -> int | None:
     match = re.search(r"([0-9]+)", str(value or ""))
     return int(match.group(1)) if match else None
@@ -870,6 +908,7 @@ def query_knowledge(
         else:
             answer_mode = "page_not_found"
             fallback_note = "正式页定位索引中没有找到该印刷页。"
+    page_verification = build_page_verification_summary(page_anchor, answer_mode)
     query_path = {
         "retrieval_candidate_set_used": index_routed,
         "retrieval_hit_count": len(retrieval_hits),
@@ -906,6 +945,7 @@ def query_knowledge(
         "refinement_candidates": refine_candidates[:3],
         "query_path": query_path,
         "page_anchor": page_anchor,
+        "page_verification": page_verification,
     }
 
 
@@ -923,11 +963,16 @@ def render_text(result: dict) -> str:
         lines.extend(["## 回退说明", "", f"- {result['fallback_note']}", ""])
     page_anchor = dict(result.get("page_anchor") or {})
     if page_anchor.get("requested_page") is not None:
+        verification = dict(result.get("page_verification") or build_page_verification_summary(page_anchor, result["answer_mode"]))
         lines.extend(
             [
-                "## 教材原页定位",
+                "## 页码核验摘要",
                 "",
-                f"- 状态：{page_anchor.get('match_status', 'not_found')}",
+                f"- 页面定位：{verification['page_location_status']}",
+                f"- 题号正文核验：{verification['exercise_verification_status']}",
+                f"- 命中层：{verification['answer_mode']}",
+                f"- 可否按教材正文讲解：{'可以' if verification['textbook_explanation_allowed'] else '不可以'}",
+                f"- 结论：{verification['summary']}",
                 f"- 教材：{page_anchor.get('book_title') or page_anchor.get('requested_book_title') or '未确定'}",
                 f"- 印刷页：{page_anchor.get('requested_page')}",
             ]
@@ -975,6 +1020,9 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = parse_args()
+    page_error = explicit_page_subject_error(subject=args.subject, query=args.query or "", printed_page=args.printed_page)
+    if page_error:
+        raise SystemExit(page_error)
     if not args.subject:
         raise SystemExit("[ERROR] --subject is required")
     subject, _ = resolve_subject(args.subject)

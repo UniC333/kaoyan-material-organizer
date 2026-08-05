@@ -59,6 +59,13 @@ def test_explicit_page_clears_unrelated_semantic_hits(monkeypatch, tmp_path: Pat
 
     assert result["answer_mode"] == "page_asset"
     assert result["page_anchor"]["match_status"] == "exact_asset"
+    assert result["page_verification"] == {
+        "page_location_status": "exact_asset",
+        "exercise_verification_status": "unverified",
+        "answer_mode": "page_asset",
+        "textbook_explanation_allowed": False,
+        "summary": "教材原页已定位；教材正文未确认，不能按书上原题讲解。",
+    }
     assert result["retrieval_hits"] == []
     assert result["claim_hits"] == []
     assert result["evidence_hits"] == []
@@ -125,3 +132,41 @@ def test_exact_page_evidence_retains_only_claims_supported_by_that_page(monkeypa
     assert [item["claim_id"] for item in exact_claims] == ["CL-P49"]
     assert [item["entity_id"] for item in exact_retrieval] == ["EV-P49"]
     assert exact_evidence == [evidence]
+
+
+def test_exact_asset_page_summary_is_not_rendered_as_not_found(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        query_module,
+        "_resolve_query_hits",
+        lambda *args, **kwargs: ([], [], [], [], True),
+    )
+    monkeypatch.setattr(
+        query_module,
+        "resolve_page_locator",
+        lambda **kwargs: {
+            "requested_page": 76,
+            "requested_position": None,
+            "requested_book_title": "李正元数一",
+            "requested_exercise_label": "例3.19",
+            "match_status": "exact_asset",
+            "exercise_match_status": "unverified",
+            "book_title": "李正元数一",
+            "source_image_path": "P76.jpg",
+            "source_image_sha256": "p76-sha",
+        },
+    )
+    monkeypatch.setattr(query_module, "exact_evidence_hits_for_locator", lambda *args, **kwargs: [])
+    monkeypatch.setattr(query_module, "learner_compare_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(query_module, "learner_snapshot", lambda *args, **kwargs: {})
+    monkeypatch.setattr(query_module, "load_events", lambda: [])
+
+    result = query_module.query_knowledge(tmp_path, "数学", None, "P76 例3.19 第一问", 3, book_title="李正元数一")
+
+    rendered = query_module.render_text(result)
+    assert result["page_anchor"]["match_status"] == "exact_asset"
+    assert result["page_anchor"]["exercise_match_status"] == "unverified"
+    assert result["answer_mode"] == "page_asset"
+    assert result["page_verification"]["textbook_explanation_allowed"] is False
+    assert "教材原页已定位；教材正文未确认" in rendered
+    assert "页面定位：exact_asset" in rendered
+    assert "not_found" not in rendered
