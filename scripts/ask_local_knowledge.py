@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--question", required=True)
     parser.add_argument("--topk", type=int, default=3)
     parser.add_argument("--printed-page", type=int)
+    parser.add_argument("--exercise-label")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--save", action="store_true")
     parser.add_argument("--saved-at")
@@ -33,7 +34,7 @@ def main() -> int:
     args = parse_args()
     vault_root = Path(args.vault_root or default_vault_root_arg())
     subject, _ = resolve_subject(args.subject)
-    result = query_knowledge(vault_root, subject, args.chapter, args.question, args.topk, args.printed_page, args.book_title)
+    result = query_knowledge(vault_root, subject, args.chapter, args.question, args.topk, args.printed_page, args.book_title, args.exercise_label)
     contract = build_answer_contract(result)
 
     if args.save:

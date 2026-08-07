@@ -102,11 +102,11 @@ def build_pdf_ocr_review_status(
     chapter_definitions: list[dict[str, Any]] = []
     chapter_view_paths: list[str] = []
 
-    for chapter in report_payload.get("chapters", []):
+    for chapter in report_payload.get("pages", report_payload.get("chapters", [])):
         chapter_number = int(chapter.get("chapter_number", 0) or 0)
-        printed_page = int(chapter.get("page_start", 0) or 0)
+        pdf_page = int(chapter.get("pdf_page", chapter.get("page_start", 0)) or 0)
         chapter_id = f"PDFCH-{resolved_source_id}-{chapter_number:04d}"
-        page_id = f"PDFPAGE-{resolved_source_id}-{chapter_number:04d}-{printed_page:04d}"
+        page_id = f"PDFPAGE-{resolved_source_id}-{pdf_page:04d}"
         normalized_path = Path(str(chapter.get("normalized_path", "")).strip())
         raw_path = Path(str(chapter.get("raw_path", "")).strip())
         normalized_payload = load_json_or_default(normalized_path, {})
@@ -119,12 +119,13 @@ def build_pdf_ocr_review_status(
                 "page_id": page_id,
                 "book_id": book_id,
                 "scan_index": chapter_number,
-                "printed_page": printed_page,
-                "printed_page_label": f"第{printed_page}页",
+                "printed_page": pdf_page,
+                "printed_page_label": f"PDF 第{pdf_page}页（待人工确认印刷页）",
+                "pdf_page": pdf_page,
                 "current_version_id": f"{page_id}-v1",
                 "source_image_path": str(chapter.get("rendered_image_path", "")),
                 "source_image_sha256": source_file_sha256,
-                "quality_status": "accepted",
+                "quality_status": "needs_review",
                 "request_key": str(chapter.get("request_key", "")).strip(),
                 "provider": str(chapter.get("provider", "")).strip(),
                 "model": str(chapter.get("model", "")).strip(),
@@ -149,14 +150,15 @@ def build_pdf_ocr_review_status(
                 "chapter_title": str(chapter.get("chapter_title", "")).strip(),
                 "section_id": None,
                 "section_title": None,
-                "classification_method": "pdf_anchor_page",
-                "classification_status": "confirmed",
-                "classification_confidence": 1.0,
+                "classification_method": "pdf_page_candidate",
+                "classification_status": "candidate",
+                "classification_confidence": 0.0,
                 "classification_source": "pdf_book_anchors",
-                "confirmed_by": "pdf-outline-anchor",
+                "confirmed_by": "",
                 "confirmed_at": updated_at,
                 "updated_at": updated_at,
-                "printed_page": printed_page,
+                "printed_page": pdf_page,
+                "pdf_page": pdf_page,
             }
         )
         chapter_definitions.append(
@@ -164,9 +166,9 @@ def build_pdf_ocr_review_status(
                 "chapter_id": chapter_id,
                 "book_id": book_id,
                 "chapter_title": str(chapter.get("chapter_title", "")).strip(),
-                "page_start": printed_page,
-                "page_end": int(chapter.get("page_end", printed_page) or printed_page),
-                "definition_status": "confirmed",
+                "page_start": pdf_page,
+                "page_end": pdf_page,
+                "definition_status": "candidate",
                 "sections": [],
                 "created_at": updated_at,
                 "updated_at": updated_at,
