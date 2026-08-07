@@ -18,6 +18,7 @@ def add_core_commands(subparsers: argparse._SubParsersAction, *, formatter_class
     ask.add_argument("--question", required=True)
     ask.add_argument("--topk", type=int, default=3)
     ask.add_argument("--printed-page", type=int)
+    ask.add_argument("--exercise-label")
     ask.add_argument("--format", choices=("text", "json"), default="json")
     ask.add_argument("--save", action="store_true")
     ask.add_argument("--saved-at")
@@ -28,6 +29,7 @@ def add_core_commands(subparsers: argparse._SubParsersAction, *, formatter_class
     sync.add_argument("--rebuild-kb", action="store_true")
     sync.add_argument("--publish-canonical", action="store_true")
     sync.add_argument("--refresh-learning", action="store_true")
+    sync.add_argument("--indexes-only", action="store_true")
     sync.add_argument("--yes", action="store_true")
     sync.add_argument("--force", action="store_true")
     sync.add_argument("--no-backup", action="store_true")
@@ -41,6 +43,7 @@ def add_core_commands(subparsers: argparse._SubParsersAction, *, formatter_class
     query.add_argument("--query", required=True)
     query.add_argument("--topk", type=int, default=3)
     query.add_argument("--printed-page", type=int)
+    query.add_argument("--exercise-label")
     query.add_argument("--format", choices=("text", "json"), default="json")
 
 
@@ -58,7 +61,7 @@ def dispatch_core(
         forwarded = ["--question", args.question, "--topk", str(args.topk), "--format", args.format]
         if args.subject:
             forwarded[0:0] = ["--subject", args.subject]
-        for key in ("vault_root", "chapter", "book_title", "saved_at", "printed_page"):
+        for key in ("vault_root", "chapter", "book_title", "saved_at", "printed_page", "exercise_label"):
             value = getattr(args, key)
             if value:
                 forwarded.extend([f"--{key.replace('_', '-')}", str(value)])
@@ -72,14 +75,14 @@ def dispatch_core(
             value = getattr(args, key)
             if value:
                 forwarded.extend([f"--{key.replace('_', '-')}", str(value)])
-        for flag in ("rebuild_kb", "publish_canonical", "refresh_learning", "yes", "force", "no_backup"):
+        for flag in ("rebuild_kb", "publish_canonical", "refresh_learning", "indexes_only", "yes", "force", "no_backup"):
             if getattr(args, flag):
                 forwarded.append(f"--{flag.replace('_', '-')}")
         return run_script("sync_exam_kb.py", *forwarded, "--format", args.format)
 
     if args.command == "query":
         forwarded = []
-        for key in ("vault_root", "subject", "chapter", "book_title", "query", "printed_page"):
+        for key in ("vault_root", "subject", "chapter", "book_title", "query", "printed_page", "exercise_label"):
             value = getattr(args, key)
             if value:
                 forwarded.extend([f"--{key.replace('_', '-')}", str(value)])

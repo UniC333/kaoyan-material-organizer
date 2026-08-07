@@ -39,6 +39,19 @@ def _load_quality_gate_report(report_path: Path) -> dict[str, Any]:
     return load_json_or_default(report_path, {})
 
 
+def _build_quality_gate_report(page_assets_payload: dict[str, Any]) -> dict[str, Any]:
+    """Derive the gate from the inspected assets; no invisible prerequisite file."""
+    items = list(page_assets_payload.get("items", []) or [])
+    eligible = [item for item in items if item.get("quality_status") in {"accepted", "needs_review"}]
+    return {
+        "book_id": page_assets_payload.get("book_id", ""),
+        "checked_count": len(items),
+        "eligible_count": len(eligible),
+        "blocked_count": len(items) - len(eligible),
+        "passed": bool(items) and len(eligible) == len(items),
+    }
+
+
 def _allowed_remote(provider_name: str, runtime, *, allow_remote: bool, yes: bool) -> bool:
     if provider_name != "mistral":
         return True
@@ -119,17 +132,17 @@ def run_book_ocr(
     format_name: str = "json",
 ) -> dict[str, Any]:
     runtime = load_runtime_config()
-    if require_quality_gate:
-        report_path = quality_report or (runtime.ocr_cache_root / "indexes" / "quality_gate.json")
-        report_payload = _load_quality_gate_report(report_path)
-        if not report_payload:
-            raise SystemExit(f"quality gate report missing: {report_path}")
-        if not bool(report_payload.get("passed")):
-            raise SystemExit(f"quality gate failed: {report_path}")
     paths = _metadata_paths(book_root, runtime.paper_book_metadata_dir)
     page_assets_payload = load_json_or_default(paths["page_assets"], {})
     if not page_assets_payload:
         raise SystemExit("page_assets.json is missing; run book inspect first")
+    if require_quality_gate:
+        report_path = quality_report or (paths["root"] / "quality_gate.json")
+        report_payload = _load_quality_gate_report(report_path) or _build_quality_gate_report(page_assets_payload)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        save_json(report_path, report_payload, ignored_compare_keys=())
+        if not bool(report_payload.get("passed")):
+            raise SystemExit(f"quality gate failed: {report_path}")
 
     resolved_provider = provider_name or runtime.ocr_provider
     resolved_model = model or runtime.ocr_model
@@ -167,6 +180,20 @@ def run_book_ocr(
     remote_requests = 0
     status_items: list[dict[str, Any]] = []
 
+    def checkpoint() -> None:
+        paths["root"].mkdir(parents=True, exist_ok=True)
+        save_json(paths["page_ocr_status"], {
+            "book_id": page_assets_payload.get("book_id"), "source_root": page_assets_payload.get("source_root"),
+            "provider": resolved_provider, "model": resolved_model, "created_at": status_payload.get("created_at") or now_iso(),
+            "updated_at": now_iso(), "items": status_items,
+            "summary": {"completed_count": sum(1 for item in status_items if item["status"] == "completed"),
+                        "failed_count": sum(1 for item in status_items if item["status"] == "failed"),
+                        "retry_exhausted_count": sum(1 for item in status_items if item["status"] == "retry_exhausted"),
+                        "budget_blocked_count": sum(1 for item in status_items if item["status"] == "budget_blocked"),
+                        "skipped_quality_count": sum(1 for item in status_items if item["status"] == "skipped_quality"),
+                        "pending_count": sum(1 for item in status_items if item["status"] == "pending")},
+        })
+
     for page in items:
         request_key = _request_key_for_page(page, runtime, resolved_provider, resolved_model)
         existing = existing_status.get(str(page["page_id"]))
@@ -184,6 +211,7 @@ def run_book_ocr(
             status_item["updated_at"] = now_iso()
             summary["skipped_quality_count"] += 1
             status_items.append(status_item)
+            checkpoint()
             continue
 
         normalized_path = runtime.ocr_cache_root / "normalized" / f"{request_key}.json"
@@ -200,6 +228,7 @@ def run_book_ocr(
             status_item["updated_at"] = existing.get("updated_at") if existing and _status_compare_payload(status_item) == _status_compare_payload(existing) else now_iso()
             summary["cached_count"] += 1
             status_items.append(status_item)
+            checkpoint()
             continue
 
         if runtime.ocr_monthly_page_budget > 0 and used_pages >= runtime.ocr_monthly_page_budget:
@@ -207,6 +236,7 @@ def run_book_ocr(
             status_item["updated_at"] = now_iso()
             summary["budget_blocked_count"] += 1
             status_items.append(status_item)
+            checkpoint()
             continue
 
         if status_item["attempt_count"] >= max_retries:
@@ -214,6 +244,7 @@ def run_book_ocr(
             status_item["updated_at"] = now_iso()
             summary["retry_exhausted_count"] += 1
             status_items.append(status_item)
+            checkpoint()
             continue
 
         try:
@@ -237,6 +268,7 @@ def run_book_ocr(
             status_item["updated_at"] = now_iso()
             summary["failed_count"] += 1
             status_items.append(status_item)
+            checkpoint()
             continue
 
         used_pages += 1
@@ -253,6 +285,7 @@ def run_book_ocr(
         status_item["updated_at"] = now_iso()
         summary["processed_count"] += 1
         status_items.append(status_item)
+        checkpoint()
 
     summary["completed_count"] = sum(1 for item in status_items if item["status"] == "completed")
     stable_summary = {

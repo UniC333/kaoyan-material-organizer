@@ -48,5 +48,7 @@ __pycache__/
 !/tests/unit/test_answer_chain.py
 !/tests/unit/test_conversation_distillation.py
 !/tests/integration/
+!/tests/fixtures/
+!/tests/fixtures/pdf_page_route_p67_q01.json
 /tests/integration/*
 !/tests/integration/test_exact_page_query.py

@@ -132,6 +132,12 @@ def build_pdf_ocr_review_artifact(
         raise SystemExit(f"[ERROR] bridged shadow book_root does not exist: {book_root}")
 
     queue_payload = queue_review_items(book_root=book_root, review_type=None)
+    page_review_path = layout["review_queues"] / "pdf-page-review" / f"{bridge.get('pdf_source_id', '')}.json"
+    page_decisions = {
+        int(item.get("pdf_page", 0) or 0): item
+        for item in load_json_or_default(page_review_path, {}).get("items", [])
+        if isinstance(item, dict) and int(item.get("pdf_page", 0) or 0)
+    }
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in queue_payload.get("items", []):
         page_id = _page_key(item)
@@ -151,9 +157,22 @@ def build_pdf_ocr_review_artifact(
     for page in completed_pages:
         page_id = _page_key(page)
         if page_id in grouped:
-            page_summaries.append(_page_summary(page_id, grouped[page_id]))
+            summary = _page_summary(page_id, grouped[page_id])
         else:
-            page_summaries.append(_no_review_required_page_summary(page, classifications_by_page_id.get(page_id, {})))
+            summary = _no_review_required_page_summary(page, classifications_by_page_id.get(page_id, {}))
+        pdf_page = int(page.get("pdf_page", page.get("printed_page", 0)) or 0)
+        decision = page_decisions.get(pdf_page, {})
+        summary["pdf_page"] = pdf_page
+        summary["page_review_note"] = decision.get("note", "")
+        summary["page_reviewed_at"] = decision.get("reviewed_at", "")
+        # A page decision is mandatory.  Flagged blocks must also be closed.
+        block_open = int(summary.get("pending_count", 0) or 0) + int(summary.get("rejected_count", 0) or 0)
+        summary["review_status"] = (
+            "accepted"
+            if decision.get("review_status") == "accepted" and not block_open
+            else (decision.get("review_status") or "pending")
+        )
+        page_summaries.append(summary)
     page_summaries.sort(key=lambda item: (int(item.get("printed_page") or 0), str(item.get("page_id", ""))))
 
     review_ready_pages = [item for item in page_summaries if item["review_status"] == "accepted"]
@@ -189,6 +208,7 @@ def build_pdf_ocr_review_artifact(
             "pdf_ocr_baseline_rerun": False,
             "remote_ocr_called": False,
         },
+        "page_review_queue_path": str(page_review_path),
         "readiness_status": "ready-for-r23-close",
         "updated_at": now_iso(),
         "artifact_path": str(artifact_path),

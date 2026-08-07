@@ -74,7 +74,7 @@ def _review_reasons(candidate: dict[str, Any]) -> list[str]:
     confidence = float(candidate.get("confidence", 0.0) or 0.0)
     if block_type == "table":
         reasons.append("table")
-    if block_type == "formula":
+    if block_type in {"formula", "equation"}:
         reasons.append("equation")
     if confidence < LOW_CONFIDENCE_THRESHOLD:
         reasons.append("low-confidence")

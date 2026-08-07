@@ -1,0 +1,12 @@
+{
+  "source": {"source_id": "SRC-FIXTURE-408", "source_name": "脱敏数据结构", "source_file_sha256": "fixture-pdf-sha"},
+  "page_reviews": [
+    {"pdf_page": 79, "printed_page": 67, "page_header_verified": true, "source_file_sha256": "fixture-pdf-sha"},
+    {"pdf_page": 81, "printed_page": 69, "page_header_verified": true, "source_file_sha256": "fixture-pdf-sha"}
+  ],
+  "relations": [
+    {"section_root": "3.1", "category": "single-choice", "exercise_label": "01", "question_pdf_pages": [79], "answer_pdf_pages": [81]}
+  ],
+  "request": {"chapter": "第3.1节", "printed_page": 67, "exercise_label": "1"},
+  "expected": {"answer_mode": "accepted_evidence", "question_pdf_page": 79, "answer_pdf_page": 81}
+}
