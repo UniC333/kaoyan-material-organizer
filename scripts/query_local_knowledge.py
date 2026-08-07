@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, learner_file_map, load_all_json, load_json, resolve_subject
-from kaoyan_kb.domain.page_locator import evidence_matches_locator, parse_exercise_label, resolve_page_locator
+from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator
+from kaoyan_kb.domain.exercise_locator import find_exact_relation, find_unique_relation_for_scope, normalize_exercise_label
 from kaoyan_kb.domain.teaching_context import build_bounded_teaching_context
 from learner_events import load_events
 from retrieve_knowledge import retrieve as retrieve_index
@@ -23,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--book-title")
     parser.add_argument("--query")
     parser.add_argument("--printed-page", type=int)
+    parser.add_argument("--exercise-label")
     parser.add_argument("--topk", type=int, default=3)
     parser.add_argument("--format", choices=("text", "json"), default="text")
     return parser.parse_args()
@@ -104,10 +106,14 @@ def parse_page_anchor(query: str) -> dict[str, Any]:
         requested_position = "top"
     elif any(token in text for token in ("中间", "中部")):
         requested_position = "middle"
+    exercise_label = parse_exercise_label(text)
+    if not exercise_label:
+        exercise_match = re.search(r"(?:第\s*)?(\d{1,3})\s*题", text)
+        exercise_label = normalize_exercise_label(exercise_match.group(1)) if exercise_match else ""
     return {
         "requested_page": requested_page,
         "requested_position": requested_position,
-        "requested_exercise_label": parse_exercise_label(text),
+        "requested_exercise_label": exercise_label,
     }
 
 
@@ -228,8 +234,10 @@ def exact_evidence_hits_for_locator(subject: str, chapter: str | None, locator: 
         evidence = load_json(path)
         if is_stale_evidence(evidence) or evidence.get("subject") != subject:
             continue
-        if chapter and not evidence_matches_chapter(evidence, chapter):
-            continue
+        # The locator already binds this evidence to the requested book and
+        # rendered PDF page.  A page-level OCR record may expose only the
+        # chapter title (rather than a subsection such as 3.1), so a supplied
+        # subsection must not downgrade exact page evidence to exact_asset.
         if evidence_matches_locator(evidence, locator):
             matches.append(evidence)
     return sorted(matches, key=lambda item: item.get("evidence_id", ""))
@@ -268,6 +276,11 @@ def apply_hard_page_route(
         legacy_anchor = build_page_anchor(exact_evidences, request)
         for key in ("matched_evidence_id", "matched_chunk_id", "snippets"):
             locator[key] = legacy_anchor.get(key, locator.get(key))
+        first_exact = exact_evidences[0]
+        locator["matched_evidence_id"] = locator.get("matched_evidence_id") or first_exact.get("evidence_id", "")
+        locator["matched_chunk_id"] = locator.get("matched_chunk_id") or first_exact.get("chunk_id", "")
+        if not locator.get("snippets") and first_exact.get("content"):
+            locator["snippets"] = [str(first_exact["content"]).strip()[:500]]
         locator["match_status"] = "exact_evidence"
         label = str(locator.get("requested_exercise_label") or "")
         if label:
@@ -275,6 +288,72 @@ def apply_hard_page_route(
             haystack = normalize_text("\n".join(locator.get("snippets", []))).replace(" ", "")
             locator["exercise_match_status"] = "matched" if normalized_label in haystack else "unverified"
     return locator, exact_retrieval, exact_claims, exact_evidences
+
+
+def apply_exercise_relation(locator: dict[str, Any], evidences: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    requested_label = str(locator.get("requested_exercise_label") or "").strip()
+    # 例3.14 这类教材例题编号对应当前证据页，并非另有答案页的编号习题，
+    # 不应交给只接受两位题号的习题答案定位器处理。
+    if requested_label.startswith("例"):
+        if locator.get("match_status") != "exact_evidence":
+            return {"status": "unverified", "exercise_label": requested_label}, evidences
+        matched = locator.get("exercise_match_status") == "matched"
+        return {
+            "status": "same_page_evidence" if matched else "unverified",
+            "exercise_label": requested_label,
+            "question_evidence_ids": [locator.get("matched_evidence_id", "")] if matched else [],
+            "answer_evidence_ids": [],
+        }, evidences
+
+    label = normalize_exercise_label(requested_label)
+    if locator.get("match_status") != "exact_evidence" or not label:
+        return {"status": "not_requested" if not label else "unverified"}, evidences
+    pdf_page = int(locator.get("pdf_page", 0) or 0)
+    relation = find_exact_relation(
+        source_id=str(locator.get("source_id") or ""),
+        question_pdf_page=pdf_page,
+        exercise_label=label,
+    )
+    if not relation:
+        locator["exercise_match_status"] = "unverified"
+        return {"status": "unverified", "exercise_label": label, "candidate_pages": []}, evidences
+    layout = ensure_kb_layout()
+    linked_ids = list(relation.get("answer_evidence_ids", []) or [])
+    linked = []
+    for evidence_id in linked_ids:
+        path = layout["evidence"] / f"{evidence_id}.json"
+        if path.is_file():
+            linked.append(load_json(path))
+    locator["exercise_match_status"] = "matched"
+    existing_ids = {item.get("evidence_id") for item in evidences}
+    combined = evidences + [item for item in linked if item.get("evidence_id") not in existing_ids]
+    page_entries = [
+        item for item in load_page_locator_index().get("entries", [])
+        if str(item.get("source_id") or "") == str(locator.get("source_id") or "")
+    ]
+    printed_by_pdf = {int(item.get("pdf_page", 0) or 0): int(item.get("printed_page", 0) or 0) for item in page_entries}
+    return {
+        "status": "exact_answer_evidence",
+        "relation_id": relation.get("relation_id", ""),
+        "exercise_label": label,
+        "question_pdf_pages": relation.get("question_pdf_pages", []),
+        "answer_pdf_pages": relation.get("answer_pdf_pages", []),
+        "question_printed_pages": [printed_by_pdf.get(int(page), 0) for page in relation.get("question_pdf_pages", []) if printed_by_pdf.get(int(page), 0)],
+        "answer_printed_pages": [printed_by_pdf.get(int(page), 0) for page in relation.get("answer_pdf_pages", []) if printed_by_pdf.get(int(page), 0)],
+        "question_evidence_ids": relation.get("question_evidence_ids", []),
+        "answer_evidence_ids": linked_ids,
+    }, combined
+
+
+def apply_scoped_exercise_relation(*, book_title: str | None, chapter: str | None, exercise_label: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    relation = find_unique_relation_for_scope(book_title=str(book_title or ""), chapter=str(chapter or ""), exercise_label=exercise_label)
+    label = normalize_exercise_label(exercise_label)
+    if not relation:
+        return {"status": "unverified", "exercise_label": label, "reason": "current-book-and-chapter-not-unique-or-uncovered"}, []
+    layout = ensure_kb_layout()
+    ids = list(relation.get("question_evidence_ids", []) or []) + list(relation.get("answer_evidence_ids", []) or [])
+    evidence = [load_json(layout["evidence"] / f"{item}.json") for item in ids if (layout["evidence"] / f"{item}.json").is_file()]
+    return {"status": "exact_answer_evidence", "relation_id": relation.get("relation_id", ""), "exercise_label": label, "question_pdf_pages": relation.get("question_pdf_pages", []), "answer_pdf_pages": relation.get("answer_pdf_pages", []), "question_evidence_ids": relation.get("question_evidence_ids", []), "answer_evidence_ids": relation.get("answer_evidence_ids", [])}, evidence
 
 
 def tokenize(query: str) -> list[str]:
@@ -589,6 +668,7 @@ def fallback_chapter_hits(vault_root: Path, subject: str, chapter: str | None, t
 
 def build_reference_items(evidences: list[dict], chapter: str | None = None) -> list[dict]:
     references = []
+    page_entries = load_page_locator_index().get("entries", []) if any(item.get("origin_type") == "pdf_page_ocr" for item in evidences[:3]) else []
     for evidence in evidences[:3]:
         locator = evidence.get("locator", {})
         page_refs = list(evidence.get("page_classification_refs", []) or [])
@@ -598,6 +678,21 @@ def build_reference_items(evidences: list[dict], chapter: str | None = None) -> 
         fallback_chapter_title = evidence.get("chapter_title", "")
         display_chapter_title = chapter or fallback_chapter_title
         use_requested_chapter = bool(chapter and not primary_ref)
+        pdf_page = 0
+        pdf_entry: dict[str, Any] = {}
+        if evidence.get("origin_type") == "pdf_page_ocr":
+            try:
+                pdf_page = int(locator.get("page_start", 0) or 0)
+            except (TypeError, ValueError):
+                pdf_page = 0
+            pdf_entry = next(
+                (
+                    item for item in page_entries
+                    if str(item.get("source_id") or "") == str(evidence.get("source_id") or "")
+                    and int(item.get("pdf_page", 0) or 0) == pdf_page
+                ),
+                {},
+            )
         references.append(
             {
                 "evidence_id": evidence.get("evidence_id", ""),
@@ -605,6 +700,8 @@ def build_reference_items(evidences: list[dict], chapter: str | None = None) -> 
                 "chunk_id": evidence.get("chunk_id", ""),
                 "page_span": f"{locator.get('page_start', '')}-{locator.get('page_end', '')}",
                 "image_span": f"{locator.get('image_start', '')}-{locator.get('image_end', '')}",
+                "printed_page": int(pdf_entry.get("printed_page", 0) or primary_ref.get("printed_page", 0) or 0),
+                "pdf_page": int(pdf_entry.get("pdf_page", 0) or (pdf_page if evidence.get("origin_type") == "pdf_page_ocr" else 0)),
                 "page_classification_refs": page_refs,
                 "book_id": primary_ref.get("book_id", ""),
                 "book_title": fallback_book_title or primary_ref.get("book_title", ""),
@@ -651,12 +748,30 @@ def infer_route_from_hits(subject: str, topk: int, claims: list[dict], evidences
     return inferred[: max(topk, 3)]
 
 
-def retrieve_hits(subject: str, query: str, topk: int) -> list[dict]:
+def retrieval_hit_matches_chapter(hit: dict[str, Any], chapter: str | None) -> bool:
+    if not chapter:
+        return True
+    layout = ensure_kb_layout()
+    entity_id = str(hit.get("entity_id", "")).strip()
+    if hit.get("doc_type") == "evidence":
+        path = layout["evidence"] / f"{entity_id}.json"
+        return path.exists() and evidence_matches_chapter(load_json(path), chapter)
+    if hit.get("doc_type") == "claim":
+        path = layout["claims"] / f"{entity_id}.json"
+        if not path.exists():
+            return False
+        claim = load_json(path)
+        return chapter_matches(chapter, claim.get("chapter_title", ""), claim.get("chapter_hint", ""))
+    return False
+
+
+def retrieve_hits(subject: str, query: str, topk: int, chapter: str | None = None) -> list[dict]:
     try:
-        payload = retrieve_index(ensure_kb_layout(), subject=subject, query=query, topk=max(topk, 5))
+        payload = retrieve_index(ensure_kb_layout(), subject=subject, query=query, topk=max(topk * 5, 20))
     except SystemExit:
         return []
-    return list(payload.get("results", []))
+    hits = [hit for hit in payload.get("results", []) if retrieval_hit_matches_chapter(hit, chapter)]
+    return hits[: max(topk, 5)]
 
 
 def route_from_retrieval_hits(subject: str, hits: list[dict], topk: int) -> list[dict]:
@@ -773,7 +888,7 @@ def _resolve_query_hits(
     full_query: str,
     page_anchor_request: dict[str, Any],
 ) -> tuple[list[dict], list[dict], list[dict], list[dict], bool]:
-    retrieval_hits = retrieve_hits(subject, query, topk)
+    retrieval_hits = retrieve_hits(subject, query, topk, chapter)
     routed = route_syllabus_nodes(subject, query, max(topk, 3), intent)
     if not routed:
         routed = route_from_retrieval_hits(subject, retrieval_hits, topk)
@@ -824,11 +939,26 @@ def query_knowledge(
     topk: int,
     printed_page: int | None = None,
     book_title: str | None = None,
+    exercise_label: str | None = None,
 ) -> dict:
     intent = detect_intent(query)
     page_anchor_request = parse_page_anchor(query)
     if printed_page is not None:
         page_anchor_request["requested_page"] = printed_page
+    if exercise_label:
+        page_anchor_request["requested_exercise_label"] = (
+            parse_exercise_label(exercise_label) or normalize_exercise_label(exercise_label)
+        )
+    scoped_exercise = bool(exercise_label and printed_page is None)
+    if scoped_exercise:
+        exercise_anchor, evidences = apply_scoped_exercise_relation(book_title=book_title, chapter=chapter, exercise_label=str(exercise_label))
+        if exercise_anchor.get("status") == "exact_answer_evidence":
+            references = build_reference_items(evidences, chapter)
+            for ref in references:
+                if ref.get("evidence_id") in set(exercise_anchor.get("question_evidence_ids", [])): ref["role"] = "question"
+                elif ref.get("evidence_id") in set(exercise_anchor.get("answer_evidence_ids", [])): ref["role"] = "answer"
+            return {"subject": subject, "chapter": chapter or "", "book_title": book_title or "", "query": query, "intent": intent, "answer_mode": "accepted_evidence", "fallback_note": "", "syllabus_route": [], "retrieval_hits": [], "claim_hits": [], "evidence_hits": evidences, "fallback_hits": [], "references": references, "page_anchor": {"requested_page": None, "match_status": "not_requested"}, "exercise_anchor": exercise_anchor, "query_path": {"exercise_relation_first": True, "retrieval_candidate_set_used": False, "retrieval_hit_count": 0}, "teaching_context": build_bounded_teaching_context(load_events(), subject=subject, chapter=chapter, query=query)}
+        return {"subject": subject, "chapter": chapter or "", "book_title": book_title or "", "query": query, "intent": intent, "answer_mode": "exercise_unconfirmed", "fallback_note": "题号问答需要在当前教材和当前章节中唯一匹配；当前题号未覆盖或存在歧义，不会用语义检索替代题干和答案。", "syllabus_route": [], "retrieval_hits": [], "claim_hits": [], "evidence_hits": [], "fallback_hits": [], "references": [], "page_anchor": {"requested_page": None, "match_status": "not_requested"}, "exercise_anchor": exercise_anchor, "query_path": {"exercise_relation_first": True, "retrieval_candidate_set_used": False, "retrieval_hit_count": 0}, "teaching_context": build_bounded_teaching_context(load_events(), subject=subject, chapter=chapter, query=query)}
     tokens = tokenize(query)
     full_query = normalize_text(query)
     parts = compare_parts(query) if intent == "compare" else []
@@ -845,8 +975,10 @@ def query_knowledge(
             retrieval_hits=retrieval_hits,
             claims=claims,
         )
+        exercise_anchor, evidences = apply_exercise_relation(page_anchor, evidences)
     else:
         page_anchor = build_page_anchor(evidences, page_anchor_request)
+        exercise_anchor = {"status": "not_requested"}
     compare_bundle = build_compare_bundle(routed, claims, evidences, parts) if intent == "compare" else None
     refine_candidates = learner_compare_candidates(subject, chapter)
     answer_mode, fallback_note, fallback = _resolve_answer_fallback(
@@ -858,6 +990,9 @@ def query_knowledge(
         if status == "exact_evidence":
             answer_mode = "accepted_evidence"
             fallback_note = ""
+            if page_anchor_request.get("requested_exercise_label") and exercise_anchor.get("status") not in {"exact_answer_evidence", "same_page_evidence"}:
+                answer_mode = "exercise_unconfirmed"
+                fallback_note = "题目页已精确定位，但未建立可唯一归因的跨页答案关系；不会用语义检索替代答案页。"
         elif status == "exact_asset":
             answer_mode = "page_asset"
             fallback_note = "已精确定位教材原页，但该页尚无可用的结构化 OCR 证据；请基于原图核对，不应声称逐字引用。"
@@ -886,6 +1021,12 @@ def query_knowledge(
         query=query,
     )
 
+    references = build_reference_items(evidences, chapter)
+    for ref in references:
+        if ref.get("evidence_id") in set(exercise_anchor.get("question_evidence_ids", []) or []):
+            ref["role"] = "question"
+        elif ref.get("evidence_id") in set(exercise_anchor.get("answer_evidence_ids", []) or []):
+            ref["role"] = "answer"
     return {
         "subject": subject,
         "chapter": chapter or "",
@@ -899,13 +1040,14 @@ def query_knowledge(
         "claim_hits": claims,
         "evidence_hits": evidences,
         "fallback_hits": fallback,
-        "references": build_reference_items(evidences, chapter),
+        "references": references,
         "learner_snapshot": learner_snapshot(subject),
         "teaching_context": teaching_context,
         "compare_bundle": compare_bundle,
         "refinement_candidates": refine_candidates[:3],
         "query_path": query_path,
         "page_anchor": page_anchor,
+        "exercise_anchor": exercise_anchor,
     }
 
 
@@ -934,6 +1076,16 @@ def render_text(result: dict) -> str:
         )
         if page_anchor.get("source_image_path"):
             lines.append(f"- 原图：{page_anchor['source_image_path']}")
+        if page_anchor.get("source_asset_kind") == "pdf":
+            lines.append(f"- PDF 页：{page_anchor.get('pdf_page')} | 来源：{page_anchor.get('source_asset_path')}")
+        lines.append("")
+    exercise_anchor = dict(result.get("exercise_anchor") or {})
+    if exercise_anchor.get("status") != "not_requested":
+        lines.extend(["## 课后题答案定位", "", f"- 状态：{exercise_anchor.get('status')}"])
+        if exercise_anchor.get("exercise_label"):
+            lines.append(f"- 题号：{exercise_anchor['exercise_label']}")
+        if exercise_anchor.get("answer_pdf_pages"):
+            lines.append(f"- 答案印刷页：{exercise_anchor.get('answer_printed_pages', [])} | 答案 PDF 页：{exercise_anchor['answer_pdf_pages']}")
         lines.append("")
     teaching_context = dict(result.get("teaching_context") or {})
     if teaching_context.get("history_used"):
@@ -961,7 +1113,9 @@ def render_text(result: dict) -> str:
         lines.extend(["## 证据引用", ""])
         for ref in result["references"]:
             section_text = f" | 小节 {ref['section_title']}" if ref.get("section_title") else ""
-            lines.append(f"- {ref['title']} | 页段 {ref['page_span']} | 图片 {ref['image_span']} | chunk {ref['chunk_id']}{section_text}")
+            role = f" | 角色 {ref['role']}" if ref.get("role") else ""
+            page_text = f" | 印刷页 {ref['printed_page']} | PDF 页 {ref['pdf_page']}" if ref.get("printed_page") or ref.get("pdf_page") else ""
+            lines.append(f"- {ref['title']} | 页段 {ref['page_span']} | 图片 {ref['image_span']}{page_text} | chunk {ref['chunk_id']}{section_text}{role}")
         lines.append("")
     if result["fallback_hits"]:
         lines.extend(["## 章节回退", ""])
@@ -978,7 +1132,7 @@ def main() -> int:
     if not args.subject:
         raise SystemExit("[ERROR] --subject is required")
     subject, _ = resolve_subject(args.subject)
-    result = query_knowledge(Path(args.vault_root), subject, args.chapter, args.query or "", args.topk, args.printed_page, args.book_title)
+    result = query_knowledge(Path(args.vault_root), subject, args.chapter, args.query or "", args.topk, args.printed_page, args.book_title, args.exercise_label)
     if args.format == "json":
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:

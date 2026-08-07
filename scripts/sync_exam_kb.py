@@ -17,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rebuild-kb", action="store_true")
     parser.add_argument("--publish-canonical", action="store_true")
     parser.add_argument("--refresh-learning", action="store_true")
+    parser.add_argument("--indexes-only", action="store_true")
     parser.add_argument("--yes", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--no-backup", action="store_true")
@@ -37,10 +38,37 @@ def run_script(name: str, *args: str) -> None:
     )
 
 
+def refresh_query_indexes() -> list[str]:
+    """Rebuild only the indexes required by page-grounded retrieval."""
+    steps = ["build_page_locator_index", "build_exercise_locator_index", "build_search_index"]
+    for step in steps:
+        run_script(f"{step}.py", "--format", "quiet")
+    return steps
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = parse_args()
+    if args.indexes_only:
+        incompatible = any(
+            (
+                args.subject,
+                args.context_json,
+                args.rebuild_kb,
+                args.publish_canonical,
+                args.refresh_learning,
+                args.yes,
+                args.force,
+                args.no_backup,
+            )
+        )
+        if incompatible:
+            raise SystemExit("--indexes-only cannot be combined with full-sync options")
+        steps = refresh_query_indexes()
+        if args.format == "json":
+            print(json.dumps({"mode": "indexes-only", "steps": steps}, ensure_ascii=False, indent=2))
+        return 0
     execute = args.yes or args.force
     steps: list[str] = []
     if args.context_json:
@@ -74,8 +102,15 @@ def main() -> int:
     run_script("build_claim_registry.py", "--format", "quiet")
     run_script("build_conflict_registry.py", "--format", "quiet")
     run_script("lint_kb_entities.py", "--format", "quiet")
-    run_script("build_page_locator_index.py", "--format", "quiet")
-    steps.extend(["build_claim_registry", "build_conflict_registry", "lint_kb_entities", "build_page_locator_index"])
+    index_steps = refresh_query_indexes()
+    steps.extend(
+        [
+            "build_claim_registry",
+            "build_conflict_registry",
+            "lint_kb_entities",
+            *index_steps,
+        ]
+    )
     if args.publish_canonical:
         publish_args = ["--format", "quiet"]
         if args.subject:
