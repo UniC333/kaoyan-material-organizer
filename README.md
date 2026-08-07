@@ -102,6 +102,8 @@ $env:MISTRAL_API_KEY = "your-key"
 
 显式页码是硬约束。只有 `page_anchor.match_status` 为 `exact_evidence` 或 `exact_asset` 才表示原页已经确认；其他状态不会回退到无关页。
 
+按页查询必须提供 `--subject`；已知时也应提供 `--book-title`。结果中的 `page_verification` 会分别说明页面定位、题号正文核验、命中层及能否按教材正文讲解。例如 `exact_asset + unverified + page_asset` 表示“原页已定位、教材正文未确认”，并不表示该页不存在。
+
 ### 会话续接与学习记录
 
 长对话先以“当前任务 + 学科专题锚点”确定真实停点。教材回答必须把教材结构化证据、仅原页定位、补充推导和学习者反馈分别标注；补充推导不能沿用原题页码或题号。

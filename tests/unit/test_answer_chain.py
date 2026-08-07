@@ -46,6 +46,22 @@ def test_source_verify_without_structured_evidence_stops_at_unconfirmed(monkeypa
     assert contract["sections"]["direct_conclusion"] == contract["evidence_assessment"]["can_confirm"]
 
 
+def test_direct_conclusion_extracts_the_relevant_definition_from_evidence() -> None:
+    result = _result(answer_mode="accepted_evidence")
+    result["query"] = "栈的定义是什么？"
+    result["evidence_hits"] = [
+        {
+            "title": "第3章 栈、队列和数组（PDF 第76页）",
+            "content": "# 栈的定义\n栈是只允许在一端进行插入或删除操作的线性表。\n# 队列的定义\n队列是只允许在一端插入、另一端删除的线性表。",
+        }
+    ]
+
+    conclusion = answer_module.direct_conclusion(result)
+
+    assert "栈是只允许在一端进行插入或删除操作的线性表" in conclusion
+    assert "来源：第3章 栈、队列和数组（PDF 第76页）" in conclusion
+
+
 def test_exact_asset_is_never_presented_as_structured_textbook_evidence(monkeypatch) -> None:
     monkeypatch.setattr(answer_module, "build_citations", lambda result: [])
     contract = answer_module.build_answer_contract(
@@ -62,6 +78,28 @@ def test_exact_asset_is_never_presented_as_structured_textbook_evidence(monkeypa
     assert contract["content_provenance"][0]["source_type"] == "page_asset_only"
     assert contract["content_provenance"][0]["textbook_assertion_allowed"] is False
     assert "教材正文未确认" in answer_module.render_text(contract)
+
+
+def test_answer_render_includes_page_verification_summary(monkeypatch) -> None:
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [])
+    result = _result(
+        answer_mode="page_asset",
+        page_anchor={"match_status": "exact_asset", "requested_page": 76, "exercise_match_status": "unverified"},
+    )
+    result["page_verification"] = {
+        "page_location_status": "exact_asset",
+        "exercise_verification_status": "unverified",
+        "answer_mode": "page_asset",
+        "textbook_explanation_allowed": False,
+        "summary": "教材原页已定位；教材正文未确认，不能按书上原题讲解。",
+    }
+
+    rendered = answer_module.render_text(answer_module.build_answer_contract(result))
+
+    assert "## 页码核验摘要" in rendered
+    assert "页面定位：exact_asset" in rendered
+    assert "题号正文核验：unverified" in rendered
+    assert "教材原页已定位；教材正文未确认" in rendered
 
 
 def test_supplemental_derivation_has_its_own_identity(monkeypatch) -> None:

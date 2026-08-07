@@ -57,6 +57,22 @@ def _metadata_paths(book_root: Path, metadata_dirname: str) -> dict[str, Path]:
     }
 
 
+def _resolve_report_artifact_path(raw_path: str, report_path: Path) -> Path:
+    """Resolve OCR artifact paths recorded by current and legacy PDF reports.
+
+    Current reports store absolute paths.  Older reports stored paths relative to
+    the workspace (for example ``.kaoyan-kb/ocr/...``), so resolve those against
+    the workspace that owns the report rather than the process working directory.
+    """
+    candidate = Path(raw_path.strip())
+    if candidate.is_absolute():
+        return candidate
+    report_root = report_path.parent
+    if report_root.name == "indexes" and report_root.parent.name == ".kaoyan-kb":
+        return report_root.parent.parent / candidate
+    return report_root / candidate
+
+
 def _render_chapter_view(chapter: dict[str, Any], chapter_items: list[dict[str, Any]]) -> str:
     lines = [
         "---",
@@ -107,8 +123,10 @@ def build_pdf_ocr_review_status(
         pdf_page = int(chapter.get("pdf_page", chapter.get("page_start", 0)) or 0)
         chapter_id = f"PDFCH-{resolved_source_id}-{chapter_number:04d}"
         page_id = f"PDFPAGE-{resolved_source_id}-{pdf_page:04d}"
-        normalized_path = Path(str(chapter.get("normalized_path", "")).strip())
-        raw_path = Path(str(chapter.get("raw_path", "")).strip())
+        normalized_path = _resolve_report_artifact_path(
+            str(chapter.get("normalized_path", "")), resolved_report_path
+        )
+        raw_path = _resolve_report_artifact_path(str(chapter.get("raw_path", "")), resolved_report_path)
         normalized_payload = load_json_or_default(normalized_path, {})
         completed_at = str(normalized_payload.get("normalized_at") or report_payload.get("updated_at") or now_iso())
         updated_at = str(report_payload.get("updated_at") or now_iso())

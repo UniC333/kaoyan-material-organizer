@@ -12,7 +12,7 @@ def add_core_commands(subparsers: argparse._SubParsersAction, *, formatter_class
 
     ask = subparsers.add_parser("ask", help="answer a saved/local question with optional handoff into learner history", description="Answer a local question and optionally save the result into learner history.", formatter_class=formatter_class)
     ask.add_argument("--vault-root")
-    ask.add_argument("--subject", required=True)
+    ask.add_argument("--subject")
     ask.add_argument("--chapter")
     ask.add_argument("--book-title")
     ask.add_argument("--question", required=True)
@@ -58,7 +58,9 @@ def dispatch_core(
         return json.dumps(payload, ensure_ascii=False, indent=2) + "\n" if args.format == "json" else render_doctor_text(payload)
 
     if args.command == "ask":
-        forwarded = ["--subject", args.subject, "--question", args.question, "--topk", str(args.topk), "--format", args.format]
+        forwarded = ["--question", args.question, "--topk", str(args.topk), "--format", args.format]
+        if args.subject:
+            forwarded[0:0] = ["--subject", args.subject]
         for key in ("vault_root", "chapter", "book_title", "saved_at", "printed_page", "exercise_label"):
             value = getattr(args, key)
             if value:

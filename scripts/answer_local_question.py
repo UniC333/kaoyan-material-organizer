@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,44 @@ def page_anchor_snippets(result: dict) -> list[str]:
     return dedupe([str(item).strip() for item in snippets])
 
 
+def evidence_excerpt(evidence: dict, question: str) -> tuple[int, str]:
+    """Return a short, question-relevant textbook sentence from one page."""
+    raw_lines = [re.sub(r"\s+", " ", str(line)).strip() for line in str(evidence.get("content", "")).splitlines()]
+    lines = [line for line in raw_lines if len(line) >= 12 and not line.startswith(("#", "!["))]
+    normalized_question = re.sub(r"[？?。！，、：:\s]", "", question)
+    definition_topic = normalized_question.split("的定义", 1)[0] if "的定义" in normalized_question else ""
+    for index, heading in enumerate(raw_lines):
+        heading = heading.lstrip("#").strip()
+        if not definition_topic or f"{definition_topic}的定义" not in heading:
+            continue
+        following = next(
+            (
+                candidate
+                for candidate in raw_lines[index + 1 :]
+                if len(candidate) >= 12 and not candidate.startswith(("#", "![", "考点追踪"))
+            ),
+            "",
+        )
+        if following:
+            lines.append(f"{heading}：{following}")
+    bigrams = {normalized_question[index : index + 2] for index in range(max(0, len(normalized_question) - 1))}
+    ranked = sorted(
+        (
+            (
+                sum(line.count(token) for token in bigrams if token)
+                + (10 if definition_topic and f"{definition_topic}的定义" in line else 0),
+                line,
+            )
+            for line in lines
+        ),
+        key=lambda item: (-item[0], len(item[1])),
+    )
+    if not ranked:
+        return 0, ""
+    score, line = ranked[0]
+    return score, line[:320]
+
+
 def direct_conclusion(result: dict) -> str:
     anchor_snippets = page_anchor_snippets(result)
     if anchor_snippets:
@@ -65,6 +104,15 @@ def direct_conclusion(result: dict) -> str:
         texts = dedupe([claim["text"] for claim in result["claim_hits"]])
         return "；".join(texts[:3])
     if result["evidence_hits"]:
+        excerpts = [
+            (score, text, evidence.get("title", ""))
+            for evidence in result["evidence_hits"][:5]
+            for score, text in [evidence_excerpt(evidence, str(result.get("query", "")))]
+        ]
+        excerpts.sort(key=lambda item: (-item[0], len(item[1])))
+        if excerpts and excerpts[0][1]:
+            _, text, title = excerpts[0]
+            return f"{text}（来源：{title}）"
         return "；".join(item.get("title", "") for item in result["evidence_hits"][:3])
     if result["fallback_hits"]:
         return result["fallback_hits"][0].get("chapter_overview", "") or "当前只能回退到章节级概览。"
@@ -423,6 +471,7 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "evidence_hits": result.get("evidence_hits", []),
         "fallback_hits": result.get("fallback_hits", []),
         "page_anchor": result.get("page_anchor", {}),
+        "page_verification": result.get("page_verification", {}),
         "query_result": result,
     }
     validate_entity_contract("query_artifact", contract)
@@ -460,6 +509,20 @@ def render_text(contract: dict) -> str:
             f"- 下一步：{assessment['next_action']}",
         ]
     )
+    verification = dict(contract.get("page_verification") or {})
+    if verification:
+        lines.extend(
+            [
+                "",
+                "## 页码核验摘要",
+                "",
+                f"- 页面定位：{verification.get('page_location_status', '未确认')}",
+                f"- 题号正文核验：{verification.get('exercise_verification_status', '未确认')}",
+                f"- 命中层：{verification.get('answer_mode', contract.get('answer_mode', ''))}",
+                f"- 可否按教材正文讲解：{'可以' if verification.get('textbook_explanation_allowed') else '不可以'}",
+                f"- 结论：{verification.get('summary', '')}",
+            ]
+        )
     lines.extend(["", "## 内容来源", ""])
     for item in contract.get("content_provenance", []):
         identity: list[str] = []

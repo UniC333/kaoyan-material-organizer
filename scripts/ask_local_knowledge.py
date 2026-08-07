@@ -8,14 +8,14 @@ from pathlib import Path
 
 from answer_local_question import build_answer_contract, render_text
 from common import default_vault_root_arg, resolve_subject
-from query_local_knowledge import query_knowledge
+from query_local_knowledge import explicit_page_subject_error, query_knowledge
 from save_local_answer import save_answer_contract, saved_at_label
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--vault-root")
-    parser.add_argument("--subject", required=True)
+    parser.add_argument("--subject")
     parser.add_argument("--chapter")
     parser.add_argument("--book-title")
     parser.add_argument("--question", required=True)
@@ -32,6 +32,11 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = parse_args()
+    page_error = explicit_page_subject_error(subject=args.subject, query=args.question, printed_page=args.printed_page)
+    if page_error:
+        raise SystemExit(page_error)
+    if not args.subject:
+        raise SystemExit("[ERROR] --subject is required")
     vault_root = Path(args.vault_root or default_vault_root_arg())
     subject, _ = resolve_subject(args.subject)
     result = query_knowledge(vault_root, subject, args.chapter, args.question, args.topk, args.printed_page, args.book_title, args.exercise_label)
