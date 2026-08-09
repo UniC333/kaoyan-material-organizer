@@ -95,3 +95,49 @@ def test_published_learning_items_create_a_topic_scoped_handoff() -> None:
 
     assert context["learning_handoff"]["original_problem"]["item_id"] == "p72-example"
     assert context["learning_handoff"]["supplementary_content"][0]["item_id"] == "sec-generalization"
+
+
+def test_skill_contract_keeps_state_first_recording_boundaries() -> None:
+    skill = (Path(__file__).resolve().parents[2] / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "状态优先分流" in skill
+    assert "普通进度陈述默认零写入" in skill
+    assert "纯时长、背词、章节推进等进度不生成问答" in skill
+    assert "多主题会话至多蒸馏一个主题" in skill
+
+
+def test_publish_without_confirmation_has_zero_writes(tmp_path: Path) -> None:
+    with pytest.raises(distillation.DistillationError, match="explicit --yes confirmation is required"):
+        distillation.publish_candidate("missing-candidate", vault_root=tmp_path, confirmed=False)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_publish_candidate_is_idempotent(monkeypatch, tmp_path: Path) -> None:
+    candidate = distillation.build_distillation_candidate(
+        _bundle(),
+        _payload(),
+        now="2026-08-04T10:00:00+08:00",
+    )
+    store_path = tmp_path / "distillation_candidates.json"
+    store = {"contract_version": candidate["contract_version"], "items": [candidate]}
+    events: list[dict] = []
+
+    monkeypatch.setattr(distillation, "_candidate_store", lambda: (store_path, store))
+    monkeypatch.setattr(distillation, "resolve_subject", lambda subject: (subject, {"dir": "10_数学"}))
+    monkeypatch.setattr(distillation, "_rebuild_saved_qa", lambda vault_root: None)
+    monkeypatch.setattr(distillation, "load_events", lambda: events)
+    monkeypatch.setattr(distillation, "append_event", lambda **kwargs: events.append(kwargs))
+    monkeypatch.setattr(distillation, "rebuild_views", lambda: None)
+
+    first = distillation.publish_candidate(candidate["candidate_id"], vault_root=tmp_path, confirmed=True)
+    second = distillation.publish_candidate(candidate["candidate_id"], vault_root=tmp_path, confirmed=True)
+
+    assert first["already_published"] is False
+    assert second == {
+        "candidate_id": candidate["candidate_id"],
+        "note_path": first["note_path"],
+        "already_published": True,
+    }
+    assert Path(first["note_path"]).is_file()
+    assert len(events) == 1
