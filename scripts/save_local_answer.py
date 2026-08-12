@@ -83,6 +83,12 @@ def save_eligibility(contract: dict) -> tuple[bool, str]:
     """Return before any write whether this answer may enter learner history."""
     answer_mode = str(contract.get("answer_mode", ""))
     assessment = dict(contract.get("evidence_assessment") or {})
+    grounding = dict(contract.get("answer_grounding") or {})
+    if grounding.get("required"):
+        if grounding.get("status") != "exact_answer" or not grounding.get("can_conclude"):
+            return False, "原书答案尚未形成唯一可核验锚点，不能保存为学习问答。"
+        if not contract.get("citation_coverage_ok"):
+            return False, "有来源题目必须同时引用原题和原书答案，当前引用不完整。"
     if answer_mode not in SAVEABLE_ANSWER_MODES:
         return False, "当前回答没有可保存的结构化证据；请先补齐教材映射或 OCR 后再保存。"
     if answer_mode in {"canonical_claim", "accepted_evidence"} and not bool(contract.get("citation_coverage_ok")):
@@ -105,6 +111,7 @@ def render_note(contract: dict) -> str:
         f"- 图片范围：{anchor.get('image_span', '未指定')}",
         f"- 分片 ID：{anchor.get('chunk_id', '未指定')}",
         f"- 依据级别：{contract['evidence_assessment']['level']}",
+        f"- 原书答案门控：{(contract.get('answer_grounding') or {}).get('status', 'not_applicable')}",
         "",
         "## 内容来源",
         "",

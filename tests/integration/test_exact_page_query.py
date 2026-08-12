@@ -11,6 +11,50 @@ if str(SCRIPTS) not in sys.path:
 import query_local_knowledge as query_module
 
 
+def test_compact_p_page_anchor_next_to_chinese_text() -> None:
+    assert query_module.parse_page_anchor("高数p64例3.8第一问")["requested_page"] == 64
+
+
+def test_source_photo_without_book_identity_still_requires_answer_grounding() -> None:
+    grounding = query_module.build_answer_grounding(query="看这张题目照片，帮我检查这道题的过程", book_title=None, page_anchor={}, exercise_anchor={}, evidences=[])
+    assert grounding["required"] is True
+    assert grounding["status"] == "answer_not_found"
+    assert grounding["can_conclude"] is False
+
+
+def test_explicitly_self_authored_problem_skips_source_answer_gate() -> None:
+    grounding = query_module.build_answer_grounding(query="这是我自拟的一道题，帮我推导", book_title=None, page_anchor={}, exercise_anchor={}, evidences=[])
+    assert grounding["status"] == "not_applicable"
+    assert grounding["can_conclude"] is True
+
+
+def test_exact_exercise_anchor_builds_source_answer_grounding() -> None:
+    grounding = query_module.build_answer_grounding(
+        query="例3.8 第一问，检查我的过程",
+        book_title="李正元数一",
+        page_anchor={"requested_page": 64, "book_title": "李正元数一", "match_status": "exact_evidence"},
+        exercise_anchor={"status": "exact_answer_evidence", "exercise_label": "例3.8", "question_evidence_ids": ["EV-Q"], "answer_evidence_ids": ["EV-A"], "question_printed_pages": [64], "answer_printed_pages": [65]},
+        evidences=[{"evidence_id": "EV-Q", "content": "原题"}, {"evidence_id": "EV-A", "content": "原书答案"}],
+    )
+    assert grounding["status"] == "exact_answer"
+    assert grounding["can_conclude"] is True
+    assert grounding["problem"]["evidence_ids"] == ["EV-Q"]
+    assert grounding["solution"]["evidence_ids"] == ["EV-A"]
+    assert grounding["solution"]["content"] == "原书答案"
+
+
+def test_exact_asset_problem_reports_answer_asset_only() -> None:
+    grounding = query_module.build_answer_grounding(query="P64 例3.8 怎么做", book_title="李正元数一", page_anchor={"requested_page": 64, "requested_exercise_label": "例3.8", "match_status": "exact_asset"}, exercise_anchor={}, evidences=[])
+    assert grounding["status"] == "answer_asset_only"
+    assert grounding["can_conclude"] is False
+
+
+def test_ambiguous_exercise_relation_reports_answer_ambiguous() -> None:
+    grounding = query_module.build_answer_grounding(query="P64 例3.8 怎么做", book_title="李正元数一", page_anchor={"requested_page": 64, "requested_exercise_label": "例3.8", "match_status": "exact_evidence"}, exercise_anchor={"status": "ambiguous", "exercise_label": "例3.8"}, evidences=[])
+    assert grounding["status"] == "answer_ambiguous"
+    assert grounding["can_conclude"] is False
+
+
 def test_explicit_page_clears_unrelated_semantic_hits(monkeypatch, tmp_path: Path) -> None:
     wrong_evidence = {"evidence_id": "EV-WRONG", "subject": "数学", "title": "另一页"}
     wrong_claim = {"claim_id": "CL-WRONG", "evidence_ids": ["EV-WRONG"], "claim_type": "definition", "text": "错误页"}

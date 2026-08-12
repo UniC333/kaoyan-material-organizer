@@ -170,6 +170,35 @@ def test_exercise_locator_links_question_to_multpage_answer(monkeypatch, tmp_pat
     assert relation["answer_pdf_pages"] == [15, 16]
 
 
+def test_worked_example_relation_links_p64_question_to_p65_solution() -> None:
+    evidences = [
+        {
+            "evidence_id": "EV-MATH-000097",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "【例 3.8】计算下列定积分：（I）原题；（II）另一问。",
+            "page_classification_refs": [{"book_id": "li-math1", "book_title": "李正元数一", "chapter_id": "CH3", "printed_page": 64, "source_image_path": "P64.jpg"}],
+        },
+        {
+            "evidence_id": "EV-MATH-000098",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "【解】（I）2\\left(\\frac12\\cdot\\frac{\\pi}{3}+\\left.\\sin x\\right|_{\\pi/3}^{\\pi/2}\\right)=\\frac{\\pi}{3}+2-\\sqrt3。\n【例 3.9】下一题。",
+            "page_classification_refs": [{"book_id": "li-math1", "book_title": "李正元数一", "chapter_id": "CH3", "printed_page": 65, "source_image_path": "P65.jpg"}],
+        },
+    ]
+
+    relations = exercise_locator.build_worked_example_relations(evidences)
+
+    relation = next(item for item in relations if item["exercise_label"] == "例3.8")
+    assert relation["relation_status"] == "exact"
+    assert relation["question"]["evidence_ids"] == ["EV-MATH-000097"]
+    assert relation["question"]["printed_pages"] == [64]
+    assert relation["answer"]["evidence_ids"] == ["EV-MATH-000098"]
+    assert relation["answer"]["printed_pages"] == [65]
+    assert "\\frac{\\pi}{3}+2-\\sqrt3" in relation["answer"]["content"]
+
+
 def test_exercise_locator_does_not_treat_summary_number_as_answer(monkeypatch, tmp_path: Path) -> None:
     layout = {"manifests": tmp_path / "manifests", "evidence": tmp_path / "evidence", "indexes": tmp_path / "indexes", "review_queues": tmp_path / "review-queues"}
     for path in layout.values():
@@ -296,7 +325,7 @@ def test_image_page_reference_does_not_parse_printed_page_as_pdf_page() -> None:
     assert reference["pdf_page"] == 0
 
 
-def test_example_label_uses_same_page_evidence_without_number_collapse() -> None:
+def test_example_question_page_does_not_substitute_for_source_answer() -> None:
     locator = {
         "match_status": "exact_evidence",
         "requested_exercise_label": "例3.14",
@@ -306,7 +335,7 @@ def test_example_label_uses_same_page_evidence_without_number_collapse() -> None
 
     anchor, evidences = apply_exercise_relation(locator, [{"evidence_id": "EV-MATH-000104"}])
 
-    assert anchor["status"] == "same_page_evidence"
+    assert anchor["status"] == "unverified"
     assert anchor["exercise_label"] == "例3.14"
-    assert anchor["question_evidence_ids"] == ["EV-MATH-000104"]
+    assert anchor["reason"] == "source-answer-not-found"
     assert evidences == [{"evidence_id": "EV-MATH-000104"}]

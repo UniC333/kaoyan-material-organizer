@@ -168,3 +168,71 @@ def test_ask_queries_once_and_passes_the_same_contract_to_save(monkeypatch, tmp_
     assert calls.count("query") == 1
     assert calls[-1] is contract
     assert capsys.readouterr().out
+
+
+def test_sourced_problem_without_source_answer_blocks_conclusion_and_save(monkeypatch) -> None:
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [])
+    result = _result(answer_mode="accepted_evidence", page_anchor={"match_status": "exact_evidence", "requested_page": 64})
+    result["answer_grounding"] = {"required": True, "status": "answer_not_found", "can_conclude": False, "problem": {"evidence_ids": ["EV-Q"]}, "solution": {}, "failure_reason": "原书答案未确认。", "next_action": "先定位题解。"}
+    result["supplementary_content"] = [{"explanation": "错误的 AI 独立推导"}]
+
+    contract = answer_module.build_answer_contract(result)
+
+    assert contract["answer_contract_version"] == "m6.answer.v2"
+    assert contract["sections"]["direct_conclusion"] == "原书答案未确认。"
+    assert contract["sections"]["supplementary_derivation"] == []
+    assert "错误的 AI 独立推导" not in answer_module.render_text(contract)
+    allowed, reason = save_eligibility(contract)
+    assert not allowed
+    assert "原书答案" in reason
+
+
+def test_exact_answer_requires_problem_and_solution_citations(monkeypatch) -> None:
+    result = _result(answer_mode="accepted_evidence")
+    result["answer_grounding"] = {"required": True, "status": "exact_answer", "can_conclude": True, "problem": {"evidence_ids": ["EV-Q"], "printed_pages": [64], "exercise_label": "例3.8"}, "solution": {"evidence_ids": ["EV-A"], "printed_pages": [65], "exercise_label": "例3.8", "content": "\\frac{\\pi}{3}+2-\\sqrt3"}, "failure_reason": "", "next_action": ""}
+    result["supplementary_content"] = [{"explanation": "由偶函数折半后保留整体系数 2。"}]
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [{"evidence_id": "EV-Q"}, {"evidence_id": "EV-A"}])
+
+    contract = answer_module.build_answer_contract(result)
+
+    assert contract["citation_coverage_ok"] is True
+    assert contract["sections"]["source_answer"] == "\\frac{\\pi}{3}+2-\\sqrt3"
+    assert contract["content_provenance"][0]["source_type"] == "textbook_problem_evidence"
+    assert contract["content_provenance"][1]["source_type"] == "textbook_solution_evidence"
+    assert save_eligibility(contract) == (True, "")
+
+
+def test_supplementary_derivation_conflict_stops_the_answer(monkeypatch) -> None:
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [{"evidence_id": "EV-Q"}, {"evidence_id": "EV-A"}])
+    result = _result(answer_mode="accepted_evidence")
+    result["answer_grounding"] = {"required": True, "status": "exact_answer", "can_conclude": True, "problem": {"evidence_ids": ["EV-Q"]}, "solution": {"evidence_ids": ["EV-A"], "content": "原书答案"}, "failure_reason": "", "next_action": ""}
+    result["answer_consistency"] = {"status": "conflict", "reason": "补充推导得到另一结果。"}
+    result["supplementary_content"] = [{"explanation": "冲突推导"}]
+
+    contract = answer_module.build_answer_contract(result)
+
+    assert contract["answer_grounding"]["status"] == "answer_ambiguous"
+    assert contract["answer_grounding"]["can_conclude"] is False
+    assert contract["sections"]["supplementary_derivation"] == []
+    assert contract["citation_coverage_ok"] is False
+
+
+@pytest.mark.parametrize("status", ["answer_asset_only", "answer_ambiguous", "answer_not_found", "answer_unavailable"])
+def test_all_unconfirmed_source_answer_states_fail_closed(monkeypatch, status: str) -> None:
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [])
+    result = _result(answer_mode="accepted_evidence")
+    result["answer_grounding"] = {"required": True, "status": status, "can_conclude": False, "problem": {}, "solution": {}, "failure_reason": "不能确认答案。", "next_action": "补齐答案证据。"}
+    contract = answer_module.build_answer_contract(result)
+    assert contract["sections"]["direct_conclusion"] == "不能确认答案。"
+    assert contract["sections"]["supplementary_derivation"] == []
+    assert contract["citation_coverage_ok"] is False
+
+
+def test_sourced_answer_render_order_is_fixed(monkeypatch) -> None:
+    citation = lambda evidence_id: {"evidence_id": evidence_id, "title": evidence_id, "page_span": "", "image_span": "", "chunk_id": "", "section_title": "", "section_view_path": ""}
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [citation("EV-Q"), citation("EV-A")])
+    result = _result(answer_mode="accepted_evidence")
+    result["answer_grounding"] = {"required": True, "status": "exact_answer", "can_conclude": True, "problem": {"evidence_ids": ["EV-Q"]}, "solution": {"evidence_ids": ["EV-A"], "content": "原书答案"}, "failure_reason": "", "next_action": ""}
+    rendered = answer_module.render_text(answer_module.build_answer_contract(result))
+    headings = [rendered.index(title) for title in ("## 答案定位状态", "## 原书答案", "## 过程核对", "## AI 辅助推导")]
+    assert headings == sorted(headings)
