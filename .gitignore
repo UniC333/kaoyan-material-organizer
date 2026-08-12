@@ -47,8 +47,10 @@ __pycache__/
 !/tests/unit/test_page_locator.py
 !/tests/unit/test_answer_chain.py
 !/tests/unit/test_conversation_distillation.py
+!/tests/unit/test_review_scheduler.py
 !/tests/integration/
 !/tests/fixtures/
 !/tests/fixtures/pdf_page_route_p67_q01.json
 /tests/integration/*
 !/tests/integration/test_exact_page_query.py
+!/tests/integration/test_adaptive_review_cli.py

@@ -384,18 +384,78 @@ def _build_weekly_refresh_fallback(args: argparse.Namespace, failure_message: st
 
 
 def _learner_exercise_output(args: argparse.Namespace) -> str:
-    from learner_events import append_event, rebuild_views
+    from learner_events import append_event, load_events, rebuild_views
+    from kaoyan_kb.domain.review_scheduler import (
+        is_duplicate_review_event,
+        is_supported_review_subject,
+        previous_interval_for,
+        schedule_fields,
+    )
 
     subject = args.subject or _subject_from_node_id(args.node)
+    chapter_title = args.chapter or ""
+    events = load_events()
     payload = {
         "node_id": args.node,
         "result": args.result,
         "tags": _dedupe_strings(list(args.tag)),
         "note": args.note,
     }
+    is_review = args.context in {"chapter_review", "scheduled_review"}
+    if is_review:
+        if not args.review_id or not args.question_id or not args.fluency:
+            raise SystemExit("review exercise requires --review-id, --question-id, and --fluency")
+        if not is_supported_review_subject(subject):
+            raise SystemExit("adaptive review currently supports mathematics and 408 subjects only")
+        duplicate = is_duplicate_review_event(
+            events,
+            subject=subject,
+            chapter_title=chapter_title,
+            review_id=args.review_id,
+            question_id=args.question_id,
+            node_id=args.node,
+        )
+        if duplicate is not None:
+            duplicate_payload = dict(duplicate.get("payload") or {})
+            result = {
+                "event_id": duplicate.get("event_id", ""),
+                "event_type": duplicate.get("event_type", ""),
+                "subject": subject,
+                "chapter_title": chapter_title,
+                "node_id": args.node,
+                "result": duplicate_payload.get("result", ""),
+                "fluency": duplicate_payload.get("fluency", ""),
+                "effective_fluency": duplicate_payload.get("effective_fluency", ""),
+                "interval_days": duplicate_payload.get("interval_days", 0),
+                "due_date": duplicate_payload.get("due_date", ""),
+                "idempotent_reuse": True,
+                "cli_write_scope": "none_existing_event_reused",
+                "learner_layer_only": True,
+            }
+            return json.dumps(result, ensure_ascii=False, indent=2) + "\n" if args.format == "json" else ""
+        payload.update(
+            {
+                "context": args.context,
+                "review_id": args.review_id,
+                "question_id": args.question_id,
+                "fluency": args.fluency,
+                "duration_minutes": args.duration_minutes,
+                "hint_used": bool(args.hint_used),
+            }
+        )
+        payload.update(
+            schedule_fields(
+                subject=subject,
+                result=args.result,
+                fluency=args.fluency,
+                occurred_at=now_iso(),
+                previous_interval=previous_interval_for(events, subject, chapter_title, args.node),
+                duration_minutes=args.duration_minutes,
+            )
+        )
     event = append_event(
         subject=subject,
-        chapter_title=args.chapter or "",
+        chapter_title=chapter_title,
         event_type="exercise_logged",
         payload=payload,
     )
@@ -404,9 +464,14 @@ def _learner_exercise_output(args: argparse.Namespace) -> str:
         "event_id": event["event_id"],
         "event_type": event["event_type"],
         "subject": subject,
-        "chapter_title": args.chapter or "",
+        "chapter_title": chapter_title,
         "node_id": args.node,
         "result": args.result,
+        "fluency": payload.get("fluency", ""),
+        "effective_fluency": payload.get("effective_fluency", ""),
+        "interval_days": payload.get("interval_days", 0),
+        "due_date": payload.get("due_date", ""),
+        "idempotent_reuse": False,
         "cli_write_scope": "learner_events_and_derived_views",
         "learner_layer_only": True,
     }

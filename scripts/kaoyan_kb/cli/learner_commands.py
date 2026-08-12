@@ -22,7 +22,10 @@ def add_learner_commands(subparsers: argparse._SubParsersAction, *, formatter_cl
 
     artifact("orchestration-context", date=False, extra=(("--as-of", {}), ("--freshness-days", {"type": int, "default": 14})))
     artifact("daily-card")
-    artifact("review-followups")
+    artifact(
+        "review-followups",
+        extra=(("--time-budget-minutes", {"type": int, "default": 20}), ("--max-items", {"type": int, "default": 3})),
+    )
     artifact("weekly-orchestration", extra=(("--override-json", {}),))
     artifact("teacher-loop-artifact")
     artifact("adaptive-coaching-context", extra=(("--stale-signal-days", {"type": int, "default": 21}),))
@@ -67,6 +70,15 @@ def add_learner_commands(subparsers: argparse._SubParsersAction, *, formatter_cl
     exercise.add_argument("--result", choices=("right", "wrong", "partial"), required=True)
     exercise.add_argument("--tag", action="append", default=[])
     exercise.add_argument("--note", default="")
+    exercise.add_argument("--context", choices=("ordinary", "chapter_review", "scheduled_review"), default="ordinary")
+    exercise.add_argument("--review-id", default="")
+    exercise.add_argument("--question-id", default="")
+    exercise.add_argument(
+        "--fluency",
+        choices=("very_fluent", "fairly_fluent", "not_fluent", "needs_remediation"),
+    )
+    exercise.add_argument("--duration-minutes", type=int)
+    exercise.add_argument("--hint-used", action="store_true")
     exercise.add_argument("--format", choices=("json", "quiet"), default="json")
 
 
@@ -130,6 +142,8 @@ def dispatch_learner(args: argparse.Namespace, run_script: Callable[..., str], e
     if script is None:
         return None
     extra = ["--plan-date", args.plan_date]
+    if command == "review-followups":
+        extra.extend(["--time-budget-minutes", str(args.time_budget_minutes), "--max-items", str(args.max_items)])
     if command == "adaptive-coaching-context":
         extra.extend(["--stale-signal-days", str(args.stale_signal_days)])
     elif command == "longitudinal-tutoring-context":

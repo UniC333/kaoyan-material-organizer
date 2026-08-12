@@ -120,6 +120,22 @@ $env:MISTRAL_API_KEY = "your-key"
 
 讲解本身不写入学习资料。使用者明确要求“记录”或“同步”后，才可用 `kb.py learner distill` 生成候选并通过 `apply --yes` 发布。候选记录原题/补充内容关系、来源类型、掌握状态、下次续接和一个可选自测；学习者反馈只用于后续教学，不能成为教材事实证据。
 
+### 章末复盘与自适应复习
+
+数学和408的章末复盘可以在同一道题下按重要知识点分别记录正确性与熟练度：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\kb.py learner exercise --subject 数学 --chapter 第三章 --node MATH-INTEGRAL-001 --result right --context chapter_review --review-id chapter-3-review --question-id question-1 --fluency not_fluent --duration-minutes 8 --format json
+```
+
+熟练度可选 `very_fluent`、`fairly_fluent`、`not_fluent` 和 `needs_remediation`。首次间隔分别为 14、7、3、1 天；客观错误或部分完成会限制有效熟练度，但不会覆盖使用者的原始自评。
+
+学习开始时可读取当天到期项。默认只选最多 20 分钟、3 个知识点，未选中的逾期内容顺延；查询本身不会记作完成：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\kb.py learner review-followups --plan-date 2026-08-12 --time-budget-minutes 20 --max-items 3 --format json
+```
+
 ## 数据与隐私
 
 - 原始资料保留在使用者自己的目录中，不通过移动原文件表达章节归属。

@@ -9,6 +9,7 @@ from typing import Any
 
 from common import learner_file_map, load_json_or_default, now_iso, save_json, stable_fingerprint
 from kaoyan_kb.domain.learner_model import build_learner_model_payload
+from kaoyan_kb.domain.review_scheduler import latest_review_state
 
 EVENT_SCHEMA_VERSION = "0.3.0"
 ALLOWED_SOURCE_KINDS = {"learner_safe_query_answer", "query_answer", "legacy_saved_answer", "codex_conversation_distillation"}
@@ -141,12 +142,29 @@ def rebuild_views(default: Path | None = None) -> dict[str, dict[str, Any]]:
     question_history: dict[str, Any] = {"items": []}
     error_log: dict[str, Any] = {"items": []}
     review_history: dict[str, Any] = {"items": []}
+    review_schedule: dict[str, Any] = {"contract_version": "adaptive-review.v1", "items": []}
     refinement_queue = load_json_or_default(files["refinement_queue"], {"items": []})
     distillation_candidates = load_json_or_default(
         files["distillation_candidates"], {"contract_version": "r54.conversation-distillation.v1", "items": []}
     )
 
     for event in events:
+        if event.get("event_type") == "exercise_logged":
+            exercise_payload = dict(event.get("payload") or {})
+            if exercise_payload.get("context") in {"chapter_review", "scheduled_review"}:
+                review_history["items"].append(
+                    {
+                        "saved_at": event.get("occurred_at", ""),
+                        "subject": event.get("subject", ""),
+                        "chapter_title": event.get("chapter_title", ""),
+                        "event": "adaptive_review_completed",
+                        "node_id": exercise_payload.get("node_id", ""),
+                        "result": exercise_payload.get("result", ""),
+                        "fluency": exercise_payload.get("fluency", ""),
+                        "effective_fluency": exercise_payload.get("effective_fluency", ""),
+                        "due_date": exercise_payload.get("due_date", ""),
+                    }
+                )
         if event.get("event_type") != "question_saved":
             continue
         intake = dict(event.get("intake_decision") or {})
@@ -194,11 +212,13 @@ def rebuild_views(default: Path | None = None) -> dict[str, dict[str, Any]]:
                 }
             )
 
+    review_schedule["items"] = list(latest_review_state(events).values())
     payloads = {
         "learner_model": learner_model,
         "question_history": question_history,
         "error_log": error_log,
         "review_history": review_history,
+        "review_schedule": review_schedule,
         "refinement_queue": refinement_queue,
         "distillation_candidates": distillation_candidates,
     }

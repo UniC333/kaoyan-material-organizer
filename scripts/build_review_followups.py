@@ -9,11 +9,13 @@ from typing import Any
 
 from build_daily_study_card import ARTIFACT_JSON as DAILY_CARD_JSON
 from common import INDEX_DIRNAME, default_vault_root_arg, save_json, save_text
+from kaoyan_kb.domain.review_scheduler import build_checkin_summary, build_due_queue
+from learner_events import load_events
 
 ARTIFACT_JSON = "28_r17_review_followups.json"
 ARTIFACT_MD = "28_r17_review_followups.md"
 ARTIFACT_ID = "r17-review-followups"
-ARTIFACT_CONTRACT_VERSION = "r17.review-followups.v1"
+ARTIFACT_CONTRACT_VERSION = "r17.review-followups.v2"
 POST_R17_T04_SUCCESSOR = {
     "track_id": "R17-T05",
     "title": "weekly orchestration, schedule adjustment, and human override boundary",
@@ -27,6 +29,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--vault-root", default=default_vault_root_arg())
     parser.add_argument("--plan-date", required=True)
+    parser.add_argument("--time-budget-minutes", type=int, default=20)
+    parser.add_argument("--max-items", type=int, default=3)
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
     return parser.parse_args()
 
@@ -34,7 +38,14 @@ def parse_args() -> argparse.Namespace:
 def _load_daily_card(index_root: Path) -> dict[str, Any]:
     path = index_root / DAILY_CARD_JSON
     if not path.exists():
-        raise SystemExit("missing daily study card artifact; run build_daily_study_card.py first")
+        return {
+            "artifact_contract_version": "",
+            "recommended_actions": [],
+            "review_needed_actions": [],
+            "blocked_actions": [],
+            "out_of_scope_actions": [],
+            "remaining_gaps": [],
+        }
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -104,7 +115,14 @@ def _build_blocked(action: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_payload(index_root: Path, plan_date: str) -> dict[str, Any]:
+def build_payload(
+    index_root: Path,
+    plan_date: str,
+    *,
+    events: list[dict[str, Any]] | None = None,
+    time_budget_minutes: int = 20,
+    max_items: int = 3,
+) -> dict[str, Any]:
     daily_card = _load_daily_card(index_root)
     formal_follow_ups: list[dict[str, Any]] = []
     review_only_insights: list[dict[str, Any]] = []
@@ -123,7 +141,14 @@ def build_payload(index_root: Path, plan_date: str) -> dict[str, Any]:
         blocked_follow_ups.append(_build_blocked(action))
 
     remaining_gaps = list(daily_card.get("remaining_gaps", []))
-    readiness_status = "ready-for-r17-t05" if formal_follow_ups else "not-ready-for-r17-t05"
+    review_events = events or []
+    scheduled_reviews = build_due_queue(
+        review_events,
+        plan_date=plan_date,
+        time_budget_minutes=time_budget_minutes,
+        max_items=max_items,
+    )
+    readiness_status = "ready-for-r17-t05" if formal_follow_ups or scheduled_reviews["selected"] else "not-ready-for-r17-t05"
     return {
         "artifact_contract_version": ARTIFACT_CONTRACT_VERSION,
         "artifact_id": ARTIFACT_ID,
@@ -138,6 +163,14 @@ def build_payload(index_root: Path, plan_date: str) -> dict[str, Any]:
         "formal_follow_ups": formal_follow_ups,
         "review_only_insights": review_only_insights,
         "blocked_follow_ups": blocked_follow_ups,
+        "scheduled_reviews": scheduled_reviews,
+        "review_checkin": {
+            **build_checkin_summary(review_events, plan_date=plan_date),
+            "completion_requires_exercise_event": True,
+            "query_marks_completed": False,
+            "no_due_status": "无需复习",
+            "overdue_policy": "bounded_roll_forward",
+        },
         "fact_writeback_allowed": False,
         "remaining_gaps": remaining_gaps,
         "readiness_status": readiness_status,
@@ -159,6 +192,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- formal_follow_ups: {len(list(payload.get('formal_follow_ups', [])))}",
         f"- review_only_insights: {len(list(payload.get('review_only_insights', [])))}",
         f"- blocked_follow_ups: {len(list(payload.get('blocked_follow_ups', [])))}",
+        f"- scheduled_reviews: {len(list(dict(payload.get('scheduled_reviews', {})).get('selected', [])))}",
         "",
         "## Post-R17-T04 successor",
         "",
@@ -175,7 +209,13 @@ def main() -> int:
     args = parse_args()
     index_root = Path(args.vault_root) / INDEX_DIRNAME
     index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, args.plan_date)
+    payload = build_payload(
+        index_root,
+        args.plan_date,
+        events=load_events(),
+        time_budget_minutes=args.time_budget_minutes,
+        max_items=args.max_items,
+    )
     save_json(index_root / ARTIFACT_JSON, payload)
     save_text(index_root / ARTIFACT_MD, render_markdown(payload))
     result = {
@@ -184,6 +224,8 @@ def main() -> int:
         "formal_follow_ups": payload["formal_follow_ups"],
         "review_only_insights": payload["review_only_insights"],
         "blocked_follow_ups": payload["blocked_follow_ups"],
+        "scheduled_reviews": payload["scheduled_reviews"],
+        "review_checkin": payload["review_checkin"],
         "fact_writeback_allowed": payload["fact_writeback_allowed"],
         "readiness_status": payload["readiness_status"],
         "post_r17_t04_successor": payload["post_r17_t04_successor"],
