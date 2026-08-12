@@ -15,6 +15,12 @@ DEFAULT_KB_ROOT_NAME = ".kaoyan-kb"
 DEFAULT_BACKUP_ROOT_NAME = ".kaoyan-backups"
 DEFAULT_SYLLABUS_VERSION = "2027"
 DEFAULT_CONFIG_FILENAME = "kaoyan.config.json"
+CONFIG_SOURCE_ENV = "KAOYAN_CONFIG_SOURCE"
+RUNTIME_CONFIGURED_ENV = "KAOYAN_RUNTIME_CONFIGURED"
+
+
+class RuntimeConfigError(ValueError):
+    """Raised when a selected runtime config cannot be used safely."""
 
 
 @dataclass(frozen=True)
@@ -45,14 +51,24 @@ class RuntimeConfig:
     paper_book_blur_threshold: float
     paper_book_phash_distance: int
     config_path: Path | None = None
+    config_source: str = "default"
+    configured: bool = False
 
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    except FileNotFoundError as exc:
+        raise RuntimeConfigError(f"runtime config does not exist: {path}") from exc
+    except OSError as exc:
+        raise RuntimeConfigError(f"runtime config cannot be read: {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeConfigError(
+            f"runtime config is not valid JSON: {path}: line {exc.lineno}, column {exc.colno}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeConfigError(f"runtime config root must be a JSON object: {path}")
+    return payload
 
 
 def _resolve_path(raw: str | os.PathLike[str] | None, *, base_dir: Path | None = None) -> Path | None:
@@ -64,31 +80,31 @@ def _resolve_path(raw: str | os.PathLike[str] | None, *, base_dir: Path | None =
     return path
 
 
-def _discover_config_path() -> Path | None:
+def _discover_config_path() -> tuple[Path | None, str]:
     explicit = os.environ.get("KAOYAN_CONFIG_FILE")
     if explicit:
         path = Path(explicit).expanduser()
-        return path if path.exists() else None
+        if not path.is_file():
+            raise RuntimeConfigError(f"explicit runtime config does not exist: {path}")
+        return path.resolve(), str(os.environ.get(CONFIG_SOURCE_ENV) or "environment")
 
     cwd_candidate = Path.cwd() / DEFAULT_CONFIG_FILENAME
     if cwd_candidate.exists():
-        return cwd_candidate
+        if not cwd_candidate.is_file():
+            raise RuntimeConfigError(f"runtime config path is not a file: {cwd_candidate}")
+        return cwd_candidate.resolve(), "cwd"
 
-    try:
-        cwd_resolved = Path.cwd().resolve()
-        skill_root_resolved = SKILL_ROOT.resolve()
-        if cwd_resolved == skill_root_resolved or skill_root_resolved in cwd_resolved.parents:
-            skill_candidate = SKILL_ROOT / DEFAULT_CONFIG_FILENAME
-            if skill_candidate.exists():
-                return skill_candidate
-    except OSError:
-        pass
-    return None
+    skill_candidate = SKILL_ROOT / DEFAULT_CONFIG_FILENAME
+    if skill_candidate.exists():
+        if not skill_candidate.is_file():
+            raise RuntimeConfigError(f"runtime config path is not a file: {skill_candidate}")
+        return skill_candidate.resolve(), "skill"
+    return None, "default"
 
 
 @lru_cache(maxsize=8)
 def load_runtime_config(default_workspace: str | None = None) -> RuntimeConfig:
-    config_path = _discover_config_path()
+    config_path, config_source = _discover_config_path()
     config_payload = _read_json(config_path) if config_path else {}
     if default_workspace:
         # Keep runtime policy from a discovered config, but derive storage roots from the explicit test/workspace root.
@@ -156,8 +172,9 @@ def load_runtime_config(default_workspace: str | None = None) -> RuntimeConfig:
     ocr_extract_header = str(config_payload.get("ocr_extract_header", os.environ.get("KAOYAN_OCR_EXTRACT_HEADER", True))).lower() not in {"0", "false", "no"}
     ocr_extract_footer = str(config_payload.get("ocr_extract_footer", os.environ.get("KAOYAN_OCR_EXTRACT_FOOTER", True))).lower() not in {"0", "false", "no"}
     ocr_max_concurrency = int(config_payload.get("ocr_max_concurrency") or os.environ.get("KAOYAN_OCR_MAX_CONCURRENCY") or 2)
+    configured_budget = config_payload.get("ocr_monthly_page_budget")
     ocr_monthly_page_budget = int(
-        config_payload.get("ocr_monthly_page_budget") or os.environ.get("KAOYAN_OCR_MONTHLY_PAGE_BUDGET") or 0
+        configured_budget if configured_budget is not None else os.environ.get("KAOYAN_OCR_MONTHLY_PAGE_BUDGET", 0)
     )
     ocr_allow_remote = str(config_payload.get("ocr_allow_remote", os.environ.get("KAOYAN_OCR_ALLOW_REMOTE", True))).lower() in {"1", "true", "yes"}
     paper_book_incoming_dir = str(
@@ -190,6 +207,15 @@ def load_runtime_config(default_workspace: str | None = None) -> RuntimeConfig:
         or config_payload.get("paper_book_phash_distance")
         or 6
     )
+    explicit_root_config = bool(os.environ.get("KAOYAN_KB_ROOT") and os.environ.get("KAOYAN_VAULT_ROOT"))
+    inherited_configured = os.environ.get(RUNTIME_CONFIGURED_ENV)
+    configured = bool(config_path or explicit_root_config or default_workspace)
+    if not config_path and inherited_configured is not None:
+        configured = inherited_configured.strip().lower() in {"1", "true", "yes"}
+    if not config_path and explicit_root_config:
+        config_source = str(os.environ.get(CONFIG_SOURCE_ENV) or "environment-roots")
+    elif not config_path and default_workspace:
+        config_source = "explicit-workspace"
 
     return RuntimeConfig(
         vault_root=vault_root,
@@ -218,6 +244,8 @@ def load_runtime_config(default_workspace: str | None = None) -> RuntimeConfig:
         paper_book_blur_threshold=paper_book_blur_threshold,
         paper_book_phash_distance=paper_book_phash_distance,
         config_path=config_path,
+        config_source=config_source,
+        configured=configured,
     )
 
 

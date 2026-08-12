@@ -8,9 +8,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, learner_file_map, load_all_json, load_json, resolve_subject
+from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, learner_file_map, load_all_json, load_json, resolve_subject, runtime_context_payload
 from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator
 from kaoyan_kb.domain.exercise_locator import find_exact_relation, find_exact_worked_example_relation, find_unique_relation_for_scope, normalize_exercise_label
+from kaoyan_kb.domain.book_series import parse_exercise_request, resolve_answer_grounding, resolve_book_route, resolve_exercise_route
 from kaoyan_kb.domain.teaching_context import build_bounded_teaching_context
 from learner_events import load_events
 from retrieve_knowledge import retrieve as retrieve_index
@@ -768,6 +769,25 @@ def evidence_matches_chapter(evidence: dict[str, Any], chapter: str | None) -> b
     )
 
 
+def retrieval_hit_matches_chapter(hit: dict[str, Any], chapter: str | None) -> bool:
+    """Fail closed when an indexed candidate cannot prove chapter membership."""
+    if not chapter:
+        return True
+    layout = ensure_kb_layout()
+    doc_type = str(hit.get("doc_type") or "")
+    entity_id = str(hit.get("entity_id") or "")
+    if doc_type == "evidence" and entity_id:
+        path = layout["evidence"] / f"{entity_id}.json"
+        return path.is_file() and evidence_matches_chapter(load_json(path), chapter)
+    if doc_type == "claim" and entity_id:
+        path = layout["claims"] / f"{entity_id}.json"
+        if not path.is_file():
+            return False
+        claim = load_json(path)
+        return chapter_matches(chapter, claim.get("chapter_id", ""), claim.get("chapter_title", ""))
+    return False
+
+
 def fallback_chapter_hits(vault_root: Path, subject: str, chapter: str | None, tokens: list[str], full_query: str) -> list[dict]:
     path = vault_root / INDEX_DIRNAME / "chapter_knowledge_registry.json"
     if not path.exists():
@@ -1071,6 +1091,7 @@ def query_knowledge(
     exercise_label: str | None = None,
 ) -> dict:
     intent = detect_intent(query)
+    book_route = resolve_book_route(query=query, book_title=book_title)
     page_anchor_request = parse_page_anchor(query)
     if printed_page is not None:
         page_anchor_request["requested_page"] = printed_page
@@ -1100,10 +1121,20 @@ def query_knowledge(
     )
     hard_page_route = page_anchor_request.get("requested_page") is not None
     if hard_page_route:
+        routed_book_title = book_title
+        if book_route.get("series_id"):
+            active = [item for item in book_route.get("candidates", []) if item.get("status") == "active"]
+            exercise_request = parse_exercise_request(query)
+            if exercise_request.get("role_intent") == "paired_answer" and exercise_request.get("exercise_number") is not None:
+                questions = [item for item in active if item.get("role") == "question_book"]
+                if len(questions) == 1:
+                    routed_book_title = str(questions[0].get("title") or routed_book_title or "")
+            elif len(active) == 1:
+                routed_book_title = str(active[0].get("title") or routed_book_title or "")
         page_anchor, retrieval_hits, claims, evidences = apply_hard_page_route(
             subject=subject,
             chapter=chapter,
-            book_title=book_title,
+            book_title=routed_book_title,
             request=page_anchor_request,
             retrieval_hits=retrieval_hits,
             claims=claims,
@@ -1112,6 +1143,7 @@ def query_knowledge(
     else:
         page_anchor = build_page_anchor(evidences, page_anchor_request)
         exercise_anchor = {"status": "not_requested"}
+    exercise_route = resolve_exercise_route(query=query, book_route=book_route)
     compare_bundle = build_compare_bundle(routed, claims, evidences, parts) if intent == "compare" else None
     refine_candidates = learner_compare_candidates(subject, chapter)
     answer_mode, fallback_note, fallback = _resolve_answer_fallback(
@@ -1135,10 +1167,33 @@ def query_knowledge(
         elif status == "unmapped":
             answer_mode = "page_unmapped"
             fallback_note = "已识别教材，但该印刷页尚未建立正式页码映射。"
+        elif status == "unavailable":
+            answer_mode = "page_unavailable"
+            reason = str(page_anchor.get("unavailable_reason") or "page_locator_unavailable")
+            fallback_note = f"本地证据链当前不可用（{reason}）；不能据此判断教材是否包含该页或原文。"
         else:
             answer_mode = "page_not_found"
             fallback_note = "正式页定位索引中没有找到该印刷页。"
     page_verification = build_page_verification_summary(page_anchor, answer_mode)
+    if book_route.get("match_status") == "book_ambiguous" and (exercise_route.get("request") or {}).get("exercise_number") is not None:
+        answer_mode = "book_ambiguous"
+        fallback = []
+        retrieval_hits = []
+        claims = []
+        evidences = []
+        fallback_note = "已识别为接力题典1800书系，但还需要基础/强化、学科章节或题型才能唯一定位题目。"
+    elif exercise_route.get("match_status") == "exact_exercise":
+        pair_status = str(exercise_route.get("pair_status") or "")
+        answer_mode = "exercise_pair" if pair_status == "exact_pair" else pair_status
+        if pair_status == "exact_pair":
+            fallback_note = ""
+    elif book_route.get("series_id") and (exercise_route.get("request") or {}).get("exercise_number") is not None and not hard_page_route:
+        answer_mode = "exercise_ambiguous" if exercise_route.get("match_status") == "exercise_ambiguous" else "exercise_not_found"
+        fallback = []
+        retrieval_hits = []
+        claims = []
+        evidences = []
+        fallback_note = "已识别接力题典1800习题条件，但相应习题证据尚未发布或条件仍不能唯一定位；不会回退到其他教材。"
     query_path = {
         "retrieval_candidate_set_used": index_routed,
         "retrieval_hit_count": len(retrieval_hits),
@@ -1146,6 +1201,8 @@ def query_knowledge(
         "full_json_scan_used_for_answer": not index_routed,
         "full_json_scan_policy": "index-miss fallback only; normal indexed path is targeted reads",
         "page_locator_index_used": hard_page_route,
+        "page_locator_index_available": bool(page_anchor.get("locator_available", True)) if hard_page_route else None,
+        "page_locator_unavailable_reason": str(page_anchor.get("unavailable_reason") or "") if hard_page_route else "",
         "hard_page_filter_applied": hard_page_route,
     }
     teaching_context = build_bounded_teaching_context(
@@ -1161,11 +1218,34 @@ def query_knowledge(
             ref["role"] = "question"
         elif ref.get("evidence_id") in set(exercise_anchor.get("answer_evidence_ids", []) or []):
             ref["role"] = "answer"
-    answer_grounding = build_answer_grounding(query=query, book_title=book_title, page_anchor=page_anchor, exercise_anchor=exercise_anchor, evidences=evidences)
+    runtime_context = runtime_context_payload(vault_root_override=vault_root)
+    if hard_page_route:
+        runtime_context["page_locator_index_available"] = bool(page_anchor.get("locator_available", True))
+        runtime_context["page_locator_index_path"] = str(page_anchor.get("locator_index_path") or "")
+        runtime_context["page_locator_unavailable_reason"] = str(page_anchor.get("unavailable_reason") or "")
+    if book_route.get("series_id") or exercise_route.get("match_status") == "exact_exercise":
+        answer_grounding = resolve_answer_grounding(
+            query=query,
+            book_title=book_title,
+            page_anchor=page_anchor,
+            book_route=book_route,
+            exercise_route=exercise_route,
+        )
+    else:
+        answer_grounding = build_answer_grounding(
+            query=query,
+            book_title=book_title,
+            page_anchor=page_anchor,
+            exercise_anchor=exercise_anchor,
+            evidences=evidences,
+        )
     return {
         "subject": subject,
         "chapter": chapter or "",
         "book_title": book_title or "",
+        "book_route": book_route,
+        "exercise_route": exercise_route,
+        "answer_grounding": answer_grounding,
         "query": query,
         "intent": intent,
         "answer_mode": answer_mode,
@@ -1183,8 +1263,8 @@ def query_knowledge(
         "query_path": query_path,
         "page_anchor": page_anchor,
         "exercise_anchor": exercise_anchor,
-        "answer_grounding": answer_grounding,
         "page_verification": page_verification,
+        "runtime_context": runtime_context,
     }
 
 
@@ -1200,6 +1280,25 @@ def render_text(result: dict) -> str:
     ]
     if result["fallback_note"]:
         lines.extend(["## 回退说明", "", f"- {result['fallback_note']}", ""])
+    book_route = dict(result.get("book_route") or {})
+    if book_route.get("match_status") != "not_found":
+        lines.extend(["## 书系路由", "", f"- 状态：{book_route.get('match_status', '')}", f"- 书系：{book_route.get('canonical_title') or '未确定'}", f"- 阶段：{book_route.get('stage') or '未确定'}", ""])
+    exercise_route = dict(result.get("exercise_route") or {})
+    if exercise_route.get("match_status") not in {None, "", "not_requested"}:
+        lines.extend(["## 习题路由", "", f"- 状态：{exercise_route.get('match_status', '')}", f"- 习题键：{exercise_route.get('exercise_key') or '未确定'}", f"- 配对状态：{exercise_route.get('pair_status') or '未确定'}", ""])
+    grounding = dict(result.get("answer_grounding") or {})
+    if grounding.get("required"):
+        lines.extend(
+            [
+                "## 原书答案门控",
+                "",
+                f"- 状态：{grounding.get('status', 'answer_not_found')}",
+                f"- 可输出结论：{'是' if grounding.get('can_conclude') else '否'}",
+                f"- 失败原因：{grounding.get('failure_reason') or '无'}",
+                f"- 下一步：{grounding.get('next_action') or '可按原书答案继续核对。'}",
+                "",
+            ]
+        )
     page_anchor = dict(result.get("page_anchor") or {})
     if page_anchor.get("requested_page") is not None:
         verification = dict(result.get("page_verification") or build_page_verification_summary(page_anchor, result["answer_mode"]))

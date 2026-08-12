@@ -59,6 +59,7 @@ def main() -> int:
         payload = {
             "saved": args.save,
             "saved_at": saved_at_label(args.saved_at) if args.save else "",
+            "runtime_context": dict(result.get("runtime_context") or {}),
             "answer": contract,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))

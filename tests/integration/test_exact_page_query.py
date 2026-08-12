@@ -55,6 +55,10 @@ def test_ambiguous_exercise_relation_reports_answer_ambiguous() -> None:
     assert grounding["can_conclude"] is False
 
 
+def test_compact_p_page_anchor_before_chinese_text() -> None:
+    assert query_module.parse_page_anchor("P4第7题")["requested_page"] == 4
+
+
 def test_explicit_page_clears_unrelated_semantic_hits(monkeypatch, tmp_path: Path) -> None:
     wrong_evidence = {"evidence_id": "EV-WRONG", "subject": "数学", "title": "另一页"}
     wrong_claim = {"claim_id": "CL-WRONG", "evidence_ids": ["EV-WRONG"], "claim_type": "definition", "text": "错误页"}
@@ -125,6 +129,73 @@ def test_query_without_page_keeps_normal_semantic_hits(monkeypatch, tmp_path: Pa
     result = query_module.query_knowledge(tmp_path, "数学", None, "什么是导数", 3)
     assert result["evidence_hits"] == [evidence]
     assert not result["query_path"]["hard_page_filter_applied"]
+
+
+def test_recognized_series_exercise_never_falls_back_to_another_book(monkeypatch, tmp_path: Path) -> None:
+    wrong_evidence = {"evidence_id": "EV-OTHER-BOOK", "subject": "数学", "title": "另一教材"}
+    wrong_retrieval = {"doc_type": "evidence", "entity_id": "EV-OTHER-BOOK", "references": ["EV-OTHER-BOOK"]}
+    monkeypatch.setattr(query_module, "_resolve_query_hits", lambda *args, **kwargs: ([wrong_retrieval], [], [], [wrong_evidence], True))
+    monkeypatch.setattr(query_module, "resolve_book_route", lambda **kwargs: {"match_status": "exact_series", "series_id": "JIELI1800-M1", "stage": "basic"})
+    monkeypatch.setattr(query_module, "resolve_exercise_route", lambda **kwargs: {"match_status": "not_found", "request": {"exercise_number": 7}})
+    monkeypatch.setattr(query_module, "learner_compare_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(query_module, "learner_snapshot", lambda *args, **kwargs: {})
+    monkeypatch.setattr(query_module, "load_events", lambda: [])
+
+    result = query_module.query_knowledge(tmp_path, "数学", None, "1800基础篇高数第一章选择题第7题怎么做", 3)
+
+    assert result["answer_mode"] == "exercise_not_found"
+    assert result["retrieval_hits"] == []
+    assert result["evidence_hits"] == []
+    assert result["references"] == []
+
+
+def test_unavailable_page_locator_clears_hits_and_does_not_become_not_found(monkeypatch, tmp_path: Path) -> None:
+    wrong_evidence = {"evidence_id": "EV-WRONG", "subject": "数学", "title": "另一页"}
+    monkeypatch.setattr(
+        query_module,
+        "_resolve_query_hits",
+        lambda *args, **kwargs: ([], [], [], [wrong_evidence], False),
+    )
+    monkeypatch.setattr(
+        query_module,
+        "resolve_page_locator",
+        lambda **kwargs: {
+            "requested_page": 62,
+            "requested_position": None,
+            "requested_book_title": "李正元数一",
+            "requested_exercise_label": "",
+            "match_status": "unavailable",
+            "exercise_match_status": "not_requested",
+            "locator_available": False,
+            "locator_index_path": "C:/kb/indexes/page_locator_index.json",
+            "unavailable_reason": "page_locator_index_missing",
+            "unavailable_detail": "missing",
+            "evidence_ids": [],
+            "candidates": [],
+            "matched_evidence_id": "",
+            "matched_chunk_id": "",
+            "snippets": [],
+        },
+    )
+    monkeypatch.setattr(query_module, "learner_compare_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(query_module, "learner_snapshot", lambda *args, **kwargs: {})
+    monkeypatch.setattr(query_module, "load_events", lambda: [])
+
+    result = query_module.query_knowledge(
+        tmp_path,
+        "数学",
+        None,
+        "第62页定理3.5",
+        3,
+        book_title="李正元数一",
+    )
+
+    assert result["answer_mode"] == "page_unavailable"
+    assert result["page_anchor"]["match_status"] == "unavailable"
+    assert result["evidence_hits"] == []
+    assert result["fallback_hits"] == []
+    assert result["query_path"]["page_locator_index_available"] is False
+    assert result["runtime_context"]["page_locator_unavailable_reason"] == "page_locator_index_missing"
 
 
 def test_exact_page_evidence_retains_only_claims_supported_by_that_page(monkeypatch) -> None:

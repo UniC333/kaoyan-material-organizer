@@ -94,13 +94,32 @@ $env:MISTRAL_API_KEY = "your-key"
 .\.venv\Scripts\python.exe scripts\kb.py migrate-vault --help
 ```
 
+从仓库之外的工作目录调用时，使用解释器、入口和配置文件的绝对路径，并把全局 `--config` 放在子命令之前：
+
+```powershell
+& "<skill-root>\.venv\Scripts\python.exe" "<skill-root>\scripts\kb.py" --config "<skill-root>\kaoyan.config.json" query --subject 数学 --printed-page 62 --query "定理3.5" --format json
+```
+
+配置优先级为 `--config`、`KAOYAN_CONFIG_FILE`、当前目录配置、技能根目录配置、默认值。被选中的配置不存在、不可读或不是有效 JSON 时，命令会失败，不会静默切换到其他知识库。
+
 精确教材定位可同时提供书名与印刷页：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\kb.py query --subject 数学 --book-title 李正元数一 --printed-page 49 --query "例2.29 隐函数微分" --format json
 ```
 
-显式页码是硬约束。只有 `page_anchor.match_status` 为 `exact_evidence` 或 `exact_asset` 才表示原页已经确认；其他状态不会回退到无关页。
+显式页码是硬约束。只有 `page_anchor.match_status` 为 `exact_evidence` 或 `exact_asset` 才表示原页已经确认；其他状态不会回退到无关页。`unavailable` 表示配置或正式页码索引不可用，与“教材中没有该页”的 `not_found` 严格区分。
+
+教材、讲义、题集、例题或题目照片中的解题请求还必须检查 `answer_grounding`。只有 `status=exact_answer` 且 `can_conclude=true` 才能输出答案判断或 AI 补充推导；题目页的 `exact_evidence` 不能代替原书答案。答案未找到、存在歧义、仅定位原图或链路不可用时，问答会失败关闭且 `ask --save` 保持零写入。
+
+纸质习题书可登记书系别名、分册与题解配对。照片书源先注册，再按阶段或章节预览 OCR 范围：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\kb.py book register-photo-source --book-root <book-root> --format json
+.\.venv\Scripts\python.exe scripts\kb.py book ocr --book-root <book-root> --stage basic --chapter-id <chapter-id> --dry-run --format json
+```
+
+`--dry-run` 不访问远程 OCR，也不写 `page_ocr_status.json`。OCR、复核和分类完成后，先预览 `book publish-exercises`；只有追加 `--yes` 才会把审核通过的习题发布到 evidence。问答结果中的 `book_route` 和 `exercise_route` 分别说明书系识别及题目—题解配对状态。
 
 按页查询必须提供 `--subject`；已知时也应提供 `--book-title`。结果中的 `page_verification` 会分别说明页面定位、题号正文核验、命中层及能否按教材正文讲解。例如 `exact_asset + unverified + page_asset` 表示“原页已定位、教材正文未确认”，并不表示该页不存在。
 

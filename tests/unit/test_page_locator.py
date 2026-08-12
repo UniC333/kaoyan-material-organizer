@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
@@ -64,6 +65,90 @@ def test_resolver_distinguishes_unmapped_from_unknown(monkeypatch) -> None:
     monkeypatch.setattr(page_locator, "load_page_locator_index", lambda: {"entries": [], "sources": sources})
     assert page_locator.resolve_page_locator(subject="数学", book_title="李正元数一", printed_page=49)["match_status"] == "unmapped"
     assert page_locator.resolve_page_locator(subject="数学", book_title="不存在", printed_page=49)["match_status"] == "not_found"
+
+
+def test_resolver_reports_missing_page_as_not_found_for_mapped_source(monkeypatch) -> None:
+    sources = [
+        {
+            "subject": "数学",
+            "book_id": "a",
+            "book_title": "李正元数一",
+            "source_id": "SRC-a",
+            "mapping_status": "mapped",
+        }
+    ]
+    monkeypatch.setattr(page_locator, "load_page_locator_index", lambda: {"entries": [], "sources": sources})
+
+    result = page_locator.resolve_page_locator(subject="数学", book_title="李正元数一", printed_page=9999)
+
+    assert result["match_status"] == "not_found"
+    assert result["locator_available"] is True
+
+
+def test_resolver_reports_unavailable_locator_separately(monkeypatch) -> None:
+    monkeypatch.setattr(
+        page_locator,
+        "load_page_locator_index",
+        lambda: {
+            "entries": [],
+            "sources": [],
+            "_availability": {
+                "available": False,
+                "path": "C:/kb/indexes/page_locator_index.json",
+                "reason": "page_locator_index_missing",
+                "detail": "missing",
+            },
+        },
+    )
+
+    result = page_locator.resolve_page_locator(subject="数学", book_title="李正元数一", printed_page=49)
+
+    assert result["match_status"] == "unavailable"
+    assert result["locator_available"] is False
+    assert result["unavailable_reason"] == "page_locator_index_missing"
+
+
+def test_missing_locator_file_is_not_reported_as_not_found(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        page_locator,
+        "load_runtime_config",
+        lambda: SimpleNamespace(kb_root=tmp_path / ".kaoyan-kb", configured=True),
+    )
+
+    result = page_locator.resolve_page_locator(subject="数学", book_title="李正元数一", printed_page=62)
+
+    assert result["match_status"] == "unavailable"
+    assert result["unavailable_reason"] == "page_locator_index_missing"
+
+
+def test_unconfigured_runtime_is_not_reported_as_not_found(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        page_locator,
+        "load_runtime_config",
+        lambda: SimpleNamespace(kb_root=tmp_path / ".kaoyan-kb", configured=False),
+    )
+
+    result = page_locator.resolve_page_locator(subject="数学", book_title=None, printed_page=62)
+
+    assert result["match_status"] == "unavailable"
+    assert result["unavailable_reason"] == "runtime_config_missing"
+
+
+def test_invalid_locator_file_is_reported_as_unavailable(monkeypatch, tmp_path: Path) -> None:
+    kb_root = tmp_path / ".kaoyan-kb"
+    index_path = kb_root / "indexes" / "page_locator_index.json"
+    index_path.parent.mkdir(parents=True)
+    index_path.write_text("{invalid", encoding="utf-8")
+    monkeypatch.setattr(
+        page_locator,
+        "load_runtime_config",
+        lambda: SimpleNamespace(kb_root=kb_root, configured=True),
+    )
+
+    result = page_locator.resolve_page_locator(subject="数学", book_title=None, printed_page=62)
+
+    assert result["match_status"] == "unavailable"
+    assert result["unavailable_reason"] == "page_locator_index_invalid"
 
 
 def test_evidence_requires_same_printed_page_and_source_hash() -> None:
@@ -308,6 +393,7 @@ def test_indexes_only_runs_no_full_sync_steps(monkeypatch) -> None:
         ("build_page_locator_index.py", ("--format", "quiet")),
         ("build_exercise_locator_index.py", ("--format", "quiet")),
         ("build_search_index.py", ("--format", "quiet")),
+        ("build_book_series_indexes.py", ("--format", "quiet")),
     ]
 
 

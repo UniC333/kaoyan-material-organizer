@@ -12,7 +12,7 @@ from common import default_vault_root_arg, normalize_context, preferred_python_e
 from query_local_knowledge import query_knowledge
 
 
-SAVEABLE_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "chapter_fallback"}
+SAVEABLE_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "chapter_fallback", "exercise_pair"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -85,15 +85,22 @@ def save_eligibility(contract: dict) -> tuple[bool, str]:
     assessment = dict(contract.get("evidence_assessment") or {})
     grounding = dict(contract.get("answer_grounding") or {})
     if grounding.get("required"):
-        if grounding.get("status") != "exact_answer" or not grounding.get("can_conclude"):
+        if grounding.get("status") != "exact_answer" or not bool(grounding.get("can_conclude")):
             return False, "原书答案尚未形成唯一可核验锚点，不能保存为学习问答。"
-        if not contract.get("citation_coverage_ok"):
+        if not bool(contract.get("citation_coverage_ok")):
             return False, "有来源题目必须同时引用原题和原书答案，当前引用不完整。"
     if answer_mode not in SAVEABLE_ANSWER_MODES:
         return False, "当前回答没有可保存的结构化证据；请先补齐教材映射或 OCR 后再保存。"
     if answer_mode in {"canonical_claim", "accepted_evidence"} and not bool(contract.get("citation_coverage_ok")):
         return False, "正式事实回答缺少完整引用，不能保存。"
-    if assessment.get("level") in {"page_asset_only", "page_ambiguous", "page_unmapped", "page_not_found", "structured_unconfirmed"}:
+    if assessment.get("level") in {
+        "page_asset_only",
+        "page_ambiguous",
+        "page_unmapped",
+        "page_not_found",
+        "page_unavailable",
+        "structured_unconfirmed",
+    }:
         return False, "当前只能确认资料定位或检索边界，不能保存为学习问答。"
     return True, ""
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +20,9 @@ def _metadata_paths(book_root: Path, metadata_dirname: str) -> dict[str, Path]:
     return {
         "root": metadata_root,
         "page_assets": metadata_root / "page_assets.json",
+        "page_mappings": metadata_root / "page_mappings.json",
         "page_ocr_status": metadata_root / "page_ocr_status.json",
+        "chapters": book_root / "chapters.yaml",
     }
 
 
@@ -118,6 +121,41 @@ def _ensure_run_id(current_run_id: str | None) -> str:
     return current_run_id or allocate_run_id()
 
 
+def _selected_pages(*, items: list[dict[str, Any]], paths: dict[str, Path], stage: str | None, chapter_ids: list[str]) -> list[dict[str, Any]]:
+    if not stage and not chapter_ids:
+        return items
+    chapters_payload = load_json_or_default(paths["chapters"], {})
+    mappings_payload = load_json_or_default(paths["page_mappings"], {})
+    printed_by_page = {
+        str(item.get("page_id") or ""): item.get("printed_page")
+        for item in mappings_payload.get("items", [])
+        if isinstance(item, dict)
+    }
+    allowed_ranges: list[tuple[int, int]] = []
+    requested_chapters = set(chapter_ids)
+    for chapter in chapters_payload.get("chapters", []):
+        chapter_id = str(chapter.get("chapter_id") or "")
+        stage_match = not stage or (stage == "basic" and re.search(r"-(?:B|SB)-", chapter_id)) or (stage == "advanced" and re.search(r"-(?:A|SA)-", chapter_id))
+        chapter_match = not requested_chapters or chapter_id in requested_chapters
+        if stage_match and chapter_match:
+            allowed_ranges.append((int(chapter.get("page_start", 0) or 0), int(chapter.get("page_end", 0) or 0)))
+    if requested_chapters:
+        known_ids = {str(item.get("chapter_id") or "") for item in chapters_payload.get("chapters", [])}
+        missing = sorted(requested_chapters - known_ids)
+        if missing:
+            raise SystemExit(f"unknown chapter id(s): {', '.join(missing)}")
+    if not allowed_ranges:
+        raise SystemExit("OCR selection matched no chapter ranges")
+    selected: list[dict[str, Any]] = []
+    for item in items:
+        printed_page = item.get("printed_page")
+        if printed_page is None:
+            printed_page = printed_by_page.get(str(item.get("page_id") or ""))
+        if printed_page is not None and any(start <= int(printed_page) <= end for start, end in allowed_ranges):
+            selected.append(item)
+    return selected
+
+
 def run_book_ocr(
     *,
     book_root: Path,
@@ -129,6 +167,9 @@ def run_book_ocr(
     max_retries: int,
     require_quality_gate: bool = False,
     quality_report: Path | None = None,
+    stage: str | None = None,
+    chapter_ids: list[str] | None = None,
+    dry_run: bool = False,
     format_name: str = "json",
 ) -> dict[str, Any]:
     runtime = load_runtime_config()
@@ -147,12 +188,14 @@ def run_book_ocr(
     resolved_provider = provider_name or runtime.ocr_provider
     resolved_model = model or runtime.ocr_model
     remote_enabled = _allowed_remote(resolved_provider, runtime, allow_remote=allow_remote, yes=yes)
-    if not remote_enabled:
+    if not dry_run and not remote_enabled:
         if resolved_provider == "mistral":
             raise SystemExit("mistral OCR is disabled; enable KAOYAN_OCR_ALLOW_REMOTE=true or pass --allow-remote --yes")
 
     items = list(page_assets_payload.get("items", []))
     items.sort(key=lambda item: (int(item.get("scan_index", 0) or 0), str(item.get("page_id", ""))))
+    all_items = items
+    items = _selected_pages(items=items, paths=paths, stage=stage, chapter_ids=list(chapter_ids or []))
 
     status_payload = load_json_or_default(paths["page_ocr_status"], {})
     existing_status = {
@@ -166,6 +209,36 @@ def run_book_ocr(
     month_key = _month_key()
     month_usage = usage_payload.setdefault("months", {}).setdefault(month_key, {"used_pages": 0, "updated_at": now_iso()})
     used_pages = int(month_usage.get("used_pages", 0) or 0)
+
+    if dry_run:
+        cached_count = 0
+        skipped_quality_count = 0
+        retry_exhausted_count = 0
+        selected_rows: list[dict[str, Any]] = []
+        for page in items:
+            request_key = _request_key_for_page(page, runtime, resolved_provider, resolved_model)
+            cached = load_cached_normalized(runtime.ocr_cache_root, request_key) is not None
+            quality_allowed = page.get("quality_status") in {"accepted", "needs_review"}
+            existing = existing_status.get(str(page.get("page_id") or ""), {})
+            exhausted = not cached and quality_allowed and int(existing.get("attempt_count", 0) or 0) >= max_retries
+            cached_count += int(cached)
+            skipped_quality_count += int(not quality_allowed)
+            retry_exhausted_count += int(exhausted)
+            selected_rows.append({"page_id": page.get("page_id"), "printed_page": page.get("printed_page"), "request_key": request_key, "cached": cached, "quality_status": page.get("quality_status")})
+        new_count = len(items) - cached_count - skipped_quality_count - retry_exhausted_count
+        budget_remaining = None if runtime.ocr_monthly_page_budget <= 0 else max(runtime.ocr_monthly_page_budget - used_pages, 0)
+        budget_blocked = max(new_count - budget_remaining, 0) if budget_remaining is not None else 0
+        return {
+            "book_id": page_assets_payload.get("book_id"),
+            "book_root": str(book_root),
+            "provider": resolved_provider,
+            "model": resolved_model,
+            "dry_run": True,
+            "selection": {"stage": stage or "", "chapter_ids": list(chapter_ids or []), "selected_count": len(items), "book_page_count": len(all_items), "items": selected_rows},
+            "summary": {"selected_count": len(items), "cached_count": cached_count, "new_request_count": new_count, "skipped_quality_count": skipped_quality_count, "retry_exhausted_count": retry_exhausted_count, "budget_blocked_count": budget_blocked, "used_pages": used_pages, "monthly_budget": runtime.ocr_monthly_page_budget, "budget_remaining": budget_remaining},
+            "remote_requests": 0,
+            "writes": {"page_ocr_status": False, "monthly_usage": False, "run_manifest": False},
+        }
 
     run_id: str | None = None
     summary = {
@@ -296,6 +369,10 @@ def run_book_ocr(
         "skipped_quality_count": sum(1 for item in status_items if item["status"] == "skipped_quality"),
         "pending_count": sum(1 for item in status_items if item["status"] == "pending"),
     }
+    selected_ids = {str(item.get("page_id") or "") for item in items}
+    if len(items) != len(all_items):
+        status_items.extend(item for page_id, item in existing_status.items() if page_id not in selected_ids)
+        status_items.sort(key=lambda item: (int(item.get("scan_index", 0) or 0), str(item.get("page_id", ""))))
     page_ocr_status_payload = {
         "book_id": page_assets_payload.get("book_id"),
         "source_root": page_assets_payload.get("source_root"),
@@ -315,6 +392,7 @@ def run_book_ocr(
         "created_at": now_iso(),
         "remote_requests": remote_requests,
         "summary": summary,
+        "selection": {"stage": stage or "", "chapter_ids": list(chapter_ids or []), "selected_count": len(items)},
         "published_evidence": False,
     }
 
@@ -350,6 +428,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument("--require-quality-gate", action="store_true")
     parser.add_argument("--quality-report")
+    parser.add_argument("--stage", choices=("basic", "advanced"))
+    parser.add_argument("--chapter-id", action="append", default=[])
+    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
     return parser
 
@@ -368,6 +449,9 @@ def main() -> int:
         max_retries=max(1, int(args.max_retries)),
         require_quality_gate=args.require_quality_gate,
         quality_report=Path(args.quality_report) if args.quality_report else None,
+        stage=args.stage,
+        chapter_ids=args.chapter_id,
+        dry_run=args.dry_run,
         format_name=args.format,
     )
     if args.format == "json":

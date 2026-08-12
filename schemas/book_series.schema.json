@@ -1,0 +1,16 @@
+{
+  "title": "book-series",
+  "type": "object",
+  "required": ["schema_version", "series_id", "canonical_title", "aliases", "subject", "volumes", "pairings"],
+  "properties": {
+    "schema_version": {"const": "book-series.v1"},
+    "series_id": {"type": "string"},
+    "canonical_title": {"type": "string"},
+    "aliases": {"type": "array", "items": {"type": "string"}},
+    "subject": {"type": "string"},
+    "exam_variant": {"type": "string"},
+    "volumes": {"type": "array", "items": {"type": "object"}},
+    "pairings": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}

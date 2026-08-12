@@ -14,7 +14,14 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from config import DEFAULT_KB_ROOT_NAME, DEFAULT_VAULT_ROOT, RuntimeConfig, load_runtime_config
+from config import (
+    CONFIG_SOURCE_ENV,
+    DEFAULT_KB_ROOT_NAME,
+    DEFAULT_VAULT_ROOT,
+    RUNTIME_CONFIGURED_ENV,
+    RuntimeConfig,
+    load_runtime_config,
+)
 from kaoyan_kb.storage.atomic_io import load_json, load_json_or_default, save_json, save_text
 
 VAULT_ROOT = DEFAULT_VAULT_ROOT
@@ -563,6 +570,19 @@ def kb_root(default: Path | None = None) -> Path:
     return load_runtime_config(str(default) if default else None).kb_root
 
 
+def runtime_context_payload(*, vault_root_override: Path | None = None) -> dict[str, Any]:
+    runtime = load_runtime_config()
+    return {
+        "configured": runtime.configured,
+        "config_source": runtime.config_source,
+        "config_path": str(runtime.config_path) if runtime.config_path else "",
+        "workspace_root": str(runtime.workspace_root),
+        "vault_root": str(vault_root_override or runtime.vault_root),
+        "kb_root": str(runtime.kb_root),
+        "python_executable": str(runtime.python_executable),
+    }
+
+
 def runtime_subprocess_env(
     runtime: RuntimeConfig | None = None,
     *,
@@ -579,8 +599,12 @@ def runtime_subprocess_env(
     env["KAOYAN_SYLLABUS_ROOT"] = str(resolved.syllabus_root)
     env["KAOYAN_PYTHON"] = str(resolved.python_executable)
     env["KAOYAN_SYLLABUS_VERSION"] = str(resolved.default_syllabus_version)
+    env[CONFIG_SOURCE_ENV] = resolved.config_source
+    env[RUNTIME_CONFIGURED_ENV] = "1" if resolved.configured else "0"
     if resolved.config_path:
         env["KAOYAN_CONFIG_FILE"] = str(resolved.config_path)
+    else:
+        env.pop("KAOYAN_CONFIG_FILE", None)
     return env
 
 

@@ -251,7 +251,5 @@ def main() -> int:
     if args.format == "json":
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     return return_code
-
-
 if __name__ == "__main__":
     raise SystemExit(main())

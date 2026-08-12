@@ -4,13 +4,14 @@ from __future__ import annotations
 import argparse
 import json
 import locale
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-from common import INDEX_DIRNAME, ensure_kb_layout, learner_file_map, load_json_or_default, now_iso, run_utf8_subprocess, save_json
-from config import load_runtime_config
+from common import INDEX_DIRNAME, ensure_kb_layout, learner_file_map, load_json_or_default, now_iso, run_utf8_subprocess, runtime_subprocess_env, save_json
+from config import CONFIG_SOURCE_ENV, RuntimeConfigError, load_runtime_config, reset_runtime_config_cache
 from kaoyan_kb.cli.core_commands import add_core_commands, dispatch_core
 from kaoyan_kb.cli.book_commands import add_book_commands, dispatch_book
 from kaoyan_kb.cli.learner_commands import add_learner_commands, dispatch_learner
@@ -51,6 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
         description=ROOT_DESCRIPTION,
         epilog=ROOT_EPILOG,
         formatter_class=HelpFormatter,
+    )
+    parser.add_argument(
+        "--config",
+        help="use this kaoyan.config.json for the entire command and every wrapped child process",
     )
     subparsers = parser.add_subparsers(dest="command", required=True, title="commands")
 
@@ -179,6 +184,7 @@ def run_script(name: str, *args: str) -> str:
             [sys.executable, str(SCRIPT_DIR / name), *args],
             command_label=f"python:{name}",
             check=True,
+            env=runtime_subprocess_env(),
         )
     except subprocess.CalledProcessError as exc:
         message = (exc.stderr or exc.stdout or "").strip()
@@ -228,6 +234,8 @@ def doctor_payload() -> dict[str, Any]:
         "backup_root": str(runtime.backup_root),
         "python_executable": str(runtime.python_executable),
         "config_path": str(runtime.config_path) if runtime.config_path else "",
+        "config_source": runtime.config_source,
+        "runtime_configured": runtime.configured,
         "schema_version_exists": (layout["root"] / "schema-version.json").exists(),
         "schema_dir_exists": layout["schemas"].exists(),
         "ocr_env": ocr_env,
@@ -246,6 +254,8 @@ def render_doctor_text(payload: dict[str, Any]) -> str:
         f"- backup_root: {payload['backup_root']}",
         f"- python_executable: {payload['python_executable']}",
         f"- config_path: {payload['config_path'] or 'n/a'}",
+        f"- config_source: {payload['config_source']}",
+        f"- runtime_configured: {'yes' if payload['runtime_configured'] else 'no'}",
         f"- schema_version_exists: {bool_status(bool(payload['schema_version_exists']))}",
         f"- schema_dir_exists: {bool_status(bool(payload['schema_dir_exists']))}",
         f"- ocr_package_manager: {payload['ocr_env'].get('package_manager', '')}",
@@ -483,6 +493,15 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.config:
+        os.environ["KAOYAN_CONFIG_FILE"] = str(Path(args.config).expanduser())
+        os.environ[CONFIG_SOURCE_ENV] = "command-line"
+        reset_runtime_config_cache()
+    try:
+        load_runtime_config()
+    except RuntimeConfigError as exc:
+        parser.error(str(exc))
 
     core_output = dispatch_core(args, run_script, doctor_payload, render_doctor_text)
     if core_output is not None:

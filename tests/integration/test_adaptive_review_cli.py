@@ -51,8 +51,8 @@ def _run(command: list[str], *, cwd: Path, env: dict[str, str]) -> dict:
 
 
 def test_chapter_review_is_scheduled_idempotently_and_becomes_due(tmp_path: Path) -> None:
-    _config_path, workspace, child_env = _config(tmp_path)
-    prefix = [sys.executable, str(KB_ENTRY)]
+    config, workspace, child_env = _config(tmp_path)
+    prefix = [sys.executable, str(KB_ENTRY), "--config", str(config)]
     exercise = [
         *prefix,
         "learner",
@@ -117,11 +117,13 @@ def test_chapter_review_is_scheduled_idempotently_and_becomes_due(tmp_path: Path
 
 
 def test_ordinary_exercise_remains_backward_compatible(tmp_path: Path) -> None:
-    _config_path, workspace, child_env = _config(tmp_path)
+    config, workspace, child_env = _config(tmp_path)
     payload = _run(
         [
             sys.executable,
             str(KB_ENTRY),
+            "--config",
+            str(config),
             "learner",
             "exercise",
             "--subject",

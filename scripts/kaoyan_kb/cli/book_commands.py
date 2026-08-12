@@ -14,14 +14,15 @@ def add_book_commands(subparsers: argparse._SubParsersAction, *, formatter_class
         if dry: item.add_argument("--dry-run", action="store_true")
         item.add_argument("--format", choices=("json", "quiet"), default="json"); return item
     inspect = path("inspect", dry=True); inspect.add_argument("--min-width", type=int); inspect.add_argument("--min-height", type=int); inspect.add_argument("--blur-threshold", type=float); inspect.add_argument("--phash-distance", type=int)
-    path("map-pages", dry=True); path("classify")
+    path("map-pages", dry=True); path("classify"); path("register-photo-source")
+    publish_exercises = path("publish-exercises"); publish_exercises.add_argument("--yes", action="store_true")
     chapters = path("generate-chapters"); chapters.add_argument("--context-json", required=True); chapters.add_argument("--plan-json", required=True)
     pdf = command("register-pdf-source"); pdf.add_argument("--subject", required=True); pdf.add_argument("--book-title", required=True); pdf.add_argument("--pdf-path", required=True); pdf.add_argument("--edition", default=""); pdf.add_argument("--format", choices=("json", "quiet"), default="json")
     parallel = command("link-parallel-sources"); parallel.add_argument("--subject", required=True); parallel.add_argument("--book-title", required=True); parallel.add_argument("--image-book-root", required=True); parallel.add_argument("--pdf-source-id", default=""); parallel.add_argument("--context-root", default=""); parallel.add_argument("--format", choices=("json", "quiet"), default="json")
     repair = command("repair-parallel-provenance"); repair.add_argument("--subject", required=True); repair.add_argument("--book-title", required=True); repair.add_argument("--chapter-number", type=int, required=True); repair.add_argument("--format", choices=("json", "quiet"), default="json")
     for name in ("pdf-acceptance-checklist", "pdf-anchor-quality", "parallel-source-guard"):
         item = command(name); item.add_argument("--subject", required=True); item.add_argument("--book-title", action="append", default=[]); item.add_argument("--format", choices=("json", "quiet"), default="json")
-    ocr = path("ocr"); ocr.add_argument("--provider"); ocr.add_argument("--model"); ocr.add_argument("--fixture-json"); ocr.add_argument("--allow-remote", action="store_true"); ocr.add_argument("--yes", action="store_true"); ocr.add_argument("--max-retries", type=int, default=2); ocr.add_argument("--require-quality-gate", action="store_true"); ocr.add_argument("--quality-report")
+    ocr = path("ocr"); ocr.add_argument("--provider"); ocr.add_argument("--model"); ocr.add_argument("--fixture-json"); ocr.add_argument("--allow-remote", action="store_true"); ocr.add_argument("--yes", action="store_true"); ocr.add_argument("--max-retries", type=int, default=2); ocr.add_argument("--require-quality-gate", action="store_true"); ocr.add_argument("--quality-report"); ocr.add_argument("--stage", choices=("basic", "advanced")); ocr.add_argument("--chapter-id", action="append", default=[]); ocr.add_argument("--dry-run", action="store_true")
     ocr_publish = path("ocr-publish")
     ocr_publish.add_argument("--require-complete", action="store_true")
     ocr_publish.add_argument("--no-refresh-indexes", action="store_true")
@@ -53,6 +54,12 @@ def dispatch_book(args: argparse.Namespace, run_script: Callable[..., str]) -> s
         forwarded = _format(args, "--book-root", args.book_root)
         if c == "map-pages" and args.dry_run: forwarded.append("--dry-run")
         return run_script("map_book_pages.py" if c == "map-pages" else "classify_book_pages.py", *forwarded)
+    if c == "register-photo-source":
+        return run_script("register_photo_book_source.py", *_format(args, "--book-root", args.book_root))
+    if c == "publish-exercises":
+        forwarded = _format(args, "--book-root", args.book_root)
+        if args.yes: forwarded.append("--yes")
+        return run_script("publish_book_exercises.py", *forwarded)
     if c == "generate-chapters": return run_script("generate_book_chapters.py", *_format(args, "--book-root", args.book_root, "--context-json", args.context_json, "--plan-json", args.plan_json))
     if c == "register-pdf-source": return run_script("register_pdf_book_source.py", *_format(args, "--subject", args.subject, "--book-title", args.book_title, "--pdf-path", args.pdf_path, "--edition", args.edition))
     if c == "link-parallel-sources":
@@ -73,6 +80,9 @@ def dispatch_book(args: argparse.Namespace, run_script: Callable[..., str]) -> s
             if value: forwarded.extend([f"--{name.replace('_', '-')}", value])
         for name in ("allow_remote", "yes", "require_quality_gate"):
             if getattr(args, name): forwarded.append(f"--{name.replace('_', '-')}")
+        if args.stage: forwarded.extend(["--stage", args.stage])
+        for chapter_id in args.chapter_id: forwarded.extend(["--chapter-id", chapter_id])
+        if args.dry_run: forwarded.append("--dry-run")
         return run_script("ocr_book_pages.py", *forwarded)
     if c == "ocr-publish":
         forwarded = _format(args, "--book-root", args.book_root)

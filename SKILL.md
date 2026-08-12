@@ -34,6 +34,11 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 
 默认只通过 `scripts/kb.py` 调用功能：
 
+- 读取本技能后，把当前 `SKILL.md` 所在目录视为 `SKILL_ROOT`。若当前工作目录不是 `SKILL_ROOT`，不得从学习 Vault 拼接 `\.venv`、`scripts` 或 `.kaoyan-kb` 相对路径。
+- Windows 调用必须使用 `SKILL_ROOT\.venv\Scripts\python.exe`、`SKILL_ROOT\scripts\kb.py` 和 `--config SKILL_ROOT\kaoyan.config.json` 的绝对路径，并把工具工作目录设为 `SKILL_ROOT`。`--config` 必须放在 `query`、`ask` 等子命令之前。
+- `query`、`ask` 返回后先检查 `runtime_context`，确认 `config_path`、`vault_root` 与 `kb_root` 来自本次选择的配置，再检查教材证据状态。
+- 稳定入口启动失败、配置无效，或 `page_anchor.match_status` 为 `unavailable` 时，只能报告“本地证据链当前不可用”并询问下一步。不得搜索其他同名 `.kaoyan-kb`、自动阅图、启动 OCR，或以通用知识补写教材结论。
+
 - `doctor`：检查路径、Python、OCR 和终端编码。
 - `book`：接入纸质书、PDF、页码映射、OCR、复核与分类。
 - `sync`：同步证据、考纲、知识卡和学习层。
@@ -105,7 +110,7 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 
 1. 若当前学习工作区存在当前任务、学科锚点或章节索引，先读取这些入口，再检索历史记录。
 2. 优先使用 `scripts/kb.py query`，并尽量提供 `--subject`、`--chapter`、`--book-title` 或 `--printed-page`；出现 `P49`、`第49页`、`例2.29` 等页码或题号信号时，必须检查返回的 `page_anchor.match_status`。
-3. 显式页码属于硬约束：只有 `exact_evidence` 或 `exact_asset` 才算定位成功；`ambiguous`、`unmapped`、`not_found` 时不得用其他页的语义命中冒充。索引未命中时继续检查正式页码映射和配置登记的原图目录，正式资料仍无法定位后才能要求使用者重新拍照。
+3. 显式页码属于硬约束：只有 `exact_evidence` 或 `exact_asset` 才算定位成功；`ambiguous`、`unmapped`、`not_found` 时不得用其他页的语义命中冒充。`unavailable` 表示配置或正式页码索引不可用，不等于教材没有该页；此时必须停止教材归因。索引正常但未命中时继续检查正式页码映射和配置登记的原图目录，正式资料仍无法定位后才能要求使用者重新拍照。
 4. 按页调用必须显式传入 `--subject`；已知时同时传 `--book-title` 和 `--printed-page`。读取结果时固定先看 `page_verification`：它分别给出页面定位、题号正文核验、命中层和能否按教材正文讲解。不得把 `exact_asset + unverified + page_asset` 说成 `not_found`。
 4. 在制作解释前确认书名或资料名、章节、印刷页码、题号和所选解法。存在多个解法时不得混合，选择不明确且会改变演示时再询问使用者。
 5. 需要展示指针、状态或步骤变化时调用可用的交互可视化技能；只需要教材风格静态插图时调用图像生成技能。不要要求使用者记住技能名称，自然语言意图足以路由。
@@ -122,6 +127,7 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 - `exact_evidence`：只围绕该印刷页和已列出的正式证据讲解；书中结论、题号和原书变量可以明确归因。
 - `exact_asset`：只确认原页已定位，必须说明“教材正文未确认”；除非使用者随后明确要求人工阅图，否则不要复述或讲解为该页原题。
 - `ambiguous`、`unmapped`、`not_found`：明确报告“当前未确认”，说明缺少的教材名、页码映射或原图；不得以同章内容、相邻页或记忆替代。
+- `unavailable`：明确报告“本地证据链当前不可用”，列出结构化结果中的配置或索引原因，停止本轮教材讲解并询问是否先修复链路。
 
 若使用者仍需要帮助，可在上述未确认状态后提供补充同类推导，但必须标成“补充讲解”，不得继承原页页码、题号、原书变量或教材原文身份。按页讲解本身零写入；只有之后触发“整理今天对话”等记录请求时，才按会话收束规则沉淀已确认的学习结果。
 

@@ -13,12 +13,13 @@ from query_local_knowledge import preferred_page_ref, query_knowledge, should_pr
 
 
 ANSWER_CONTRACT_VERSION = "m6.answer.v2"
-STRUCTURED_ANSWER_MODES = {"canonical_claim", "accepted_evidence"}
+STRUCTURED_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "exercise_pair"}
 CONTENT_SOURCE_LABELS = {
     "textbook_structured_evidence": "教材结构化证据",
     "textbook_problem_evidence": "原题结构化证据",
     "textbook_solution_evidence": "原书答案结构化证据",
     "page_asset_only": "仅原页定位",
+    "runtime_unavailable": "本地证据链不可用",
     "supplementary_derivation": "补充推导",
     "learner_feedback": "学习者反馈",
 }
@@ -46,7 +47,10 @@ def normalized_answer_grounding(result: dict) -> dict[str, Any]:
 
 
 def _side_evidence_ids(side: dict[str, Any]) -> list[str]:
-    return dedupe([str(item) for item in side.get("evidence_ids", []) or []])
+    values = list(side.get("evidence_ids") or [])
+    if side.get("evidence_id"):
+        values.insert(0, side["evidence_id"])
+    return dedupe([str(item) for item in values])
 
 
 def parse_args() -> argparse.Namespace:
@@ -116,13 +120,21 @@ def evidence_excerpt(evidence: dict, question: str) -> tuple[int, str]:
 
 
 def direct_conclusion(result: dict) -> str:
+    exercise = dict(result.get("exercise_route") or {})
+    if exercise.get("match_status") == "exact_exercise":
+        question = dict(exercise.get("question") or {})
+        solution = dict(exercise.get("solution") or {})
+        if exercise.get("pair_status") == "exact_pair":
+            return f"已定位原题（题目册 P{','.join(map(str, question.get('printed_pages', []))) or '未标页'}）并配对书中题解（题解册 P{','.join(map(str, solution.get('printed_pages', []))) or '未标页'}）。"
+        if exercise.get("pair_status") == "solution_pending":
+            return "原题已经定位，但强化篇题解尚未接入；当前不能把独立推导称为书中解析。"
     anchor_snippets = page_anchor_snippets(result)
     if anchor_snippets:
         return anchor_snippets[0]
     anchor = result.get("page_anchor", {}) or {}
     if anchor.get("match_status") == "exact_asset":
         return f"已精确定位教材原页：{anchor.get('source_image_path', '')}；该页尚无结构化 OCR，教材正文未确认。"
-    if anchor.get("match_status") in {"ambiguous", "unmapped", "not_found"}:
+    if anchor.get("match_status") in {"ambiguous", "unmapped", "not_found", "unavailable"}:
         return result.get("fallback_note") or "当前无法唯一定位教材原页。"
     bundle = result.get("compare_bundle")
     if bundle:
@@ -150,6 +162,8 @@ def intuitive_explanation(result: dict) -> str:
     grounding = normalized_answer_grounding(result)
     if grounding["required"] and not grounding["can_conclude"]:
         return "原书答案尚未确认，本次不能以 AI 独立推导补位，也不能输出数值、选项或证明结论。"
+    if result.get("answer_mode") == "page_unavailable":
+        return "配置或正式页码索引不可用，本次不能判断教材是否包含该内容，也不能回退到其他知识库或通用推导冒充原文。"
     if result.get("answer_mode") == "page_asset":
         return "页码和原图已经确认，但正文尚未进入正式证据层；可以查看原图讲解，不能把未核对的语义检索结果当作书上原文。"
     if result["answer_mode"] == "chapter_fallback":
@@ -170,6 +184,18 @@ def strict_explanation(result: dict) -> list[str]:
     grounding = normalized_answer_grounding(result)
     if grounding["required"] and not grounding["can_conclude"]:
         return [str(grounding.get("failure_reason") or "原书答案未确认，已停止解题。")]
+    exercise = dict(result.get("exercise_route") or {})
+    if exercise.get("match_status") == "exact_exercise":
+        question = dict(exercise.get("question") or {})
+        solution = dict(exercise.get("solution") or {})
+        lines = []
+        if question.get("content"):
+            lines.append(f"原题：{question['content']}")
+        if solution.get("content"):
+            lines.append(f"书中题解：{solution['content']}")
+        if exercise.get("pair_status") == "solution_pending":
+            lines.append("强化篇题解状态：待接入。")
+        return lines or ["习题记录已定位，但正文尚不可用。"]
     bundle = result.get("compare_bundle")
     if bundle:
         if bundle.get("mode") == "single_node":
@@ -314,6 +340,18 @@ def build_citations(result: dict, *, limit: int = 3) -> list[dict[str, Any]]:
             if evidence_id not in ordered_ids:
                 ordered_ids.append(evidence_id)
 
+    grounding = normalized_answer_grounding(result)
+    for side_name in ("problem", "solution"):
+        for evidence_id in _side_evidence_ids(dict(grounding.get(side_name) or {})):
+            if evidence_id and evidence_id not in ordered_ids:
+                ordered_ids.append(evidence_id)
+
+    exercise = dict(result.get("exercise_route") or {})
+    for side in ("question", "solution"):
+        evidence_id = str((exercise.get(side) or {}).get("evidence_id") or "").strip()
+        if evidence_id and evidence_id not in ordered_ids:
+            ordered_ids.append(evidence_id)
+
     for ref in result.get("references", []):
         evidence_id = str(ref.get("evidence_id", "")).strip()
         if evidence_id and evidence_id not in ordered_ids:
@@ -328,7 +366,13 @@ def build_citations(result: dict, *, limit: int = 3) -> list[dict[str, Any]]:
         if evidence_id and evidence_id not in ordered_ids:
             ordered_ids.append(evidence_id)
 
-    grounding_id_count = len({evidence_id for side_name in ("problem", "solution") for evidence_id in _side_evidence_ids(dict(grounding.get(side_name) or {}))})
+    grounding_id_count = len(
+        {
+            evidence_id
+            for side_name in ("problem", "solution")
+            for evidence_id in _side_evidence_ids(dict(grounding.get(side_name) or {}))
+        }
+    )
     citation_limit = max(limit, grounding_id_count)
     citations: list[dict[str, Any]] = []
     fallback_refs = {ref.get("evidence_id", ""): ref for ref in result.get("references", [])}
@@ -371,7 +415,6 @@ def build_evidence_assessment(result: dict, citations: list[dict[str, Any]]) -> 
     anchor = dict(result.get("page_anchor") or {})
     page_status = str(anchor.get("match_status", ""))
     grounding = normalized_answer_grounding(result)
-
     if grounding["required"] and not grounding["can_conclude"]:
         return {
             "level": str(grounding.get("status") or "answer_not_found"),
@@ -380,6 +423,13 @@ def build_evidence_assessment(result: dict, citations: list[dict[str, Any]]) -> 
             "next_action": str(grounding.get("next_action") or "请先定位原书答案。"),
         }
 
+    if page_status == "unavailable":
+        return {
+            "level": "page_unavailable",
+            "can_confirm": "本地证据链当前不可用。",
+            "cannot_confirm": "当前不能判断教材是否包含该页、公式、推导或原文。",
+            "next_action": "请先修复配置或正式页码索引，再重新执行结构化查询。",
+        }
     if answer_mode in STRUCTURED_ANSWER_MODES and citations:
         return {
             "level": "structured_evidence",
@@ -441,24 +491,40 @@ def content_provenance(result: dict, assessment: dict[str, str]) -> list[dict[st
             if not side:
                 continue
             pages = list(side.get("printed_pages") or [])
-            items.append({
-                "content_id": content_id,
-                "content_type": "original_problem" if side_name == "problem" else "source_answer",
-                "source_type": source_type,
-                "source_label": CONTENT_SOURCE_LABELS[source_type],
-                "textbook_assertion_allowed": bool(grounding["can_conclude"]),
-                "printed_page": pages[0] if pages else None,
-                "printed_pages": pages,
-                "exercise_label": str(side.get("exercise_label") or ""),
-                "evidence_ids": _side_evidence_ids(side),
-            })
+            items.append(
+                {
+                    "content_id": content_id,
+                    "content_type": "original_problem" if side_name == "problem" else "source_answer",
+                    "source_type": source_type,
+                    "source_label": CONTENT_SOURCE_LABELS[source_type],
+                    "textbook_assertion_allowed": bool(grounding["can_conclude"]),
+                    "printed_page": pages[0] if pages else None,
+                    "printed_pages": pages,
+                    "exercise_label": str((result.get("page_anchor") or {}).get("requested_exercise_label") or ""),
+                    "evidence_ids": _side_evidence_ids(side),
+                }
+            )
         for index, raw in enumerate(result.get("supplementary_content", []) or [], start=1):
             if not grounding["can_conclude"] or not isinstance(raw, dict):
                 continue
             title = str(raw.get("title", "")).strip()
             explanation = str(raw.get("explanation", "")).strip()
-            if title or explanation:
-                items.append({"content_id": str(raw.get("content_id", "")).strip() or f"supplement-{index}", "content_type": "supplementary_derivation", "source_type": "supplementary_derivation", "source_label": CONTENT_SOURCE_LABELS["supplementary_derivation"], "textbook_assertion_allowed": False, "title": title, "explanation": explanation, "related_to": "source-answer", "printed_page": None, "exercise_label": ""})
+            if not title and not explanation:
+                continue
+            items.append(
+                {
+                    "content_id": str(raw.get("content_id", "")).strip() or f"supplement-{index}",
+                    "content_type": "supplementary_derivation",
+                    "source_type": "supplementary_derivation",
+                    "source_label": CONTENT_SOURCE_LABELS["supplementary_derivation"],
+                    "textbook_assertion_allowed": False,
+                    "title": title,
+                    "explanation": explanation,
+                    "related_to": "source-answer",
+                    "printed_page": None,
+                    "exercise_label": "",
+                }
+            )
         return items
 
     level = str(assessment.get("level", ""))
@@ -467,6 +533,8 @@ def content_provenance(result: dict, assessment: dict[str, str]) -> list[dict[st
         source_type = "textbook_structured_evidence"
     elif level == "page_asset_only":
         source_type = "page_asset_only"
+    elif level == "page_unavailable":
+        source_type = "runtime_unavailable"
     else:
         source_type = "learner_feedback" if result.get("intent") == "learner_feedback" else "supplementary_derivation"
     items: list[dict[str, Any]] = [
@@ -516,7 +584,11 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         direct = str(solution.get("content") or "").strip() if grounding["can_conclude"] else str(grounding.get("failure_reason") or "原书答案未确认，已停止解题。")
     if result.get("intent") == "source_verify" and evidence_assessment["level"] != "structured_evidence":
         direct = direct if grounding["required"] else evidence_assessment["can_confirm"]
-    supplemental = [str(item.get("explanation") or item.get("title") or "").strip() for item in result.get("supplementary_content", []) or [] if isinstance(item, dict) and str(item.get("explanation") or item.get("title") or "").strip()] if grounding["can_conclude"] else []
+    supplemental = [
+        str(item.get("explanation") or item.get("title") or "").strip()
+        for item in result.get("supplementary_content", []) or []
+        if isinstance(item, dict) and str(item.get("explanation") or item.get("title") or "").strip()
+    ] if grounding["can_conclude"] else []
     sections = {
         "answer_grounding_status": str(grounding["status"]),
         "source_answer": str(solution.get("content") or "").strip() if grounding["can_conclude"] else "",
@@ -539,11 +611,14 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         sections["strict_explanation"] = [str(grounding.get("failure_reason") or "原书答案未确认，已停止解题。")]
         sections["typical_examples"] = []
         sections["next_steps"] = [str(grounding.get("next_action") or "请先定位原书答案。")]
-    citation_required = result.get("answer_mode") in {"canonical_claim", "accepted_evidence"}
+    citation_required = result.get("answer_mode") in {"canonical_claim", "accepted_evidence", "exercise_pair"}
     citation_ids = {str(item.get("evidence_id") or "") for item in citations}
     problem_ids = set(_side_evidence_ids(dict(grounding.get("problem") or {})))
     solution_ids = set(_side_evidence_ids(dict(grounding.get("solution") or {})))
-    coverage_ok = bool(grounding["can_conclude"] and problem_ids and solution_ids and problem_ids <= citation_ids and solution_ids <= citation_ids) if grounding["required"] else ((not citation_required) or bool(citations))
+    if grounding["required"]:
+        coverage_ok = bool(grounding["can_conclude"] and problem_ids and solution_ids and problem_ids <= citation_ids and solution_ids <= citation_ids)
+    else:
+        coverage_ok = (not citation_required) or bool(citations)
     contract = {
         "answer_contract_version": ANSWER_CONTRACT_VERSION,
         "subject": result.get("subject", ""),
@@ -553,6 +628,8 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "intent": result.get("intent", ""),
         "answer_mode": result.get("answer_mode", ""),
         "fallback_note": result.get("fallback_note", ""),
+        "book_route": dict(result.get("book_route") or {}),
+        "exercise_route": dict(result.get("exercise_route") or {}),
         "answer_grounding": grounding,
         "citation_coverage_ok": coverage_ok,
         "evidence_assessment": evidence_assessment,
@@ -569,6 +646,7 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "fallback_hits": result.get("fallback_hits", []),
         "page_anchor": result.get("page_anchor", {}),
         "page_verification": result.get("page_verification", {}),
+        "runtime_context": dict(result.get("runtime_context") or {}),
         "query_result": result,
     }
     validate_entity_contract("query_artifact", contract)
@@ -587,9 +665,33 @@ def render_text(contract: dict) -> str:
     ]
     grounding = dict(contract.get("answer_grounding") or {})
     if grounding.get("required"):
-        lines.extend(["", "## 答案定位状态", "", f"- 状态：{grounding.get('status', 'answer_not_found')}", f"- 可输出结论：{'是' if grounding.get('can_conclude') else '否'}", f"- 原因：{grounding.get('failure_reason') or '原题与原书答案均已确认。'}", f"- 下一步：{grounding.get('next_action') or '按原书答案核对用户过程。'}", "", "## 原书答案", "", sections.get("source_answer") or "- 原书答案未确认，本次不输出解题结论。", "", "## 过程核对", "", sections.get("first_incorrect_equality") or "- 等待原书答案确认后再核对用户过程。", "", "## AI 辅助推导", ""])
+        lines.extend(
+            [
+                "",
+                "## 答案定位状态",
+                "",
+                f"- 状态：{grounding.get('status', 'answer_not_found')}",
+                f"- 可输出结论：{'是' if grounding.get('can_conclude') else '否'}",
+                f"- 原因：{grounding.get('failure_reason') or '原题与原书答案均已确认。'}",
+                f"- 下一步：{grounding.get('next_action') or '按原书答案核对用户过程。'}",
+                "",
+                "## 原书答案",
+                "",
+                sections.get("source_answer") or "- 原书答案未确认，本次不输出解题结论。",
+                "",
+                "## 过程核对",
+                "",
+                sections.get("first_incorrect_equality") or "- 等待原书答案确认后再核对用户过程。",
+                "",
+                "## AI 辅助推导",
+                "",
+            ]
+        )
         supplements = sections.get("supplementary_derivation", [])
-        lines.extend(f"- {item}" for item in supplements) if supplements else lines.append("- 当前没有允许输出的补充推导。")
+        if supplements:
+            lines.extend(f"- {item}" for item in supplements)
+        else:
+            lines.append("- 当前没有允许输出的补充推导。")
     lines.extend(["", "## 考纲定位", ""])
     if sections["syllabus_position"]:
         for item in sections["syllabus_position"]:

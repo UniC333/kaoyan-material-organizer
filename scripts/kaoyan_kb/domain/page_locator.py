@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -303,8 +304,42 @@ def build_page_locator_index() -> dict[str, Any]:
 
 
 def load_page_locator_index() -> dict[str, Any]:
-    layout = ensure_kb_layout()
-    return load_json_or_default(layout["indexes"] / PAGE_LOCATOR_INDEX_NAME, {"entries": [], "sources": []})
+    runtime = load_runtime_config()
+    index_path = runtime.kb_root / "indexes" / PAGE_LOCATOR_INDEX_NAME
+    unavailable = {
+        "entries": [],
+        "sources": [],
+        "_availability": {
+            "available": False,
+            "path": str(index_path),
+            "reason": "runtime_config_missing",
+            "detail": "No runtime config or complete KAOYAN root override selected this knowledge base.",
+        },
+    }
+    if not runtime.configured:
+        return unavailable
+    if not index_path.is_file():
+        unavailable["_availability"]["reason"] = "page_locator_index_missing"
+        unavailable["_availability"]["detail"] = "The selected knowledge base has no formal page locator index."
+        return unavailable
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        unavailable["_availability"]["reason"] = "page_locator_index_invalid"
+        unavailable["_availability"]["detail"] = str(exc)
+        return unavailable
+    if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list) or not isinstance(payload.get("sources"), list):
+        unavailable["_availability"]["reason"] = "page_locator_index_invalid"
+        unavailable["_availability"]["detail"] = "The locator index must contain list-valued entries and sources."
+        return unavailable
+    payload = dict(payload)
+    payload["_availability"] = {
+        "available": True,
+        "path": str(index_path),
+        "reason": "",
+        "detail": "",
+    }
+    return payload
 
 
 def _book_title_matches(requested: str, candidate: str) -> bool:
@@ -315,19 +350,7 @@ def _book_title_matches(requested: str, candidate: str) -> bool:
 
 def resolve_page_locator(*, subject: str, book_title: str | None, printed_page: int, exercise_label: str = "") -> dict[str, Any]:
     index = load_page_locator_index()
-    subject_entries = [
-        item for item in index.get("entries", [])
-        if item.get("subject") == subject and int(item.get("printed_page", 0) or 0) == printed_page
-    ]
-    if book_title:
-        candidates = [item for item in subject_entries if _book_title_matches(book_title, str(item.get("book_title", "")))]
-    else:
-        candidates = subject_entries
-    distinct_books = {(item.get("book_id"), item.get("book_title")) for item in candidates}
-    source_catalog = [item for item in index.get("sources", []) if item.get("subject") == subject]
-    if book_title:
-        source_catalog = [item for item in source_catalog if _book_title_matches(book_title, str(item.get("book_title", "")))]
-
+    availability = dict(index.get("_availability") or {"available": True})
     base = {
         "requested_page": printed_page,
         "requested_position": None,
@@ -350,7 +373,27 @@ def resolve_page_locator(*, subject: str, book_title: str | None, printed_page: 
         "matched_evidence_id": "",
         "matched_chunk_id": "",
         "snippets": [],
+        "locator_available": bool(availability.get("available", True)),
+        "locator_index_path": str(availability.get("path") or ""),
+        "unavailable_reason": str(availability.get("reason") or ""),
+        "unavailable_detail": str(availability.get("detail") or ""),
     }
+    if not base["locator_available"]:
+        base["match_status"] = "unavailable"
+        return base
+    subject_entries = [
+        item for item in index.get("entries", [])
+        if item.get("subject") == subject and int(item.get("printed_page", 0) or 0) == printed_page
+    ]
+    if book_title:
+        candidates = [item for item in subject_entries if _book_title_matches(book_title, str(item.get("book_title", "")))]
+    else:
+        candidates = subject_entries
+    distinct_books = {(item.get("book_id"), item.get("book_title")) for item in candidates}
+    source_catalog = [item for item in index.get("sources", []) if item.get("subject") == subject]
+    if book_title:
+        source_catalog = [item for item in source_catalog if _book_title_matches(book_title, str(item.get("book_title", "")))]
+
     if len(distinct_books) > 1 and not book_title:
         base["match_status"] = "ambiguous"
         base["candidates"] = [
@@ -359,11 +402,12 @@ def resolve_page_locator(*, subject: str, book_title: str | None, printed_page: 
         ]
         return base
     if len(candidates) != 1:
-        if source_catalog:
+        unmapped_sources = [item for item in source_catalog if item.get("mapping_status") != "mapped"]
+        if not candidates and unmapped_sources:
             base["match_status"] = "unmapped"
             base["candidates"] = [
                 {"book_id": item.get("book_id", ""), "book_title": item.get("book_title", ""), "source_id": item.get("source_id", "")}
-                for item in source_catalog
+                for item in unmapped_sources
             ]
         return base
     match = candidates[0]
