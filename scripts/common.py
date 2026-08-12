@@ -1193,6 +1193,7 @@ def learner_file_map(default: Path | None = None) -> dict[str, Path]:
         "question_history": learner_root / "question_history.json",
         "error_log": learner_root / "error_log.json",
         "review_history": learner_root / "review_history.json",
+        "review_schedule": learner_root / "review_schedule.json",
         "refinement_queue": learner_root / "refinement_queue.json",
         "distillation_candidates": learner_root / "distillation_candidates.json",
     }
