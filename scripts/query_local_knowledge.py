@@ -10,7 +10,7 @@ from typing import Any
 
 from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, learner_file_map, load_all_json, load_json, resolve_subject
 from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator
-from kaoyan_kb.domain.exercise_locator import find_exact_relation, find_unique_relation_for_scope, normalize_exercise_label
+from kaoyan_kb.domain.exercise_locator import find_exact_relation, find_exact_worked_example_relation, find_unique_relation_for_scope, normalize_exercise_label
 from kaoyan_kb.domain.teaching_context import build_bounded_teaching_context
 from learner_events import load_events
 from retrieve_knowledge import retrieve as retrieve_index
@@ -97,7 +97,7 @@ def detect_intent(query: str) -> str:
 
 def parse_page_anchor(query: str) -> dict[str, Any]:
     text = str(query or "")
-    match = re.search(r"(?:第?\s*([0-9]+)\s*页|\b[Pp]\s*[.．]?\s*([0-9]+)\b)", text)
+    match = re.search(r"(?:第?\s*([0-9]+)\s*页|(?<![A-Za-z0-9])[Pp]\s*[.．]?\s*([0-9]+)(?![0-9]))", text)
     requested_page = int(match.group(1) or match.group(2)) if match else None
     requested_position = None
     if any(token in text for token in ("最下方", "最下面", "页底", "底部", "最底下", "下方")):
@@ -330,18 +330,40 @@ def apply_hard_page_route(
 
 def apply_exercise_relation(locator: dict[str, Any], evidences: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     requested_label = str(locator.get("requested_exercise_label") or "").strip()
-    # 例3.14 这类教材例题编号对应当前证据页，并非另有答案页的编号习题，
-    # 不应交给只接受两位题号的习题答案定位器处理。
     if requested_label.startswith("例"):
         if locator.get("match_status") != "exact_evidence":
             return {"status": "unverified", "exercise_label": requested_label}, evidences
-        matched = locator.get("exercise_match_status") == "matched"
+        relation = find_exact_worked_example_relation(
+            book_id=str(locator.get("book_id") or ""),
+            printed_page=int(locator.get("requested_page") or 0),
+            exercise_label=requested_label,
+        )
+        if not relation:
+            locator["exercise_match_status"] = "unverified"
+            return {"status": "unverified", "exercise_label": requested_label, "reason": "source-answer-not-found"}, evidences
+        if relation.get("relation_status") != "exact":
+            locator["exercise_match_status"] = "unverified"
+            return {"status": "ambiguous", "exercise_label": requested_label, "relation_id": relation.get("relation_id", ""), "reason": "source-answer-relation-needs-review"}, evidences
+        question = dict(relation.get("question") or {})
+        answer = dict(relation.get("answer") or {})
+        linked_ids = list(answer.get("evidence_ids") or [])
+        layout = ensure_kb_layout()
+        linked = [load_json(layout["evidence"] / f"{item}.json") for item in linked_ids if (layout["evidence"] / f"{item}.json").is_file()]
+        existing_ids = {item.get("evidence_id") for item in evidences}
+        locator["exercise_match_status"] = "matched"
         return {
-            "status": "same_page_evidence" if matched else "unverified",
+            "status": "exact_answer_evidence",
+            "relation_id": relation.get("relation_id", ""),
             "exercise_label": requested_label,
-            "question_evidence_ids": [locator.get("matched_evidence_id", "")] if matched else [],
-            "answer_evidence_ids": [],
-        }, evidences
+            "question_printed_pages": question.get("printed_pages", []),
+            "answer_printed_pages": answer.get("printed_pages", []),
+            "question_evidence_ids": question.get("evidence_ids", []),
+            "answer_evidence_ids": linked_ids,
+            "question_source_image_paths": question.get("source_image_paths", []),
+            "answer_source_image_paths": answer.get("source_image_paths", []),
+            "question_content": question.get("content", ""),
+            "answer_content": answer.get("content", ""),
+        }, evidences + [item for item in linked if item.get("evidence_id") not in existing_ids]
 
     label = normalize_exercise_label(requested_label)
     if locator.get("match_status") != "exact_evidence" or not label:
@@ -392,6 +414,75 @@ def apply_scoped_exercise_relation(*, book_title: str | None, chapter: str | Non
     ids = list(relation.get("question_evidence_ids", []) or []) + list(relation.get("answer_evidence_ids", []) or [])
     evidence = [load_json(layout["evidence"] / f"{item}.json") for item in ids if (layout["evidence"] / f"{item}.json").is_file()]
     return {"status": "exact_answer_evidence", "relation_id": relation.get("relation_id", ""), "exercise_label": label, "question_pdf_pages": relation.get("question_pdf_pages", []), "answer_pdf_pages": relation.get("answer_pdf_pages", []), "question_evidence_ids": relation.get("question_evidence_ids", []), "answer_evidence_ids": relation.get("answer_evidence_ids", [])}, evidence
+
+
+def build_answer_grounding(
+    *,
+    query: str,
+    book_title: str | None,
+    page_anchor: dict[str, Any],
+    exercise_anchor: dict[str, Any],
+    evidences: list[dict[str, Any]],
+) -> dict[str, Any]:
+    text = str(query or "")
+    problem_tokens = ("例", "题", "问", "过程", "答案", "解", "计算", "证明", "选择", "填空", "怎么做", "结果")
+    source_tokens = ("教材", "讲义", "题集", "题目照片", "照片", "图中", "书上", "书里", "原书")
+    explicit_source = bool(book_title or page_anchor.get("requested_page") is not None or page_anchor.get("book_id") or any(token in text for token in source_tokens))
+    problem_like = bool(page_anchor.get("requested_exercise_label") or exercise_anchor.get("exercise_label") or any(token in text for token in problem_tokens) or any(token in text for token in ("这道题", "该题")))
+    required = explicit_source and problem_like and not any(token in text for token in ("自拟", "我编", "原创题"))
+    grounding = {
+        "required": required,
+        "status": "answer_not_found" if required else "not_applicable",
+        "can_conclude": not required,
+        "problem": {},
+        "solution": {},
+        "failure_reason": "尚未定位原书题解。" if required else "",
+        "next_action": "请补充教材名、页码或题号后重新定位原书答案。" if required else "",
+    }
+    if not required:
+        return grounding
+    page_status = str(page_anchor.get("match_status") or "")
+    if page_status == "unavailable":
+        grounding.update(status="answer_unavailable", failure_reason="本地证据链当前不可用。", next_action="请先修复配置或正式页码索引。")
+        return grounding
+    if page_status == "exact_asset":
+        grounding.update(status="answer_asset_only", failure_reason="只定位到原题图片，原书答案正文未确认。", next_action="如需继续，请明确允许人工核对答案原图，或先发布题解证据。")
+        return grounding
+    if page_status == "ambiguous":
+        grounding.update(status="answer_ambiguous", failure_reason="原题页存在多个教材候选。", next_action="请先确认教材名称。")
+        return grounding
+    if exercise_anchor.get("status") == "ambiguous":
+        grounding.update(status="answer_ambiguous", failure_reason="题目与原书答案的关系存在歧义。", next_action="请先审核题目—题解关系。")
+        return grounding
+    if exercise_anchor.get("status") != "exact_answer_evidence":
+        return grounding
+
+    evidence_by_id = {str(item.get("evidence_id") or ""): item for item in evidences}
+    question_ids = [str(item) for item in exercise_anchor.get("question_evidence_ids", []) if str(item)]
+    answer_ids = [str(item) for item in exercise_anchor.get("answer_evidence_ids", []) if str(item)]
+    problem_content = str(exercise_anchor.get("question_content") or "").strip() or "\n".join(str(evidence_by_id[item].get("content") or "") for item in question_ids if item in evidence_by_id).strip()
+    answer_content = str(exercise_anchor.get("answer_content") or "").strip() or "\n".join(str(evidence_by_id[item].get("content") or "") for item in answer_ids if item in evidence_by_id).strip()
+    grounding["problem"] = {
+        "evidence_ids": question_ids,
+        "book_title": str(book_title or page_anchor.get("book_title") or ""),
+        "exercise_label": str(exercise_anchor.get("exercise_label") or ""),
+        "printed_pages": list(exercise_anchor.get("question_printed_pages", []) or []),
+        "pdf_pages": list(exercise_anchor.get("question_pdf_pages", []) or []),
+        "source_image_paths": list(exercise_anchor.get("question_source_image_paths", []) or []),
+        "content": problem_content,
+    }
+    grounding["solution"] = {
+        "evidence_ids": answer_ids,
+        "book_title": str(book_title or page_anchor.get("book_title") or ""),
+        "exercise_label": str(exercise_anchor.get("exercise_label") or ""),
+        "printed_pages": list(exercise_anchor.get("answer_printed_pages", []) or []),
+        "pdf_pages": list(exercise_anchor.get("answer_pdf_pages", []) or []),
+        "source_image_paths": list(exercise_anchor.get("answer_source_image_paths", []) or []),
+        "content": answer_content,
+    }
+    if question_ids and answer_ids and problem_content and answer_content:
+        grounding.update(status="exact_answer", can_conclude=True, failure_reason="", next_action="")
+    return grounding
 
 
 def tokenize(query: str) -> list[str]:
@@ -995,8 +1086,12 @@ def query_knowledge(
             for ref in references:
                 if ref.get("evidence_id") in set(exercise_anchor.get("question_evidence_ids", [])): ref["role"] = "question"
                 elif ref.get("evidence_id") in set(exercise_anchor.get("answer_evidence_ids", [])): ref["role"] = "answer"
-            return {"subject": subject, "chapter": chapter or "", "book_title": book_title or "", "query": query, "intent": intent, "answer_mode": "accepted_evidence", "fallback_note": "", "syllabus_route": [], "retrieval_hits": [], "claim_hits": [], "evidence_hits": evidences, "fallback_hits": [], "references": references, "page_anchor": {"requested_page": None, "match_status": "not_requested"}, "exercise_anchor": exercise_anchor, "query_path": {"exercise_relation_first": True, "retrieval_candidate_set_used": False, "retrieval_hit_count": 0}, "teaching_context": build_bounded_teaching_context(load_events(), subject=subject, chapter=chapter, query=query)}
-        return {"subject": subject, "chapter": chapter or "", "book_title": book_title or "", "query": query, "intent": intent, "answer_mode": "exercise_unconfirmed", "fallback_note": "题号问答需要在当前教材和当前章节中唯一匹配；当前题号未覆盖或存在歧义，不会用语义检索替代题干和答案。", "syllabus_route": [], "retrieval_hits": [], "claim_hits": [], "evidence_hits": [], "fallback_hits": [], "references": [], "page_anchor": {"requested_page": None, "match_status": "not_requested"}, "exercise_anchor": exercise_anchor, "query_path": {"exercise_relation_first": True, "retrieval_candidate_set_used": False, "retrieval_hit_count": 0}, "teaching_context": build_bounded_teaching_context(load_events(), subject=subject, chapter=chapter, query=query)}
+            result = {"subject": subject, "chapter": chapter or "", "book_title": book_title or "", "query": query, "intent": intent, "answer_mode": "accepted_evidence", "fallback_note": "", "syllabus_route": [], "retrieval_hits": [], "claim_hits": [], "evidence_hits": evidences, "fallback_hits": [], "references": references, "page_anchor": {"requested_page": None, "match_status": "not_requested"}, "exercise_anchor": exercise_anchor, "query_path": {"exercise_relation_first": True, "retrieval_candidate_set_used": False, "retrieval_hit_count": 0}, "teaching_context": build_bounded_teaching_context(load_events(), subject=subject, chapter=chapter, query=query)}
+            result["answer_grounding"] = build_answer_grounding(query=query, book_title=book_title, page_anchor=result["page_anchor"], exercise_anchor=exercise_anchor, evidences=evidences)
+            return result
+        result = {"subject": subject, "chapter": chapter or "", "book_title": book_title or "", "query": query, "intent": intent, "answer_mode": "exercise_unconfirmed", "fallback_note": "题号问答需要在当前教材和当前章节中唯一匹配；当前题号未覆盖或存在歧义，不会用语义检索替代题干和答案。", "syllabus_route": [], "retrieval_hits": [], "claim_hits": [], "evidence_hits": [], "fallback_hits": [], "references": [], "page_anchor": {"requested_page": None, "match_status": "not_requested"}, "exercise_anchor": exercise_anchor, "query_path": {"exercise_relation_first": True, "retrieval_candidate_set_used": False, "retrieval_hit_count": 0}, "teaching_context": build_bounded_teaching_context(load_events(), subject=subject, chapter=chapter, query=query)}
+        result["answer_grounding"] = build_answer_grounding(query=query, book_title=book_title, page_anchor=result["page_anchor"], exercise_anchor=exercise_anchor, evidences=[])
+        return result
     tokens = tokenize(query)
     full_query = normalize_text(query)
     parts = compare_parts(query) if intent == "compare" else []
@@ -1066,6 +1161,7 @@ def query_knowledge(
             ref["role"] = "question"
         elif ref.get("evidence_id") in set(exercise_anchor.get("answer_evidence_ids", []) or []):
             ref["role"] = "answer"
+    answer_grounding = build_answer_grounding(query=query, book_title=book_title, page_anchor=page_anchor, exercise_anchor=exercise_anchor, evidences=evidences)
     return {
         "subject": subject,
         "chapter": chapter or "",
@@ -1087,6 +1183,7 @@ def query_knowledge(
         "query_path": query_path,
         "page_anchor": page_anchor,
         "exercise_anchor": exercise_anchor,
+        "answer_grounding": answer_grounding,
         "page_verification": page_verification,
     }
 
@@ -1131,6 +1228,9 @@ def render_text(result: dict) -> str:
             lines.append(f"- 题号：{exercise_anchor['exercise_label']}")
         if exercise_anchor.get("answer_pdf_pages"):
             lines.append(f"- 答案印刷页：{exercise_anchor.get('answer_printed_pages', [])} | 答案 PDF 页：{exercise_anchor['answer_pdf_pages']}")
+    grounding = dict(result.get("answer_grounding") or {})
+    if grounding.get("required"):
+        lines.extend(["", "## 原书答案门控", "", f"- 状态：{grounding.get('status')}", f"- 可输出结论：{'是' if grounding.get('can_conclude') else '否'}", f"- 原因：{grounding.get('failure_reason') or '原题与原书答案均已确认。'}", f"- 下一步：{grounding.get('next_action') or '可按原书答案继续核对。'}"])
         lines.append("")
     teaching_context = dict(result.get("teaching_context") or {})
     if teaching_context.get("history_used"):

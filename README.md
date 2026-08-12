@@ -104,6 +104,16 @@ $env:MISTRAL_API_KEY = "your-key"
 
 按页查询必须提供 `--subject`；已知时也应提供 `--book-title`。结果中的 `page_verification` 会分别说明页面定位、题号正文核验、命中层及能否按教材正文讲解。例如 `exact_asset + unverified + page_asset` 表示“原页已定位、教材正文未确认”，并不表示该页不存在。
 
+### 有来源题目的原书答案门控
+
+教材、讲义、题集、例题或题目照片中的解题请求还必须检查 `answer_grounding`。题目页的 `exact_evidence` 只证明原题存在，不能代替原书答案；只有 `status=exact_answer` 且 `can_conclude=true` 时，`ask` 才能判断使用者过程、给出数值/选项/证明结论或附加 AI 辅助推导。
+
+```powershell
+.\.venv\Scripts\python.exe scripts\kb.py ask --subject 数学 --book-title 李正元数一 --printed-page 64 --question "例3.8 第一问，检查我的过程" --format json
+```
+
+`answer_grounding.status` 可能为 `exact_answer`、`answer_asset_only`、`answer_ambiguous`、`answer_not_found`、`answer_unavailable` 或 `not_applicable`。除 `exact_answer` 外，有来源题目均失败关闭：不输出解题结论、不以 AI 独立推导补位；`ask --save` 还要求原题和原书答案的证据引用同时完整，否则保持零写入。明确说明是自拟题时不启用此门控。
+
 ### 会话续接与学习记录
 
 长对话先以“当前任务 + 学科专题锚点”确定真实停点。教材回答必须把教材结构化证据、仅原页定位、补充推导和学习者反馈分别标注；补充推导不能沿用原题页码或题号。

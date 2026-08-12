@@ -9,6 +9,8 @@ from common import ensure_kb_layout, load_json_or_default, save_json
 
 EXERCISE_LOCATOR_INDEX_NAME = "exercise_locator_index.json"
 QUEUE_NAME = "exercise-locator"
+WORKED_EXAMPLE_PATTERN = re.compile(r"【\s*例\s*(\d+(?:\.\d+)+)\s*】")
+WORKED_SOLUTION_PATTERN = re.compile(r"【\s*(?:解|解答|分析与求解)\s*】")
 
 
 def normalize_exercise_label(value: Any) -> str:
@@ -55,8 +57,116 @@ def _unique_occurrences(items: list[dict[str, Any]], *, page_key: str) -> list[d
     return list(unique.values())
 
 
+def _grounded_printed_page_records(evidences: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, int, str]] = set()
+    for evidence in evidences:
+        if not evidence.get("source_grounded") or evidence.get("verification_status") not in {"reviewed", "source_grounded"} or evidence.get("mapping_status") == "stale":
+            continue
+        evidence_id = str(evidence.get("evidence_id") or "").strip()
+        content = str(evidence.get("content") or "").strip()
+        if not evidence_id or not content:
+            continue
+        for ref in evidence.get("page_classification_refs", []) or []:
+            if not isinstance(ref, dict):
+                continue
+            book_id = str(ref.get("book_id") or "").strip()
+            chapter_id = str(ref.get("chapter_id") or evidence.get("chapter_id") or "").strip()
+            printed_page = ref.get("printed_page")
+            if not book_id or not chapter_id or printed_page is None:
+                continue
+            key = (book_id, chapter_id, int(printed_page), evidence_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            records.append({
+                "book_id": book_id,
+                "book_title": str(ref.get("book_title") or evidence.get("book_title") or "").strip(),
+                "chapter_id": chapter_id,
+                "chapter_title": str(ref.get("chapter_title") or evidence.get("chapter_title") or "").strip(),
+                "printed_page": int(printed_page),
+                "source_image_path": str(ref.get("source_image_path") or "").strip(),
+                "source_id": str(ref.get("source_id") or evidence.get("source_id") or "").strip(),
+                "evidence_id": evidence_id,
+                "content": content,
+            })
+    return records
+
+
+def _span_side(intervals: list[tuple[int, int, dict[str, Any]]], start: int, end: int, content: str) -> dict[str, Any]:
+    selected = [record for left, right, record in intervals if left < end and right > start]
+    evidence_ids = list(dict.fromkeys(str(item["evidence_id"]) for item in selected))
+    printed_pages = sorted({int(item["printed_page"]) for item in selected})
+    image_paths = list(dict.fromkeys(str(item.get("source_image_path") or "") for item in selected if item.get("source_image_path")))
+    first = selected[0] if selected else {}
+    return {
+        "book_id": str(first.get("book_id") or ""),
+        "book_title": str(first.get("book_title") or ""),
+        "source_id": str(first.get("source_id") or ""),
+        "evidence_ids": evidence_ids,
+        "printed_pages": printed_pages,
+        "source_image_path": image_paths[0] if image_paths else "",
+        "source_image_paths": image_paths,
+        "content": content[start:end].strip(),
+    }
+
+
+def build_worked_example_relations(evidences: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Derive unique same-book example/solution relations from grounded page evidence."""
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for record in _grounded_printed_page_records(evidences):
+        grouped[(record["book_id"], record["chapter_id"])].append(record)
+
+    candidates: list[dict[str, Any]] = []
+    for (book_id, chapter_id), records in grouped.items():
+        records.sort(key=lambda item: (int(item["printed_page"]), str(item["evidence_id"])))
+        parts: list[str] = []
+        intervals: list[tuple[int, int, dict[str, Any]]] = []
+        cursor = 0
+        for record in records:
+            start = cursor
+            parts.append(record["content"])
+            cursor += len(record["content"])
+            intervals.append((start, cursor, record))
+            parts.append("\n")
+            cursor += 1
+        combined = "".join(parts)
+        examples = list(WORKED_EXAMPLE_PATTERN.finditer(combined))
+        for index, marker in enumerate(examples):
+            segment_end = examples[index + 1].start() if index + 1 < len(examples) else len(combined)
+            solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
+            solution_start = solution_markers[0].start() if solution_markers else segment_end
+            relation_status = "exact" if len(solution_markers) == 1 else "needs_review" if solution_markers else "question_only"
+            exercise_label = f"例{marker.group(1)}"
+            candidates.append({
+                "relation_id": f"EXW-{book_id}-{chapter_id}-{exercise_label}",
+                "relation_kind": "same-book-worked-example",
+                "relation_status": relation_status,
+                "book_id": book_id,
+                "book_title": records[0].get("book_title", ""),
+                "chapter_id": chapter_id,
+                "chapter_title": records[0].get("chapter_title", ""),
+                "exercise_label": exercise_label,
+                "question": _span_side(intervals, marker.start(), solution_start, combined),
+                "answer": _span_side(intervals, solution_start, segment_end, combined) if solution_markers else {},
+            })
+
+    grouped_candidates: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for candidate in candidates:
+        grouped_candidates[(candidate["book_id"], candidate["chapter_id"], candidate["exercise_label"])].append(candidate)
+    relations: list[dict[str, Any]] = []
+    for items in grouped_candidates.values():
+        relation = dict(items[0])
+        if len(items) != 1:
+            relation["relation_status"] = "needs_review"
+            relation["candidates"] = items
+        relations.append(relation)
+    return sorted(relations, key=lambda item: item["relation_id"])
+
+
 def build_exercise_locator_index() -> dict[str, Any]:
     layout = ensure_kb_layout()
+    all_evidences = [load_json_or_default(path, {}) for path in sorted(layout["evidence"].glob("*.json"))]
     sources = {
         str(item.get("source_id") or ""): item
         for path in layout["manifests"].joinpath("sources").glob("*.json")
@@ -64,8 +174,7 @@ def build_exercise_locator_index() -> dict[str, Any]:
         if item.get("status") == "active" and item.get("material_type") == "book-pdf"
     }
     pages_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for path in sorted(layout["evidence"].glob("*.json")):
-        evidence = load_json_or_default(path, {})
+    for evidence in all_evidences:
         source_id = str(evidence.get("source_id") or "")
         if source_id not in sources or evidence.get("origin_type") != "pdf_page_ocr":
             continue
@@ -157,7 +266,8 @@ def build_exercise_locator_index() -> dict[str, Any]:
         queue_path = layout["review_queues"] / QUEUE_NAME / f"{source_id}.json"
         existing_queue = load_json_or_default(queue_path, {})
         save_json(queue_path, {"queue_type": QUEUE_NAME, "source_id": source_id, "approved_relations": list(existing_queue.get("approved_relations", []) or []), "items": items, "summary": {"open_count": len(items)}})
-    payload = {"schema_version": "exercise-locator.v1", "relations": sorted(relations, key=lambda item: item["relation_id"]), "summary": {"relation_count": len(relations), "review_count": sum(len(items) for items in review_by_source.values())}}
+    relations.extend(build_worked_example_relations(all_evidences))
+    payload = {"schema_version": "exercise-locator.v1", "relations": sorted(relations, key=lambda item: item["relation_id"]), "summary": {"relation_count": len(relations), "review_count": sum(len(items) for items in review_by_source.values()) + sum(item.get("relation_status") == "needs_review" for item in relations)}}
     save_json(layout["indexes"] / EXERCISE_LOCATOR_INDEX_NAME, payload)
     return payload
 
@@ -199,5 +309,16 @@ def find_unique_relation_for_scope(*, book_title: str, chapter: str, exercise_la
             if section_number
             else str(item.get("section_root") or "").split(".", 1)[0] == scope
         )
+    ]
+    return matches[0] if len(matches) == 1 else {}
+
+
+def find_exact_worked_example_relation(*, book_id: str, printed_page: int, exercise_label: str) -> dict[str, Any]:
+    matches = [
+        item for item in load_exercise_locator_index().get("relations", [])
+        if item.get("relation_kind") == "same-book-worked-example"
+        and item.get("book_id") == book_id
+        and item.get("exercise_label") == exercise_label.replace(" ", "")
+        and printed_page in set((item.get("question") or {}).get("printed_pages", []))
     ]
     return matches[0] if len(matches) == 1 else {}
