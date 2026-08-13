@@ -1,1 +1,61 @@
-{"title":"query_artifact","type":"object","required":["answer_contract_version","subject","query","answer_mode","answer_grounding","citation_coverage_ok","sections","citations"],"properties":{"answer_contract_version":{},"subject":{},"query":{},"answer_mode":{},"answer_grounding":{"type":"object","required":["required","status","can_conclude","problem","solution","failure_reason","next_action"],"properties":{"required":{"type":"boolean"},"status":{"enum":["exact_answer","answer_asset_only","answer_ambiguous","answer_not_found","answer_unavailable","not_applicable"]},"can_conclude":{"type":"boolean"},"problem":{"type":"object"},"solution":{"type":"object"},"failure_reason":{"type":"string"},"next_action":{"type":"string"}},"additionalProperties":true},"citation_coverage_ok":{},"sections":{},"citations":{}},"additionalProperties":true}
+{
+  "title": "query_artifact",
+  "type": "object",
+  "required": [
+    "answer_contract_version",
+    "subject",
+    "query",
+    "answer_mode",
+    "request_resolution",
+    "page_crosscheck",
+    "page_verification",
+    "answer_grounding",
+    "citation_coverage_ok",
+    "teaching_bundle",
+    "sections",
+    "citations",
+    "runtime_context"
+  ],
+  "properties": {
+    "answer_contract_version": {"type": "string"},
+    "subject": {"type": "string"},
+    "query": {"type": "string"},
+    "answer_mode": {"type": "string"},
+    "request_resolution": {"type": "object"},
+    "page_crosscheck": {"type": "object"},
+    "page_verification": {"type": "object"},
+    "answer_grounding": {
+      "type": "object",
+      "required": ["required", "status", "can_conclude", "problem", "solution", "failure_reason", "next_action"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "status": {"enum": ["exact_answer", "answer_asset_only", "answer_ambiguous", "answer_not_found", "answer_unavailable", "not_applicable"]},
+        "can_conclude": {"type": "boolean"},
+        "problem": {"type": "object"},
+        "solution": {"type": "object"},
+        "failure_reason": {"type": "string"},
+        "next_action": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "citation_coverage_ok": {"type": "boolean"},
+    "teaching_bundle": {
+      "type": "object",
+      "required": ["status", "problem_text", "source_answer_text", "requested_option", "exercise_label", "citations", "failure_reason"],
+      "properties": {
+        "status": {"enum": ["exact", "blocked", "not_applicable"]},
+        "problem_text": {"type": "string"},
+        "source_answer_text": {"type": "string"},
+        "requested_option": {"enum": ["", "A", "B", "C", "D"]},
+        "exercise_label": {"type": "string"},
+        "citations": {"type": "object"},
+        "failure_reason": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "sections": {"type": "object"},
+    "citations": {"type": "array"},
+    "runtime_context": {"type": "object"}
+  },
+  "additionalProperties": true
+}

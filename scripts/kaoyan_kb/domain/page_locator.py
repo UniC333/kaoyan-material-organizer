@@ -5,13 +5,66 @@ import re
 from pathlib import Path
 from typing import Any
 
-from common import ensure_kb_layout, load_json_or_default, save_json
+from common import ensure_kb_layout, load_json_or_default, now_iso, save_json
 from config import load_runtime_config
+from kaoyan_kb.domain.index_freshness import directory_json_inputs, fingerprint_index_inputs
 
 
 PAGE_LOCATOR_INDEX_NAME = "page_locator_index.json"
 PDF_PAGE_MAPPING_QUEUE = "pdf-page-mapping"
 EXCLUDED_PATH_PARTS = {".local-api-smoke", ".tmp", "tmp", "tests", "fixtures", "__pycache__"}
+
+
+def page_locator_input_fingerprint(layout: dict[str, Path], *, metadata_dirname: str) -> str:
+    manifest_root = layout["manifests"] / "sources"
+    files = [
+        *directory_json_inputs("manifests/sources", manifest_root),
+        *directory_json_inputs("evidence", layout["evidence"]),
+        *directory_json_inputs("review-queues/pdf-page-review", layout["review_queues"] / "pdf-page-review"),
+        *directory_json_inputs("indexes/book-parallel-source-links", layout["indexes"] / "book_parallel_source_links"),
+    ]
+    asset_existence: list[tuple[str, Any]] = []
+    for manifest_path in sorted(manifest_root.glob("*.json")) if manifest_root.is_dir() else []:
+        source = load_json_or_default(manifest_path, {})
+        if source.get("status") != "active" or source.get("material_type") != "chapter-photo":
+            continue
+        source_id = str(source.get("source_id") or manifest_path.stem)
+        metadata_root = Path(str(source.get("source_path") or "")) / metadata_dirname
+        for name in ("book_asset.json", "page_assets.json", "page_mappings.json"):
+            files.append((f"chapter-photo-metadata/{source_id}/{name}", metadata_root / name))
+        page_assets = load_json_or_default(metadata_root / "page_assets.json", {})
+        for item in page_assets.get("items", []) or []:
+            if not isinstance(item, dict):
+                continue
+            page_id = str(item.get("page_id") or "").strip()
+            source_image_path = str(item.get("source_image_path") or "").strip()
+            if page_id:
+                asset_existence.append(
+                    (
+                        f"chapter-photo-assets/{source_id}/{page_id}",
+                        {"exists": bool(source_image_path and Path(source_image_path).is_file())},
+                    )
+                )
+    return fingerprint_index_inputs(
+        files=files,
+        projections=asset_existence,
+        metadata={"paper_book_metadata_dir": metadata_dirname},
+    )
+
+
+def _parallel_source_groups(layout: dict[str, Path]) -> dict[str, str]:
+    groups: dict[str, str] = {}
+    root = layout["indexes"] / "book_parallel_source_links"
+    for path in sorted(root.glob("*.json")) if root.is_dir() else []:
+        payload = load_json_or_default(path, {})
+        logical_id = f"{payload.get('subject', '')}:{normalize_book_title(payload.get('book_title'))}"
+        source_ids = {str(payload.get("pdf_source_id") or "")}
+        for chapter in payload.get("chapters", []) or []:
+            source_ids.add(str((chapter.get("pdf_anchor") or {}).get("source_id") or ""))
+            source_ids.update(str(item.get("source_id") or "") for item in chapter.get("context_links", []) or [])
+        for source_id in source_ids - {""}:
+            groups[source_id] = logical_id
+    return groups
 
 
 def normalize_book_title(value: Any) -> str:
@@ -170,6 +223,7 @@ def build_page_locator_index() -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
     sources: list[dict[str, Any]] = []
     pdf_mapping_blockers: list[dict[str, Any]] = []
+    parallel_groups = _parallel_source_groups(layout)
     manifests_root = layout["manifests"] / "sources"
     for manifest_path in sorted(manifests_root.glob("*.json")):
         source = load_json_or_default(manifest_path, {})
@@ -189,6 +243,8 @@ def build_page_locator_index() -> dict[str, Any]:
             title = str(source.get("source_name") or "").strip()
             subject = str(source.get("subject") or "").strip()
             entries.extend(pdf_entries)
+            for entry in pdf_entries:
+                entry["logical_book_id"] = parallel_groups.get(source_id, entry.get("book_id") or source_id)
             sources.append({
                 "source_id": source_id,
                 "subject": subject,
@@ -199,6 +255,7 @@ def build_page_locator_index() -> dict[str, Any]:
                 "material_type": "book-pdf",
                 "mapping_status": "mapped" if pdf_entries and not pdf_review_items else "unmapped",
                 "review_item_count": len(pdf_review_items),
+                "logical_book_id": parallel_groups.get(source_id, source_id),
             })
             save_json(queue_path, {"queue_type": PDF_PAGE_MAPPING_QUEUE, "source_id": source_id, "approved_overrides": list(existing_queue.get("approved_overrides", []) or []), "items": pdf_review_items, "summary": {"open_count": len(pdf_review_items), "mapped_count": len(pdf_entries)}})
             pdf_mapping_blockers.extend({"source_id": source_id, **item} for item in pdf_review_items)
@@ -226,6 +283,7 @@ def build_page_locator_index() -> dict[str, Any]:
                 "normalized_book_title": normalize_book_title(book_title),
                 "source_root": str(source_root),
                 "mapping_status": "mapped" if mapping_items else "unmapped",
+                "logical_book_id": parallel_groups.get(source_id, book_id or source_id),
             }
         )
         assets_by_id = {
@@ -248,6 +306,7 @@ def build_page_locator_index() -> dict[str, Any]:
                     "book_title": book_title,
                     "normalized_book_title": normalize_book_title(book_title),
                     "source_id": source_id,
+                    "logical_book_id": parallel_groups.get(source_id, book_id or source_id),
                     "page_id": page_id,
                     "printed_page": int(mapping["printed_page"]),
                     "scan_index": int(mapping.get("scan_index", 0) or 0),
@@ -285,8 +344,10 @@ def build_page_locator_index() -> dict[str, Any]:
     entries.sort(key=lambda item: (item["subject"], item["normalized_book_title"], item["printed_page"], item["source_id"]))
     sources.sort(key=lambda item: (item["subject"], item["normalized_book_title"], item["source_id"]))
     payload = {
-        "schema_version": "page-locator.v2",
+        "schema_version": "page-locator.v3",
         "generated_by": "kaoyan-material-organizer",
+        "generated_at": now_iso(),
+        "input_fingerprint": page_locator_input_fingerprint(layout, metadata_dirname=runtime.paper_book_metadata_dir),
         "entries": entries,
         "sources": sources,
         "summary": {
@@ -331,6 +392,14 @@ def load_page_locator_index() -> dict[str, Any]:
     if not isinstance(payload, dict) or not isinstance(payload.get("entries"), list) or not isinstance(payload.get("sources"), list):
         unavailable["_availability"]["reason"] = "page_locator_index_invalid"
         unavailable["_availability"]["detail"] = "The locator index must contain list-valued entries and sources."
+        return unavailable
+    current_fingerprint = page_locator_input_fingerprint(
+        ensure_kb_layout(),
+        metadata_dirname=runtime.paper_book_metadata_dir,
+    )
+    if str(payload.get("input_fingerprint") or "") != current_fingerprint:
+        unavailable["_availability"]["reason"] = "page_locator_index_stale"
+        unavailable["_availability"]["detail"] = "Formal page locator inputs changed after the index was built; run kb.py sync --indexes-only."
         return unavailable
     payload = dict(payload)
     payload["_availability"] = {
@@ -389,18 +458,42 @@ def resolve_page_locator(*, subject: str, book_title: str | None, printed_page: 
         candidates = [item for item in subject_entries if _book_title_matches(book_title, str(item.get("book_title", "")))]
     else:
         candidates = subject_entries
-    distinct_books = {(item.get("book_id"), item.get("book_title")) for item in candidates}
+    distinct_books = {(item.get("logical_book_id") or item.get("book_id"), item.get("book_title")) for item in candidates}
     source_catalog = [item for item in index.get("sources", []) if item.get("subject") == subject]
     if book_title:
         source_catalog = [item for item in source_catalog if _book_title_matches(book_title, str(item.get("book_title", "")))]
 
-    if len(distinct_books) > 1 and not book_title:
+    if len(distinct_books) > 1:
         base["match_status"] = "ambiguous"
         base["candidates"] = [
             {"book_id": book_id, "book_title": title}
             for book_id, title in sorted(distinct_books, key=lambda item: (str(item[1]), str(item[0])))
         ]
         return base
+    if len(candidates) > 1 and len(distinct_books) == 1:
+        evidenced = [item for item in candidates if item.get("evidence_ids")]
+        if len(evidenced) == 1:
+            selected = evidenced[0]
+        elif len(evidenced) > 1:
+            evidence_sets = {tuple(sorted(str(value) for value in item.get("evidence_ids", []) or [])) for item in evidenced}
+            if len(evidence_sets) != 1:
+                base["match_status"] = "ambiguous"
+                base["candidates"] = [
+                    {"book_id": item.get("book_id", ""), "book_title": item.get("book_title", ""), "source_id": item.get("source_id", ""), "evidence_ids": item.get("evidence_ids", [])}
+                    for item in candidates
+                ]
+                return base
+            selected = evidenced[0]
+        else:
+            pdf_candidates = [item for item in candidates if item.get("source_asset_kind") == "pdf"]
+            selected = pdf_candidates[0] if len(pdf_candidates) == 1 else None
+        if selected is not None:
+            alternates = [item for item in candidates if item is not selected]
+            candidates = [selected]
+            base["alternate_assets"] = [
+                {"source_id": item.get("source_id", ""), "source_asset_kind": item.get("source_asset_kind", "image"), "source_asset_path": item.get("source_asset_path", item.get("source_image_path", ""))}
+                for item in alternates
+            ]
     if len(candidates) != 1:
         unmapped_sources = [item for item in source_catalog if item.get("mapping_status") != "mapped"]
         if not candidates and unmapped_sources:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 if str(SCRIPTS) not in sys.path:
@@ -41,6 +43,150 @@ def test_exact_exercise_anchor_builds_source_answer_grounding() -> None:
     assert grounding["problem"]["evidence_ids"] == ["EV-Q"]
     assert grounding["solution"]["evidence_ids"] == ["EV-A"]
     assert grounding["solution"]["content"] == "原书答案"
+
+
+def test_section_start_page_conflict_blocks_exact_exercise_answer() -> None:
+    grounding = query_module.build_answer_grounding(
+        query="95页起的3.3.6试题第4题C项",
+        book_title="王道数据结构",
+        page_anchor={"requested_page": 95, "book_title": "王道数据结构", "match_status": "exact_evidence"},
+        exercise_anchor={"status": "exact_answer_evidence", "exercise_label": "04", "question_evidence_ids": ["EV-Q"], "answer_evidence_ids": ["EV-A"]},
+        evidences=[{"evidence_id": "EV-Q", "content": "原题"}, {"evidence_id": "EV-A", "content": "原书答案"}],
+        page_crosscheck={"required": True, "status": "conflict", "reason": "页码线索与正式小节标题锚点冲突。"},
+    )
+    assert grounding["status"] == "answer_ambiguous"
+    assert grounding["can_conclude"] is False
+    assert "冲突" in grounding["failure_reason"]
+
+
+@pytest.mark.parametrize(
+    ("page_number", "semantics", "resolved_pdf_page", "crosscheck_status", "grounding_status", "allowed"),
+    [
+        (None, "not_requested", 0, "not_requested", "exact_answer", True),
+        (94, "section_start", 106, "confirmed", "exact_answer", True),
+        (94, "approximate_page", 108, "confirmed", "exact_answer", True),
+        (95, "section_start", 107, "conflict", "answer_ambiguous", False),
+    ],
+)
+def test_scoped_exercise_relation_keeps_all_teaching_gates_consistent(
+    monkeypatch,
+    tmp_path: Path,
+    page_number: int | None,
+    semantics: str,
+    resolved_pdf_page: int,
+    crosscheck_status: str,
+    grounding_status: str,
+    allowed: bool,
+) -> None:
+    request_resolution = {
+        "page": {"number": page_number, "semantics": semantics, "explicit_cli": False},
+        "exercise_label": "04",
+        "exercise_category": "single-choice",
+        "requested_option": "C",
+        "section_root": "3.3",
+        "section_anchor": {"status": "exact", "section_root": "3.3", "pdf_page": 106},
+    }
+    exercise_anchor = {
+        "status": "exact_answer_evidence",
+        "exercise_label": "04",
+        "question_evidence_ids": ["EV-Q"],
+        "answer_evidence_ids": ["EV-A"],
+        "question_pdf_pages": [106],
+        "answer_pdf_pages": [132],
+        "question_content": "第4题原题",
+        "answer_content": "04. C 原书解析",
+    }
+    evidences = [
+        {"evidence_id": "EV-Q", "content": "第4题原题"},
+        {"evidence_id": "EV-A", "content": "04. C 原书解析"},
+    ]
+    monkeypatch.setattr(query_module, "resolve_book_route", lambda **kwargs: {})
+    monkeypatch.setattr(query_module, "resolve_request", lambda **kwargs: request_resolution)
+    monkeypatch.setattr(query_module, "apply_scoped_exercise_relation", lambda **kwargs: (dict(exercise_anchor), evidences))
+    monkeypatch.setattr(
+        query_module,
+        "apply_hard_page_route",
+        lambda **kwargs: (
+            {
+                "requested_page": page_number,
+                "match_status": "exact_evidence",
+                "pdf_page": resolved_pdf_page,
+                "exercise_match_status": "unverified",
+            },
+            [],
+            [],
+            [],
+        ),
+    )
+    monkeypatch.setattr(query_module, "load_events", lambda: [])
+    monkeypatch.setattr(query_module, "runtime_context_payload", lambda **kwargs: {})
+
+    result = query_module.query_knowledge(
+        tmp_path,
+        "408",
+        None,
+        "王道数据结构 3.3.6 试题第4题 C项",
+        3,
+        book_title="王道数据结构",
+    )
+
+    assert result["page_anchor"]["exercise_match_status"] == "matched"
+    assert result["page_crosscheck"]["status"] == crosscheck_status
+    assert result["answer_grounding"]["status"] == grounding_status
+    assert result["answer_grounding"]["can_conclude"] is allowed
+    assert result["page_verification"]["exercise_verification_status"] == "matched"
+    assert result["page_verification"]["textbook_explanation_allowed"] is allowed
+    assert result["teaching_bundle"]["status"] == ("exact" if allowed else "blocked")
+
+
+def test_stale_exercise_index_propagates_to_grounding_and_runtime(monkeypatch, tmp_path: Path) -> None:
+    request_resolution = {
+        "page": {"number": None, "semantics": "none", "explicit_cli": False},
+        "exercise_label": "04",
+        "exercise_category": "single-choice",
+        "requested_option": "C",
+        "section_root": "3.3",
+        "section_anchor": {"status": "exact", "section_root": "3.3", "pdf_page": 106},
+    }
+    availability = {
+        "available": False,
+        "path": "C:/kb/indexes/exercise_locator_index.json",
+        "reason": "exercise_locator_index_stale",
+        "detail": "inputs changed",
+    }
+    monkeypatch.setattr(query_module, "resolve_book_route", lambda **kwargs: {})
+    monkeypatch.setattr(query_module, "resolve_request", lambda **kwargs: request_resolution)
+    monkeypatch.setattr(
+        query_module,
+        "apply_scoped_exercise_relation",
+        lambda **kwargs: (
+            {
+                "status": "unavailable",
+                "exercise_label": "04",
+                "reason": "exercise_locator_index_stale",
+                "detail": "inputs changed",
+                "_availability": availability,
+            },
+            [],
+        ),
+    )
+    monkeypatch.setattr(query_module, "load_events", lambda: [])
+    monkeypatch.setattr(query_module, "runtime_context_payload", lambda **kwargs: {})
+
+    result = query_module.query_knowledge(
+        tmp_path,
+        "408",
+        None,
+        "王道数据结构 3.3.6 试题第4题 C项",
+        3,
+        book_title="王道数据结构",
+    )
+
+    assert result["answer_grounding"]["status"] == "answer_unavailable"
+    assert result["answer_grounding"]["can_conclude"] is False
+    assert result["teaching_bundle"]["status"] == "blocked"
+    assert result["runtime_context"]["exercise_locator_index_available"] is False
+    assert result["runtime_context"]["exercise_locator_unavailable_reason"] == "exercise_locator_index_stale"
 
 
 def test_exact_asset_problem_reports_answer_asset_only() -> None:
@@ -110,6 +256,7 @@ def test_explicit_page_clears_unrelated_semantic_hits(monkeypatch, tmp_path: Pat
     assert result["page_verification"] == {
         "page_location_status": "exact_asset",
         "exercise_verification_status": "unverified",
+        "page_crosscheck_status": "not_requested",
         "answer_mode": "page_asset",
         "textbook_explanation_allowed": False,
         "summary": "教材原页已定位；教材正文未确认，不能按书上原题讲解。",

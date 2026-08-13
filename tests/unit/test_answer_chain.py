@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -178,7 +179,7 @@ def test_sourced_problem_without_source_answer_blocks_conclusion_and_save(monkey
 
     contract = answer_module.build_answer_contract(result)
 
-    assert contract["answer_contract_version"] == "m6.answer.v2"
+    assert contract["answer_contract_version"] == "m6.answer.v3"
     assert contract["sections"]["direct_conclusion"] == "原书答案未确认。"
     assert contract["sections"]["supplementary_derivation"] == []
     assert "错误的 AI 独立推导" not in answer_module.render_text(contract)
@@ -189,7 +190,7 @@ def test_sourced_problem_without_source_answer_blocks_conclusion_and_save(monkey
 
 def test_exact_answer_requires_problem_and_solution_citations(monkeypatch) -> None:
     result = _result(answer_mode="accepted_evidence")
-    result["answer_grounding"] = {"required": True, "status": "exact_answer", "can_conclude": True, "problem": {"evidence_ids": ["EV-Q"], "printed_pages": [64], "exercise_label": "例3.8"}, "solution": {"evidence_ids": ["EV-A"], "printed_pages": [65], "exercise_label": "例3.8", "content": "\\frac{\\pi}{3}+2-\\sqrt3"}, "failure_reason": "", "next_action": ""}
+    result["answer_grounding"] = {"required": True, "status": "exact_answer", "can_conclude": True, "problem": {"evidence_ids": ["EV-Q"], "printed_pages": [64], "exercise_label": "例3.8", "content": "原题"}, "solution": {"evidence_ids": ["EV-A"], "printed_pages": [65], "exercise_label": "例3.8", "content": "\\frac{\\pi}{3}+2-\\sqrt3"}, "failure_reason": "", "next_action": ""}
     result["supplementary_content"] = [{"explanation": "由偶函数折半后保留整体系数 2。"}]
     monkeypatch.setattr(answer_module, "build_citations", lambda result: [{"evidence_id": "EV-Q"}, {"evidence_id": "EV-A"}])
 
@@ -232,7 +233,74 @@ def test_sourced_answer_render_order_is_fixed(monkeypatch) -> None:
     citation = lambda evidence_id: {"evidence_id": evidence_id, "title": evidence_id, "page_span": "", "image_span": "", "chunk_id": "", "section_title": "", "section_view_path": ""}
     monkeypatch.setattr(answer_module, "build_citations", lambda result: [citation("EV-Q"), citation("EV-A")])
     result = _result(answer_mode="accepted_evidence")
-    result["answer_grounding"] = {"required": True, "status": "exact_answer", "can_conclude": True, "problem": {"evidence_ids": ["EV-Q"]}, "solution": {"evidence_ids": ["EV-A"], "content": "原书答案"}, "failure_reason": "", "next_action": ""}
+    result["answer_grounding"] = {"required": True, "status": "exact_answer", "can_conclude": True, "problem": {"evidence_ids": ["EV-Q"], "content": "原题"}, "solution": {"evidence_ids": ["EV-A"], "content": "原书答案"}, "failure_reason": "", "next_action": ""}
     rendered = answer_module.render_text(answer_module.build_answer_contract(result))
     headings = [rendered.index(title) for title in ("## 答案定位状态", "## 原书答案", "## 过程核对", "## AI 辅助推导")]
     assert headings == sorted(headings)
+
+
+def test_teaching_view_excludes_diagnostic_and_save_only_fields(monkeypatch) -> None:
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [])
+    contract = answer_module.build_answer_contract(_result())
+
+    view = answer_module.build_teaching_answer_view(contract)
+
+    assert view["view"] == "teaching"
+    assert view["teaching_bundle"]["status"] == "not_applicable"
+    assert "sections" not in view
+    assert "query_result" not in view
+    assert "references" not in view
+    assert "evidence_hits" not in view
+    assert "sections" in contract
+    assert "query_result" in contract
+
+
+def test_ask_teaching_json_saves_full_contract_before_projecting(monkeypatch, tmp_path: Path, capsys) -> None:
+    result = _result()
+    contract = answer_module.build_answer_contract(result)
+    saved_contracts: list[dict] = []
+    monkeypatch.setattr(ask_module, "query_knowledge", lambda *args, **kwargs: result)
+    monkeypatch.setattr(ask_module, "build_answer_contract", lambda value: contract)
+    monkeypatch.setattr(
+        ask_module,
+        "save_answer_contract",
+        lambda **kwargs: saved_contracts.append(kwargs["contract"]) or tmp_path / "index.md",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ask_local_knowledge.py",
+            "--subject",
+            "数学",
+            "--question",
+            "定义是什么",
+            "--save",
+            "--saved-at",
+            "2026-08-13",
+            "--format",
+            "teaching-json",
+        ],
+    )
+
+    assert ask_module.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert saved_contracts == [contract]
+    assert payload["saved"] is True
+    assert payload["saved_at"] == "2026-08-13"
+    assert payload["view"] == "teaching"
+    assert "query_result" not in payload
+
+
+def test_teaching_contract_rejects_conflicting_exact_gate() -> None:
+    with pytest.raises(ValueError, match="contradictory exact-answer"):
+        answer_module.validate_teaching_contract_invariants(
+            {
+                "answer_grounding": {
+                    "required": True,
+                    "status": "exact_answer",
+                    "can_conclude": False,
+                },
+                "teaching_bundle": {"status": "blocked"},
+            }
+        )

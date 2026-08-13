@@ -9,6 +9,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KB_ENTRY = REPO_ROOT / "scripts" / "kb.py"
+SCRIPTS = REPO_ROOT / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from kaoyan_kb.domain.index_freshness import fingerprint_index_inputs
 
 
 def test_query_uses_selected_config_from_external_cwd(tmp_path: Path) -> None:
@@ -23,8 +28,11 @@ def test_query_uses_selected_config_from_external_cwd(tmp_path: Path) -> None:
     locator_index.write_text(
         json.dumps(
             {
-                "schema_version": "page-locator.v2",
+                "schema_version": "page-locator.v3",
                 "generated_by": "test",
+                "input_fingerprint": fingerprint_index_inputs(
+                    files=[], metadata={"paper_book_metadata_dir": "metadata"}
+                ),
                 "entries": [],
                 "sources": [],
             }

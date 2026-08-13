@@ -19,7 +19,7 @@ def add_core_commands(subparsers: argparse._SubParsersAction, *, formatter_class
     ask.add_argument("--topk", type=int, default=3)
     ask.add_argument("--printed-page", type=int)
     ask.add_argument("--exercise-label")
-    ask.add_argument("--format", choices=("text", "json"), default="json")
+    ask.add_argument("--format", choices=("text", "json", "teaching-json"), default="json")
     ask.add_argument("--save", action="store_true")
     ask.add_argument("--saved-at")
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,9 +13,156 @@ if str(SCRIPTS) not in sys.path:
 
 from kaoyan_kb.domain import page_locator
 from kaoyan_kb.domain import exercise_locator
-from query_local_knowledge import parse_page_anchor
+from kaoyan_kb.domain.index_freshness import fingerprint_index_inputs
+from query_local_knowledge import build_page_crosscheck, parse_page_anchor, resolve_request
 from query_local_knowledge import apply_exercise_relation, apply_hard_page_route, build_reference_items, exact_evidence_hits_for_locator
 import sync_exam_kb
+import create_snapshot
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _freshness_layout(tmp_path: Path) -> dict[str, Path]:
+    layout = {
+        "manifests": tmp_path / "manifests",
+        "evidence": tmp_path / "evidence",
+        "review_queues": tmp_path / "review-queues",
+        "indexes": tmp_path / "indexes",
+    }
+    for root in layout.values():
+        root.mkdir(parents=True, exist_ok=True)
+    return layout
+
+
+def test_content_fingerprint_detects_same_mtime_rewrite_and_deletion(tmp_path: Path) -> None:
+    source = tmp_path / "input.json"
+    source.write_text('{"value":"a"}', encoding="utf-8")
+    original_stat = source.stat()
+    before = fingerprint_index_inputs(files=[("input", source)])
+
+    source.write_text('{"value":"b"}', encoding="utf-8")
+    os.utime(source, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    rewritten = fingerprint_index_inputs(files=[("input", source)])
+    source.unlink()
+    deleted = fingerprint_index_inputs(files=[("input", source)])
+
+    assert rewritten != before
+    assert deleted != rewritten
+
+
+def test_page_fingerprint_covers_external_photo_metadata_and_assets(tmp_path: Path) -> None:
+    layout = _freshness_layout(tmp_path)
+    photo_root = tmp_path / "photo-source"
+    metadata = photo_root / "metadata"
+    image = photo_root / "P94.jpg"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"image")
+    _write_json(
+        layout["manifests"] / "sources" / "SRC-PHOTO.json",
+        {"source_id": "SRC-PHOTO", "status": "active", "material_type": "chapter-photo", "source_path": str(photo_root)},
+    )
+    book_asset = metadata / "book_asset.json"
+    _write_json(book_asset, {"book_id": "a"})
+    _write_json(metadata / "page_assets.json", {"items": [{"page_id": "P94", "source_image_path": str(image)}]})
+    _write_json(metadata / "page_mappings.json", {"items": []})
+
+    before = page_locator.page_locator_input_fingerprint(layout, metadata_dirname="metadata")
+    original_stat = book_asset.stat()
+    _write_json(book_asset, {"book_id": "b"})
+    os.utime(book_asset, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    metadata_changed = page_locator.page_locator_input_fingerprint(layout, metadata_dirname="metadata")
+    image.unlink()
+    asset_deleted = page_locator.page_locator_input_fingerprint(layout, metadata_dirname="metadata")
+
+    assert metadata_changed != before
+    assert asset_deleted != metadata_changed
+
+
+def test_exercise_fingerprint_uses_only_approved_queue_projection(tmp_path: Path) -> None:
+    layout = _freshness_layout(tmp_path)
+    _write_json(layout["manifests"] / "sources" / "SRC.json", {"source_id": "SRC"})
+    _write_json(layout["evidence"] / "EV.json", {"evidence_id": "EV"})
+    _write_json(layout["indexes"] / "pdf_book_anchors" / "SRC.json", {"anchors": []})
+    queue = layout["review_queues"] / "exercise-locator" / "SRC.json"
+    approved = [{"relation_id": "R1", "question_evidence_ids": ["EV-Q"], "answer_evidence_ids": ["EV-A"]}]
+    _write_json(queue, {"approved_relations": approved, "items": [{"kind": "old"}], "summary": {"open_count": 1}})
+    before = exercise_locator.exercise_locator_input_fingerprint(layout)
+
+    _write_json(queue, {"approved_relations": approved, "items": [{"kind": "rewritten"}], "summary": {"open_count": 99}})
+    generated_fields_changed = exercise_locator.exercise_locator_input_fingerprint(layout)
+    _write_json(queue, {"approved_relations": [*approved, {"relation_id": "R2"}], "items": []})
+    approval_changed = exercise_locator.exercise_locator_input_fingerprint(layout)
+
+    assert generated_fields_changed == before
+    assert approval_changed != before
+
+
+def test_exercise_locator_fails_closed_when_fingerprint_is_missing(monkeypatch, tmp_path: Path) -> None:
+    layout = _freshness_layout(tmp_path)
+    _write_json(layout["indexes"] / exercise_locator.EXERCISE_LOCATOR_INDEX_NAME, {"relations": []})
+    monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
+
+    loaded = exercise_locator.load_exercise_locator_index()
+
+    assert loaded["_availability"]["available"] is False
+    assert loaded["_availability"]["reason"] == "exercise_locator_index_stale"
+
+
+def test_normalize_exercise_category_preserves_canonical_values() -> None:
+    assert exercise_locator.normalize_exercise_category("single-choice") == "single-choice"
+    assert exercise_locator.normalize_exercise_category("comprehensive") == "comprehensive"
+
+
+def test_snapshot_file_selection_excludes_media_runtime_and_rebuildable_cache(tmp_path: Path) -> None:
+    (tmp_path / "keep").mkdir()
+    (tmp_path / "keep" / "evidence.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "keep" / "page.pdf").write_bytes(b"pdf")
+    (tmp_path / ".tmp").mkdir()
+    (tmp_path / ".tmp" / "test.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "ocr").mkdir()
+    (tmp_path / "ocr" / "cache.json").write_text("{}", encoding="utf-8")
+
+    files = create_snapshot.relative_files(
+        tmp_path,
+        exclude_dir_names=create_snapshot.WORKSPACE_RUNTIME_DIRS | create_snapshot.KB_REBUILDABLE_DIRS,
+        exclude_suffixes=create_snapshot.MEDIA_SUFFIXES,
+    )
+
+    assert files == [Path("keep/evidence.json")]
+
+
+def test_snapshot_id_only_resumes_matching_lightweight_policy(tmp_path: Path, monkeypatch) -> None:
+    class FixedDateTime:
+        @classmethod
+        def now(cls):
+            return cls()
+
+        def strftime(self, _format: str) -> str:
+            return "20260812"
+
+    monkeypatch.setattr(create_snapshot, "datetime", FixedDateTime)
+    old = tmp_path / ".staging" / "SNAP-20260812-001"
+    old.mkdir(parents=True)
+    (old / create_snapshot.STAGING_MARKER).write_text(
+        json.dumps({"machine_owned_snapshot": True, "snapshot_id": old.name}), encoding="utf-8"
+    )
+    current = tmp_path / ".staging" / "SNAP-20260812-002"
+    current.mkdir(parents=True)
+    (current / create_snapshot.STAGING_MARKER).write_text(
+        json.dumps(
+            {
+                "machine_owned_snapshot": True,
+                "snapshot_id": current.name,
+                "snapshot_policy": create_snapshot.SNAPSHOT_POLICY,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert create_snapshot.allocate_snapshot_id(tmp_path) == current.name
 
 
 def _entry(book_id: str, book_title: str, page: int, image: str = "page.jpg") -> dict:
@@ -42,6 +190,69 @@ def test_parse_page_anchor_accepts_common_page_and_exercise_forms() -> None:
     assert parse_page_anchor("49页") ["requested_page"] == 49
 
 
+def test_request_resolution_distinguishes_page_semantics(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "query_local_knowledge.resolve_section_anchor",
+        lambda **kwargs: {"status": "exact", "requested_section": "3.3.6", "section_root": "3.3", "pdf_page": 106},
+    )
+    section_start = resolve_request(query="94页起的3.3.6试题第4题C项", book_title="王道数据结构", chapter=None, printed_page=None, exercise_label=None)
+    assert section_start["page"] == {"number": 94, "semantics": "section_start", "explicit_cli": False}
+    assert section_start["section_root"] == "3.3"
+    assert section_start["exercise_label"] == "04"
+    assert section_start["exercise_category"] == "single-choice"
+    assert section_start["requested_option"] == "C"
+    exact = resolve_request(query="讲第94页第4题", book_title="王道数据结构", chapter=None, printed_page=None, exercise_label=None)
+    assert exact["page"]["semantics"] == "exact_page"
+    approximate = resolve_request(query="94页后面的3.3.6试题第4题的C项", book_title="王道数据结构", chapter=None, printed_page=None, exercise_label=None)
+    assert approximate["page"]["semantics"] == "approximate_page"
+    assert approximate["requested_option"] == "C"
+    assert approximate["exercise_category"] == "single-choice"
+    overridden = resolve_request(query="94页起第4题", book_title="王道数据结构", chapter=None, printed_page=94, exercise_label="4")
+    assert overridden["page"]["semantics"] == "exact_page"
+
+
+def test_page_crosscheck_requires_formal_section_anchor_match() -> None:
+    request = {
+        "page": {"number": 94, "semantics": "section_start", "explicit_cli": False},
+        "section_anchor": {"status": "exact", "pdf_page": 106},
+    }
+    confirmed = build_page_crosscheck(request, {"match_status": "exact_evidence", "pdf_page": 106})
+    assert confirmed["status"] == "confirmed"
+    assert confirmed["delta_pdf_pages"] == 0
+
+    conflict = build_page_crosscheck(request, {"match_status": "exact_evidence", "pdf_page": 107})
+    assert conflict["status"] == "conflict"
+    assert conflict["delta_pdf_pages"] == 1
+
+    unmapped = build_page_crosscheck(request, {"match_status": "unmapped", "pdf_page": 0})
+    assert unmapped["status"] == "unverified"
+
+
+def test_approximate_page_crosscheck_has_bounded_tolerance() -> None:
+    request = {
+        "page": {"number": 94, "semantics": "approximate_page", "explicit_cli": False},
+        "section_anchor": {"status": "exact", "pdf_page": 106},
+    }
+    assert build_page_crosscheck(request, {"match_status": "exact_evidence", "pdf_page": 108})["status"] == "confirmed"
+    assert build_page_crosscheck(request, {"match_status": "exact_evidence", "pdf_page": 109})["status"] == "conflict"
+
+
+def test_extract_exercise_block_is_exact_and_unique() -> None:
+    content = "# 03. D\n第三题\n# 04. B\n第四题答案\n技巧\n# 05. A\n第五题答案"
+    assert exercise_locator.extract_exercise_block(content, "4") == "# 04. B\n第四题答案\n技巧"
+    assert exercise_locator.extract_exercise_block(content + "\n# 04. C\n重复", "4") == ""
+
+
+def test_extract_exercise_block_uses_category_heading_to_avoid_same_number_collision() -> None:
+    content = "# 1. 章节说明\n# 二、综合应用题\n01. 综合题\n# 一、单项选择题\n01. B\n单选解析\n02. C"
+    assert exercise_locator.extract_exercise_block(content, "1", category="single-choice") == "01. B\n单选解析"
+
+
+def test_extract_exercise_block_accepts_continued_category_until_next_heading() -> None:
+    content = "35. C\n解析\n36. D\n# 二、综合应用题\n01. 综合题"
+    assert exercise_locator.extract_exercise_block(content, "35", category="single-choice") == "35. C\n解析"
+
+
 def test_resolver_uses_book_title_and_reports_ambiguity(monkeypatch) -> None:
     entries = [_entry("a", "李正元数一", 49), _entry("b", "另一教材", 49)]
     monkeypatch.setattr(page_locator, "load_page_locator_index", lambda: {"entries": entries, "sources": []})
@@ -50,6 +261,43 @@ def test_resolver_uses_book_title_and_reports_ambiguity(monkeypatch) -> None:
     exact = page_locator.resolve_page_locator(subject="数学", book_title="李正元数一", printed_page=49)
     assert exact["match_status"] == "exact_asset"
     assert exact["book_id"] == "a"
+
+
+def test_resolver_deduplicates_parallel_assets_and_prefers_evidence(monkeypatch) -> None:
+    photo = _entry("photo", "王道数据结构", 94, "P94.jpg")
+    photo["logical_book_id"] = "408:王道数据结构"
+    pdf = {
+        **_entry("pdf", "王道数据结构", 94, ""),
+        "logical_book_id": "408:王道数据结构",
+        "source_asset_kind": "pdf",
+        "source_asset_path": "book.pdf",
+        "pdf_page": 106,
+        "evidence_ids": ["EV-Q"],
+    }
+    monkeypatch.setattr(page_locator, "load_page_locator_index", lambda: {"entries": [photo, pdf], "sources": []})
+    result = page_locator.resolve_page_locator(subject="数学", book_title="王道数据结构", printed_page=94)
+    assert result["match_status"] == "exact_asset"
+    assert result["source_id"] == pdf["source_id"]
+    assert result["evidence_ids"] == ["EV-Q"]
+    assert result["alternate_assets"][0]["source_id"] == photo["source_id"]
+
+
+def test_load_page_locator_fails_closed_when_index_is_stale(monkeypatch, tmp_path: Path) -> None:
+    indexes = tmp_path / "indexes"
+    indexes.mkdir()
+    (indexes / page_locator.PAGE_LOCATOR_INDEX_NAME).write_text(
+        json.dumps({"entries": [], "sources": [], "input_fingerprint": "old"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        page_locator,
+        "load_runtime_config",
+        lambda: SimpleNamespace(configured=True, kb_root=tmp_path, paper_book_metadata_dir="metadata"),
+    )
+    monkeypatch.setattr(page_locator, "page_locator_input_fingerprint", lambda layout, metadata_dirname: "new")
+    monkeypatch.setattr(page_locator, "ensure_kb_layout", lambda: {})
+    loaded = page_locator.load_page_locator_index()
+    assert loaded["_availability"]["available"] is False
+    assert loaded["_availability"]["reason"] == "page_locator_index_stale"
 
 
 def test_resolver_distinguishes_unmapped_from_unknown(monkeypatch) -> None:
@@ -303,8 +551,9 @@ def test_exercise_locator_does_not_treat_summary_number_as_answer(monkeypatch, t
 
 
 def test_scoped_exercise_relation_uses_section_before_chapter(monkeypatch, tmp_path: Path) -> None:
-    layout = {"manifests": tmp_path / "manifests"}
+    layout = {"manifests": tmp_path / "manifests", "indexes": tmp_path / "indexes"}
     (layout["manifests"] / "sources").mkdir(parents=True)
+    (layout["indexes"] / "pdf_book_anchors").mkdir(parents=True)
     (layout["manifests"] / "sources" / "SRC-PDF.json").write_text(
         __import__("json").dumps({"source_id": "SRC-PDF", "source_name": "王道数据结构", "status": "active", "material_type": "book-pdf"}),
         encoding="utf-8",
@@ -318,6 +567,13 @@ def test_scoped_exercise_relation_uses_section_before_chapter(monkeypatch, tmp_p
 
     assert exercise_locator.find_unique_relation_for_scope(book_title="王道数据结构", chapter="第3.1节", exercise_label="17")["section_root"] == "3.1"
     assert exercise_locator.find_unique_relation_for_scope(book_title="王道数据结构", chapter="第3章", exercise_label="17") == {}
+
+    (layout["indexes"] / "pdf_book_anchors" / "SRC-PDF.json").write_text(
+        __import__("json").dumps({"anchors": [{"title": "3.3.6 本节试题精选"}]}), encoding="utf-8"
+    )
+    relations["relations"].append({"relation_status": "exact", "source_id": "SRC-PDF", "section_root": "3.3", "category": "single-choice", "exercise_label": "04"})
+    resolved = exercise_locator.find_unique_relation_for_scope(book_title="王道数据结构", chapter="3.3.6", exercise_label="4", category="single-choice")
+    assert resolved["section_root"] == "3.3"
 
 
 def test_exact_page_route_sets_matched_evidence_for_reviewed_ocr(monkeypatch) -> None:
@@ -411,7 +667,7 @@ def test_image_page_reference_does_not_parse_printed_page_as_pdf_page() -> None:
     assert reference["pdf_page"] == 0
 
 
-def test_example_question_page_does_not_substitute_for_source_answer() -> None:
+def test_example_question_page_does_not_substitute_for_source_answer(monkeypatch) -> None:
     locator = {
         "match_status": "exact_evidence",
         "requested_exercise_label": "例3.14",
@@ -419,6 +675,7 @@ def test_example_question_page_does_not_substitute_for_source_answer() -> None:
         "matched_evidence_id": "EV-MATH-000104",
     }
 
+    monkeypatch.setattr("query_local_knowledge.find_exact_worked_example_relation", lambda **kwargs: {})
     anchor, evidences = apply_exercise_relation(locator, [{"evidence_id": "EV-MATH-000104"}])
 
     assert anchor["status"] == "unverified"

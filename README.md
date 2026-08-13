@@ -110,6 +110,8 @@ $env:MISTRAL_API_KEY = "your-key"
 
 显式页码是硬约束。只有 `page_anchor.match_status` 为 `exact_evidence` 或 `exact_asset` 才表示原页已经确认；其他状态不会回退到无关页。`unavailable` 表示配置或正式页码索引不可用，与“教材中没有该页”的 `not_found` 严格区分。
 
+“第 94 页起”“94 页附近”等软页码还会与正式小节标题锚点交叉核验。检查 `page_crosscheck`：只有 `confirmed` 才能继续按该小节讲解；`conflict`、`ambiguous` 或 `unverified` 都会阻断结论。页码与习题关系索引使用内容指纹，证据、映射、外部纸书 metadata、人工批准关系发生改写或删除后会返回 `*_index_stale`，用 `kb.py sync --indexes-only` 重建。
+
 教材、讲义、题集、例题或题目照片中的解题请求还必须检查 `answer_grounding`。只有 `status=exact_answer` 且 `can_conclude=true` 才能输出答案判断或 AI 补充推导；题目页的 `exact_evidence` 不能代替原书答案。答案未找到、存在歧义、仅定位原图或链路不可用时，问答会失败关闭且 `ask --save` 保持零写入。
 
 纸质习题书可登记书系别名、分册与题解配对。照片书源先注册，再按阶段或章节预览 OCR 范围：
@@ -130,6 +132,8 @@ $env:MISTRAL_API_KEY = "your-key"
 ```powershell
 .\.venv\Scripts\python.exe scripts\kb.py ask --subject 数学 --book-title 李正元数一 --printed-page 64 --question "例3.8 第一问，检查我的过程" --format json
 ```
+
+给教学模型或自动化消费时可改用 `--format teaching-json`。它只输出请求解析、页码交叉核验、答案门控、引用覆盖和教学包；`--format json` 继续保留完整诊断契约。即使同时使用 `--save`，程序也会先用完整契约完成保存，再把终端输出投影为紧凑视图。
 
 `answer_grounding.status` 可能为 `exact_answer`、`answer_asset_only`、`answer_ambiguous`、`answer_not_found`、`answer_unavailable` 或 `not_applicable`。除 `exact_answer` 外，有来源题目均失败关闭：不输出解题结论、不以 AI 独立推导补位；`ask --save` 还要求原题和原书答案的证据引用同时完整，否则保持零写入。明确说明是自拟题时不启用此门控。
 
