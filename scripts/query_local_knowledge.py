@@ -5,12 +5,13 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
 from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, learner_file_map, load_all_json, load_json, resolve_subject, runtime_context_payload
 from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator
-from kaoyan_kb.domain.exercise_locator import extract_exercise_block, find_exact_relation, find_exact_worked_example_relation, find_unique_relation_for_scope, normalize_exercise_category, normalize_exercise_label, resolve_section_anchor
+from kaoyan_kb.domain.exercise_locator import extract_exercise_block, find_exact_relation, find_exact_worked_example_relation, find_unique_relation_for_scope, list_exact_relations_for_question_page, normalize_exercise_category, normalize_exercise_label, resolve_section_anchor
 from kaoyan_kb.domain.book_series import parse_exercise_request, resolve_answer_grounding, resolve_book_route, resolve_exercise_route
 from kaoyan_kb.domain.teaching_context import build_bounded_teaching_context
 from learner_events import load_events
@@ -118,6 +119,107 @@ def parse_page_anchor(query: str) -> dict[str, Any]:
     }
 
 
+def parse_requested_option(query: str, exercise_label: str = "") -> str:
+    """Resolve one directly requested option without treating an option letter as a question id."""
+    text = str(query or "")
+    label = normalize_exercise_label(exercise_label)
+    if label:
+        number = int(label)
+        match = re.search(rf"(?:第\s*)?0*{number}\s*(?:题)?\s*(?:的\s*)?([A-D])(?:\s*项)?", text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+    mentions = [
+        match.group(1).upper()
+        for pattern in (r"(?<![A-Za-z])([A-D])\s*(?:项|选项)", r"(?:选项)\s*([A-D])(?![A-Za-z])")
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE)
+    ]
+    unique = list(dict.fromkeys(mentions))
+    return unique[0] if len(unique) == 1 else ""
+
+
+def needs_exercise_identity(query: str, requested_option: str = "") -> bool:
+    text = str(query or "")
+    tokens = ("例题", "题目", "这题", "该题", "第几题", "选项", "答案", "过程", "怎么做", "计算", "证明", "填空")
+    return bool(requested_option or any(token in text for token in tokens))
+
+
+def _normalize_exercise_match_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).lower()
+    text = text.replace("操作数栈", "运算数栈")
+    return re.sub(r"\s+", "", text)
+
+
+def _chinese_ngrams(value: str, sizes: tuple[int, ...] = (3, 4)) -> set[str]:
+    result: set[str] = set()
+    for chunk in re.findall(r"[\u4e00-\u9fff]+", value):
+        for size in sizes:
+            result.update(chunk[index : index + size] for index in range(0, len(chunk) - size + 1))
+    return result
+
+
+def _is_distinctive_exercise_term(term: str) -> bool:
+    generic_roots = ("表达式", "选项", "题目", "问题", "判断", "这个", "下面", "哪个", "怎么")
+    return not any(term in root or root in term for root in generic_roots)
+
+
+def infer_exercise_from_exact_page(*, locator: dict[str, Any], query: str, category: str = "", requested_option: str = "") -> dict[str, Any]:
+    """Infer a missing exercise label only from exact formal relations on the resolved page."""
+    base = {
+        "status": "not_found",
+        "source": "page_content",
+        "exercise_label": "",
+        "requested_option": requested_option,
+        "candidate_labels": [],
+        "matched_terms": [],
+    }
+    payload = list_exact_relations_for_question_page(
+        source_id=str(locator.get("source_id") or ""),
+        question_pdf_page=int(locator.get("pdf_page", 0) or 0),
+        category=category,
+    )
+    if payload.get("status") == "unavailable":
+        return {
+            **base,
+            "status": "unavailable",
+            "unavailable_reason": payload.get("unavailable_reason", "exercise_locator_index_unavailable"),
+            "unavailable_detail": payload.get("unavailable_detail", ""),
+            "_availability": dict(payload.get("_availability") or {}),
+        }
+    relations = list(payload.get("relations") or [])
+    labels = [str(item.get("exercise_label") or "") for item in relations if item.get("exercise_label")]
+    base["candidate_labels"] = labels
+    if not relations:
+        return base
+    if len(relations) == 1:
+        return {**base, "status": "inferred_unique", "exercise_label": labels[0]}
+
+    query_terms = _chinese_ngrams(_normalize_exercise_match_text(query))
+    candidate_terms = [_chinese_ngrams(_normalize_exercise_match_text(item.get("question_content"))) for item in relations]
+    frequency: dict[str, int] = {}
+    for terms in candidate_terms:
+        for term in terms:
+            frequency[term] = frequency.get(term, 0) + 1
+    qualified: list[tuple[int, list[str]]] = []
+    for index, terms in enumerate(candidate_terms):
+        unique_matches = sorted(
+            (term for term in query_terms & terms if frequency.get(term) == 1 and _is_distinctive_exercise_term(term)),
+            key=lambda term: (-len(term), term),
+        )
+        four_char = [term for term in unique_matches if len(term) == 4]
+        three_char = [term for term in unique_matches if len(term) == 3]
+        if four_char or len(three_char) >= 2:
+            qualified.append((index, four_char + three_char))
+    if len(qualified) != 1:
+        return {**base, "status": "ambiguous"}
+    index, matched_terms = qualified[0]
+    return {
+        **base,
+        "status": "inferred_unique",
+        "exercise_label": str(relations[index].get("exercise_label") or ""),
+        "matched_terms": matched_terms,
+    }
+
+
 def resolve_request(
     *,
     query: str,
@@ -144,17 +246,13 @@ def resolve_request(
     label = parse_exercise_label(str(exercise_label or "")) or normalize_exercise_label(exercise_label)
     if not label:
         label = normalize_exercise_label(parsed.get("requested_exercise_label"))
-    requested_option = ""
-    if label:
-        number = int(label)
-        option_match = re.search(rf"(?:第\s*)?0*{number}\s*(?:题)?\s*(?:的\s*)?([A-D])(?:\s*项)?", text, flags=re.IGNORECASE)
-        if option_match:
-            requested_option = option_match.group(1).upper()
+    requested_option = parse_requested_option(text, label)
     section_anchor = resolve_section_anchor(book_title=str(book_title or ""), chapter=str(chapter or ""), query=text)
     section_scope = str(section_anchor.get("section_root") or "")
     category = normalize_exercise_category(text)
     if requested_option and not category:
         category = "single-choice"
+    label_source = "cli" if exercise_label and label else "query" if label else ""
     return {
         "original_query": text,
         "book_title": str(book_title or ""),
@@ -165,6 +263,14 @@ def resolve_request(
         "exercise_label": label,
         "exercise_category": category,
         "requested_option": requested_option,
+        "exercise_resolution": {
+            "status": "explicit" if label else "not_requested",
+            "source": label_source,
+            "exercise_label": label,
+            "requested_option": requested_option,
+            "candidate_labels": [],
+            "matched_terms": [],
+        },
     }
 
 
@@ -585,7 +691,7 @@ def build_answer_grounding(
     page_crosscheck: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     text = str(query or "")
-    problem_tokens = ("例", "题", "问", "过程", "答案", "解", "计算", "证明", "选择", "填空", "怎么做", "结果")
+    problem_tokens = ("例", "题", "问", "过程", "答案", "解", "计算", "证明", "选择", "选项", "填空", "怎么做", "结果")
     source_tokens = ("教材", "讲义", "题集", "题目照片", "照片", "图中", "书上", "书里", "原书")
     explicit_source = bool(book_title or page_anchor.get("requested_page") is not None or page_anchor.get("book_id") or any(token in text for token in source_tokens))
     problem_like = bool(page_anchor.get("requested_exercise_label") or exercise_anchor.get("exercise_label") or any(token in text for token in problem_tokens) or any(token in text for token in ("这道题", "该题")))
@@ -635,9 +741,28 @@ def build_answer_grounding(
         )
         return grounding
     if exercise_anchor.get("status") == "ambiguous":
-        grounding.update(status="answer_ambiguous", failure_reason="题目与原书答案的关系存在歧义。", next_action="请先审核题目—题解关系。")
+        if exercise_anchor.get("reason") == "exercise-label-missing":
+            candidates = "、".join(str(item) for item in exercise_anchor.get("candidate_labels", []) if str(item))
+            suffix = f"；本页候选题号为 {candidates}" if candidates else ""
+            grounding.update(
+                status="answer_ambiguous",
+                failure_reason=f"教材和页码已确认，但当前描述不足以唯一确定题目{suffix}。",
+                next_action="目前只缺题号，请告诉我是第几题。",
+            )
+        else:
+            grounding.update(status="answer_ambiguous", failure_reason="题目与原书答案的关系存在歧义。", next_action="请先审核题目—题解关系。")
         return grounding
     if exercise_anchor.get("status") != "exact_answer_evidence":
+        if exercise_anchor.get("reason") == "exercise-label-missing":
+            grounding.update(
+                failure_reason="教材和页码已确认，但当前描述不足以唯一确定题目。",
+                next_action="目前只缺题号，请告诉我是第几题。",
+            )
+        elif exercise_anchor.get("reason") == "page-exercise-relations-not-found":
+            grounding.update(
+                failure_reason="教材原页已确认，但该页没有可用于答案配对的正式题目关系。",
+                next_action="请补充准确题号；若仍无法定位，再审核该页题目—题解关系。",
+            )
         return grounding
 
     evidence_by_id = {str(item.get("evidence_id") or ""): item for item in evidences}
@@ -1391,7 +1516,51 @@ def query_knowledge(
             retrieval_hits=retrieval_hits,
             claims=claims,
         )
-        exercise_anchor, evidences = apply_exercise_relation(page_anchor, evidences)
+        exercise_resolution = dict(request_resolution.get("exercise_resolution") or {})
+        if (
+            page_anchor.get("match_status") == "exact_evidence"
+            and not resolved_label
+            and needs_exercise_identity(query, str(request_resolution.get("requested_option") or ""))
+        ):
+            exercise_resolution = infer_exercise_from_exact_page(
+                locator=page_anchor,
+                query=query,
+                category=str(request_resolution.get("exercise_category") or ""),
+                requested_option=str(request_resolution.get("requested_option") or ""),
+            )
+            request_resolution["exercise_resolution"] = exercise_resolution
+            if exercise_resolution.get("status") == "inferred_unique":
+                resolved_label = str(exercise_resolution.get("exercise_label") or "")
+                request_resolution["exercise_label"] = resolved_label
+                page_anchor_request["requested_exercise_label"] = resolved_label
+                page_anchor["requested_exercise_label"] = resolved_label
+        if resolved_label:
+            exercise_anchor, evidences = apply_exercise_relation(page_anchor, evidences)
+        elif exercise_resolution.get("status") == "unavailable":
+            page_anchor["exercise_match_status"] = "unavailable"
+            exercise_anchor = {
+                "status": "unavailable",
+                "reason": exercise_resolution.get("unavailable_reason", "exercise_locator_index_unavailable"),
+                "detail": exercise_resolution.get("unavailable_detail", ""),
+                "_availability": dict(exercise_resolution.get("_availability") or {}),
+            }
+        elif exercise_resolution.get("status") == "ambiguous":
+            page_anchor["exercise_match_status"] = "unverified"
+            exercise_anchor = {
+                "status": "ambiguous",
+                "reason": "exercise-label-missing",
+                "candidate_labels": list(exercise_resolution.get("candidate_labels") or []),
+            }
+        elif exercise_resolution.get("source") == "page_content":
+            if page_anchor.get("match_status") == "exact_evidence":
+                page_anchor["exercise_match_status"] = "unverified"
+            exercise_anchor = {
+                "status": "unverified",
+                "reason": "exercise-label-missing" if exercise_resolution.get("candidate_labels") else "page-exercise-relations-not-found",
+                "candidate_labels": list(exercise_resolution.get("candidate_labels") or []),
+            }
+        else:
+            exercise_anchor = {"status": "not_requested"}
     else:
         page_anchor = build_page_anchor(evidences, page_anchor_request)
         exercise_anchor = {"status": "not_requested"}
@@ -1411,6 +1580,9 @@ def query_knowledge(
             if page_anchor_request.get("requested_exercise_label") and exercise_anchor.get("status") not in {"exact_answer_evidence", "same_page_evidence"}:
                 answer_mode = "exercise_unconfirmed"
                 fallback_note = "题目页已精确定位，但未建立可唯一归因的跨页答案关系；不会用语义检索替代答案页。"
+            elif (request_resolution.get("exercise_resolution") or {}).get("status") in {"ambiguous", "not_found", "unavailable"}:
+                answer_mode = "exercise_unconfirmed"
+                fallback_note = "题目页已精确定位，但缺少可唯一确认的题号；不会用语义检索猜测题目。"
         elif status == "exact_asset":
             answer_mode = "page_asset"
             fallback_note = "已精确定位教材原页，但该页尚无可用的结构化 OCR 证据；请基于原图核对，不应声称逐字引用。"
@@ -1456,6 +1628,7 @@ def query_knowledge(
         "page_locator_index_available": bool(page_anchor.get("locator_available", True)) if hard_page_route else None,
         "page_locator_unavailable_reason": str(page_anchor.get("unavailable_reason") or "") if hard_page_route else "",
         "hard_page_filter_applied": hard_page_route,
+        "exercise_relation_inference_used": (request_resolution.get("exercise_resolution") or {}).get("source") == "page_content",
     }
     teaching_context = build_bounded_teaching_context(
         load_events(),

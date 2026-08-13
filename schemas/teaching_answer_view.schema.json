@@ -28,7 +28,25 @@
     "question": {"type": "string"},
     "answer_mode": {"type": "string"},
     "runtime_context": {"type": "object"},
-    "request_resolution": {"type": "object"},
+    "request_resolution": {
+      "type": "object",
+      "properties": {
+        "exercise_resolution": {
+          "type": "object",
+          "required": ["status", "source", "exercise_label", "requested_option", "candidate_labels", "matched_terms"],
+          "properties": {
+            "status": {"enum": ["not_requested", "explicit", "inferred_unique", "ambiguous", "not_found", "unavailable"]},
+            "source": {"enum": ["", "cli", "query", "page_content"]},
+            "exercise_label": {"type": "string"},
+            "requested_option": {"enum": ["", "A", "B", "C", "D"]},
+            "candidate_labels": {"type": "array", "items": {"type": "string"}},
+            "matched_terms": {"type": "array", "items": {"type": "string"}}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
     "page_crosscheck": {"type": "object"},
     "page_verification": {"type": "object"},
     "answer_grounding": {"type": "object"},

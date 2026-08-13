@@ -490,6 +490,46 @@ def find_exact_relation(*, source_id: str, question_pdf_page: int, exercise_labe
     return matches[0] if len(matches) == 1 and matches[0].get("relation_status") == "exact" else {}
 
 
+def list_exact_relations_for_question_page(*, source_id: str, question_pdf_page: int, category: str = "") -> dict[str, Any]:
+    """List formally accepted, uniquely sliced exercises on one question page."""
+    index = load_exercise_locator_index()
+    unavailable = _unavailable_relation(index)
+    if unavailable:
+        return {
+            "status": "unavailable",
+            "relations": [],
+            "unavailable_reason": unavailable.get("unavailable_reason", "exercise_locator_index_unavailable"),
+            "unavailable_detail": unavailable.get("unavailable_detail", ""),
+            "_availability": dict(unavailable.get("_availability") or {}),
+        }
+    normalized_category = normalize_exercise_category(category)
+    layout = ensure_kb_layout()
+    candidates: list[dict[str, Any]] = []
+    for item in index.get("relations", []) or []:
+        if item.get("relation_status") != "exact":
+            continue
+        if str(item.get("source_id") or "") != str(source_id or ""):
+            continue
+        if int(question_pdf_page or 0) not in {int(page) for page in item.get("question_pdf_pages", []) or []}:
+            continue
+        if normalized_category and normalize_exercise_category(item.get("category")) != normalized_category:
+            continue
+        evidence_ids = [str(value) for value in item.get("question_evidence_ids", []) or [] if str(value)]
+        question_text = "\n".join(
+            str(load_json_or_default(layout["evidence"] / f"{evidence_id}.json", {}).get("content") or "")
+            for evidence_id in evidence_ids
+        )
+        label = normalize_exercise_label(item.get("exercise_label"))
+        question_content = extract_exercise_block(question_text, label, category=str(item.get("category") or ""))
+        if not label or not question_content:
+            continue
+        candidates.append({**item, "exercise_label": label, "question_content": question_content})
+    return {
+        "status": "exact",
+        "relations": sorted(candidates, key=lambda item: (str(item.get("category") or ""), str(item.get("exercise_label") or ""))),
+    }
+
+
 def find_unique_relation_for_scope(*, book_title: str, chapter: str, exercise_label: str, category: str = "", query: str = "") -> dict[str, Any]:
     """Resolve a relation without a page only when book and current chapter are unique."""
     if not book_title or not chapter:

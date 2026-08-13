@@ -17,6 +17,104 @@ def test_compact_p_page_anchor_next_to_chinese_text() -> None:
     assert query_module.parse_page_anchor("高数p64例3.8第一问")["requested_page"] == 64
 
 
+def test_missing_exercise_number_is_inferred_from_exact_page_problem_text(monkeypatch, tmp_path: Path) -> None:
+    original_query = "讲下数据结构94页C选项，我的问题是读取*后，读到C，C会进入操作数栈吗？这个问题直接干扰了我在B和C选项的判断"
+    problem = {"evidence_id": "EV-408-000050", "content": "04. 利用栈求表达式的值时，设立运算数栈 OPEN。"}
+    solution = {"evidence_id": "EV-408-000053", "content": "04. B。选项 A、C、D 的栈深依次为 4、3、3。"}
+    monkeypatch.setattr(query_module, "resolve_book_route", lambda **kwargs: {})
+    monkeypatch.setattr(query_module, "resolve_exercise_route", lambda **kwargs: {"match_status": "not_requested", "request": {}})
+    monkeypatch.setattr(query_module, "_resolve_query_hits", lambda *args, **kwargs: ([], [], [], [], True))
+    monkeypatch.setattr(
+        query_module,
+        "apply_hard_page_route",
+        lambda **kwargs: (
+            {
+                "requested_page": 94,
+                "match_status": "exact_evidence",
+                "exercise_match_status": "not_requested",
+                "source_id": "SRC-408-0004",
+                "book_title": "王道数据结构",
+                "pdf_page": 106,
+                "locator_available": True,
+            },
+            [],
+            [],
+            [problem],
+        ),
+    )
+    monkeypatch.setattr(
+        query_module,
+        "list_exact_relations_for_question_page",
+        lambda **kwargs: {
+            "status": "exact",
+            "relations": [
+                {"exercise_label": "02", "question_content": "表达式 a*(b+c)-d 的后缀表达式是（ ）。"},
+                {"exercise_label": "04", "question_content": problem["content"]},
+                {"exercise_label": "05", "question_content": "执行下列递归语句段后，i 的值为（ ）。"},
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        query_module,
+        "apply_exercise_relation",
+        lambda locator, evidences: (
+            {
+                "status": "exact_answer_evidence",
+                "exercise_label": "04",
+                "question_evidence_ids": ["EV-408-000050"],
+                "answer_evidence_ids": ["EV-408-000053"],
+                "question_printed_pages": [94],
+                "answer_printed_pages": [97],
+                "question_pdf_pages": [106],
+                "answer_pdf_pages": [109],
+                "question_content": problem["content"],
+                "answer_content": solution["content"],
+            },
+            [problem, solution],
+        ),
+    )
+    monkeypatch.setattr(query_module, "learner_compare_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(query_module, "learner_snapshot", lambda *args, **kwargs: {})
+    monkeypatch.setattr(query_module, "load_events", lambda: [])
+    monkeypatch.setattr(query_module, "runtime_context_payload", lambda **kwargs: {})
+
+    result = query_module.query_knowledge(tmp_path, "408", None, original_query, 3, book_title="数据结构")
+
+    assert result["request_resolution"]["exercise_label"] == "04"
+    assert result["request_resolution"]["requested_option"] == "C"
+    assert result["request_resolution"]["exercise_resolution"]["status"] == "inferred_unique"
+    assert result["answer_grounding"]["status"] == "exact_answer"
+    assert result["answer_grounding"]["can_conclude"] is True
+    assert result["answer_grounding"]["problem"]["evidence_ids"] == ["EV-408-000050"]
+    assert result["answer_grounding"]["solution"]["evidence_ids"] == ["EV-408-000053"]
+    assert result["teaching_bundle"]["requested_option"] == "C"
+    assert result["teaching_bundle"]["exercise_label"] == "04"
+
+
+def test_generic_exact_page_explanation_does_not_force_exercise_inference(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(query_module, "resolve_book_route", lambda **kwargs: {})
+    monkeypatch.setattr(query_module, "resolve_exercise_route", lambda **kwargs: {"match_status": "not_requested", "request": {}})
+    monkeypatch.setattr(query_module, "_resolve_query_hits", lambda *args, **kwargs: ([], [], [], [], True))
+    monkeypatch.setattr(
+        query_module,
+        "apply_hard_page_route",
+        lambda **kwargs: (
+            {"requested_page": 94, "match_status": "exact_evidence", "exercise_match_status": "not_requested", "source_id": "SRC", "pdf_page": 106},
+            [],
+            [],
+            [{"evidence_id": "EV-PAGE", "content": "整页教材正文"}],
+        ),
+    )
+    monkeypatch.setattr(query_module, "learner_compare_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(query_module, "learner_snapshot", lambda *args, **kwargs: {})
+    monkeypatch.setattr(query_module, "load_events", lambda: [])
+    monkeypatch.setattr(query_module, "runtime_context_payload", lambda **kwargs: {})
+    result = query_module.query_knowledge(tmp_path, "408", None, "讲一下数据结构第94页的内容", 3, book_title="数据结构")
+    assert result["request_resolution"]["exercise_resolution"]["status"] == "not_requested"
+    assert result["exercise_anchor"]["status"] == "not_requested"
+    assert result["page_verification"]["exercise_verification_status"] == "not_requested"
+
+
 def test_source_photo_without_book_identity_still_requires_answer_grounding() -> None:
     grounding = query_module.build_answer_grounding(query="看这张题目照片，帮我检查这道题的过程", book_title=None, page_anchor={}, exercise_anchor={}, evidences=[])
     assert grounding["required"] is True
@@ -199,6 +297,20 @@ def test_ambiguous_exercise_relation_reports_answer_ambiguous() -> None:
     grounding = query_module.build_answer_grounding(query="P64 例3.8 怎么做", book_title="李正元数一", page_anchor={"requested_page": 64, "requested_exercise_label": "例3.8", "match_status": "exact_evidence"}, exercise_anchor={"status": "ambiguous", "exercise_label": "例3.8"}, evidences=[])
     assert grounding["status"] == "answer_ambiguous"
     assert grounding["can_conclude"] is False
+
+
+def test_missing_exercise_number_requests_only_the_number() -> None:
+    grounding = query_module.build_answer_grounding(
+        query="讲第94页C选项",
+        book_title="王道数据结构",
+        page_anchor={"requested_page": 94, "match_status": "exact_evidence"},
+        exercise_anchor={"status": "ambiguous", "reason": "exercise-label-missing", "candidate_labels": ["01", "02", "04"]},
+        evidences=[],
+    )
+    assert grounding["status"] == "answer_ambiguous"
+    assert grounding["can_conclude"] is False
+    assert grounding["next_action"] == "目前只缺题号，请告诉我是第几题。"
+    assert "01、02、04" in grounding["failure_reason"]
 
 
 def test_compact_p_page_anchor_before_chinese_text() -> None:

@@ -14,7 +14,7 @@ if str(SCRIPTS) not in sys.path:
 from kaoyan_kb.domain import page_locator
 from kaoyan_kb.domain import exercise_locator
 from kaoyan_kb.domain.index_freshness import fingerprint_index_inputs
-from query_local_knowledge import build_page_crosscheck, parse_page_anchor, resolve_request
+from query_local_knowledge import build_page_crosscheck, infer_exercise_from_exact_page, parse_page_anchor, resolve_request
 from query_local_knowledge import apply_exercise_relation, apply_hard_page_route, build_reference_items, exact_evidence_hits_for_locator
 import sync_exam_kb
 import create_snapshot
@@ -209,6 +209,100 @@ def test_request_resolution_distinguishes_page_semantics(monkeypatch) -> None:
     assert approximate["exercise_category"] == "single-choice"
     overridden = resolve_request(query="94页起第4题", book_title="王道数据结构", chapter=None, printed_page=94, exercise_label="4")
     assert overridden["page"]["semantics"] == "exact_page"
+
+
+def test_request_resolution_parses_option_without_exercise_label() -> None:
+    resolved = resolve_request(
+        query="讲下数据结构94页C选项，我的问题是读取*后，读到C，C会进入操作数栈吗？",
+        book_title="数据结构",
+        chapter=None,
+        printed_page=None,
+        exercise_label=None,
+    )
+    assert resolved["exercise_label"] == ""
+    assert resolved["requested_option"] == "C"
+    assert resolved["exercise_resolution"]["status"] == "not_requested"
+
+
+def test_request_resolution_keeps_multiple_direct_options_ambiguous() -> None:
+    resolved = resolve_request(
+        query="第94页的B选项和C选项分别怎么判断？",
+        book_title="数据结构",
+        chapter=None,
+        printed_page=None,
+        exercise_label=None,
+    )
+    assert resolved["requested_option"] == ""
+
+
+def test_page_content_inference_uses_unique_distinctive_terms(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "query_local_knowledge.list_exact_relations_for_question_page",
+        lambda **kwargs: {
+            "status": "exact",
+            "relations": [
+                {"exercise_label": "02", "question_content": "表达式 a*(b+c)-d 的后缀表达式是（ ）。"},
+                {"exercise_label": "04", "question_content": "利用栈求表达式的值时，设立运算数栈 OPEN。"},
+                {"exercise_label": "05", "question_content": "执行下列递归语句段后，i 的值为（ ）。"},
+            ],
+        },
+    )
+    result = infer_exercise_from_exact_page(
+        locator={"source_id": "SRC-408", "pdf_page": 106},
+        query="读到 C 时会进入操作数栈吗？",
+        category="single-choice",
+        requested_option="C",
+    )
+    assert result["status"] == "inferred_unique"
+    assert result["exercise_label"] == "04"
+    assert "运算数栈" in result["matched_terms"]
+
+
+def test_page_content_inference_fails_closed_on_weak_shared_terms(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "query_local_knowledge.list_exact_relations_for_question_page",
+        lambda **kwargs: {
+            "status": "exact",
+            "relations": [
+                {"exercise_label": "02", "question_content": "下面哪个表达式含有乘法运算？"},
+                {"exercise_label": "04", "question_content": "利用栈计算下面的表达式。"},
+            ],
+        },
+    )
+    result = infer_exercise_from_exact_page(
+        locator={"source_id": "SRC-408", "pdf_page": 106},
+        query="这个表达式里的 C 选项怎么判断？",
+        category="single-choice",
+        requested_option="C",
+    )
+    assert result["status"] == "ambiguous"
+    assert result["exercise_label"] == ""
+
+
+def test_page_content_inference_accepts_one_formal_candidate(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "query_local_knowledge.list_exact_relations_for_question_page",
+        lambda **kwargs: {"status": "exact", "relations": [{"exercise_label": "07", "question_content": "唯一题目"}]},
+    )
+    result = infer_exercise_from_exact_page(locator={"source_id": "SRC", "pdf_page": 1}, query="讲这道题")
+    assert result["status"] == "inferred_unique"
+    assert result["exercise_label"] == "07"
+
+
+def test_page_content_inference_propagates_unavailable_index(monkeypatch) -> None:
+    availability = {"available": False, "reason": "exercise_locator_index_stale"}
+    monkeypatch.setattr(
+        "query_local_knowledge.list_exact_relations_for_question_page",
+        lambda **kwargs: {
+            "status": "unavailable",
+            "unavailable_reason": "exercise_locator_index_stale",
+            "unavailable_detail": "inputs changed",
+            "_availability": availability,
+        },
+    )
+    result = infer_exercise_from_exact_page(locator={"source_id": "SRC", "pdf_page": 1}, query="讲这道题")
+    assert result["status"] == "unavailable"
+    assert result["unavailable_reason"] == "exercise_locator_index_stale"
 
 
 def test_page_crosscheck_requires_formal_section_anchor_match() -> None:
@@ -574,6 +668,27 @@ def test_scoped_exercise_relation_uses_section_before_chapter(monkeypatch, tmp_p
     relations["relations"].append({"relation_status": "exact", "source_id": "SRC-PDF", "section_root": "3.3", "category": "single-choice", "exercise_label": "04"})
     resolved = exercise_locator.find_unique_relation_for_scope(book_title="王道数据结构", chapter="3.3.6", exercise_label="4", category="single-choice")
     assert resolved["section_root"] == "3.3"
+
+
+def test_page_relation_candidates_exclude_unusable_question_slices(monkeypatch, tmp_path: Path) -> None:
+    evidence_root = tmp_path / "evidence"
+    _write_json(evidence_root / "EV-Q1.json", {"content": "# 一、单项选择题\n01. 可唯一切片的题目。\n\n02. 下一题。"})
+    _write_json(evidence_root / "EV-Q2.json", {"content": "该证据没有正式题号标记。"})
+    monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: {"evidence": evidence_root})
+    monkeypatch.setattr(
+        exercise_locator,
+        "load_exercise_locator_index",
+        lambda: {
+            "relations": [
+                {"relation_status": "exact", "source_id": "SRC", "category": "single-choice", "exercise_label": "01", "question_pdf_pages": [10], "question_evidence_ids": ["EV-Q1"]},
+                {"relation_status": "exact", "source_id": "SRC", "category": "single-choice", "exercise_label": "02", "question_pdf_pages": [10], "question_evidence_ids": ["EV-Q2"]},
+                {"relation_status": "needs_review", "source_id": "SRC", "category": "single-choice", "exercise_label": "03", "question_pdf_pages": [10], "question_evidence_ids": ["EV-Q1"]},
+            ]
+        },
+    )
+    result = exercise_locator.list_exact_relations_for_question_page(source_id="SRC", question_pdf_page=10, category="single-choice")
+    assert result["status"] == "exact"
+    assert [item["exercise_label"] for item in result["relations"]] == ["01"]
 
 
 def test_exact_page_route_sets_matched_evidence_for_reviewed_ocr(monkeypatch) -> None:
