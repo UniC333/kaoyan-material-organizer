@@ -1,0 +1,39 @@
+{
+  "title": "teaching_answer_view",
+  "type": "object",
+  "required": [
+    "teaching_view_version",
+    "answer_contract_version",
+    "view",
+    "saved",
+    "subject",
+    "question",
+    "answer_mode",
+    "runtime_context",
+    "request_resolution",
+    "page_crosscheck",
+    "page_verification",
+    "answer_grounding",
+    "citation_coverage_ok",
+    "teaching_bundle"
+  ],
+  "properties": {
+    "teaching_view_version": {"type": "string"},
+    "answer_contract_version": {"type": "string"},
+    "view": {"const": "teaching"},
+    "saved": {"type": "boolean"},
+    "saved_at": {"type": "string"},
+    "subject": {"type": "string"},
+    "chapter": {"type": "string"},
+    "question": {"type": "string"},
+    "answer_mode": {"type": "string"},
+    "runtime_context": {"type": "object"},
+    "request_resolution": {"type": "object"},
+    "page_crosscheck": {"type": "object"},
+    "page_verification": {"type": "object"},
+    "answer_grounding": {"type": "object"},
+    "citation_coverage_ok": {"type": "boolean"},
+    "teaching_bundle": {"type": "object"}
+  },
+  "additionalProperties": false
+}

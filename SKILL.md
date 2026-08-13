@@ -34,10 +34,15 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 
 默认只通过 `scripts/kb.py` 调用功能：
 
+- 教材页码、章节、题号、选项或“按书讲解”请求的第一项实质动作必须是调用本地 `query` 或 `ask`。不得先生成通用讲解再补定位。常规调用只传使用者原话和已知的学科、教材名，让确定性链路解析“第 94 页”“94 页起”“3.3.6”“第 4 题 C 项”等信号；只有使用者明确指定严格页码时才额外传 `--printed-page`。
+- Windows 诊断模板：`SKILL_ROOT\.venv\Scripts\python.exe SKILL_ROOT\scripts\kb.py --config SKILL_ROOT\kaoyan.config.json query --subject <学科> --book-title <教材名> --query <使用者原话> --format json`。给教学模型消费时优先用同参数的 `ask --format teaching-json`；完整 `json` 保留为诊断和保存契约。返回后必须先检查 `request_resolution`、`page_crosscheck`、`answer_grounding` 与 `teaching_bundle`；需要页码交叉核验但状态不是 `confirmed`，或 `teaching_bundle.status` 不是 `exact` 时，只报告状态并提出一个必要澄清问题。
+- 普通教材检索与讲解优先使用 Terra `medium`。链路失败、歧义或缺证据时不得自动升级 Sol，也不得用更强模型猜答案；Sol 只在使用者明确选择后用于复杂推导或链路开发。
+
 - 读取本技能后，把当前 `SKILL.md` 所在目录视为 `SKILL_ROOT`。若当前工作目录不是 `SKILL_ROOT`，不得从学习 Vault 拼接 `\.venv`、`scripts` 或 `.kaoyan-kb` 相对路径。
 - Windows 调用必须使用 `SKILL_ROOT\.venv\Scripts\python.exe`、`SKILL_ROOT\scripts\kb.py` 和 `--config SKILL_ROOT\kaoyan.config.json` 的绝对路径，并把工具工作目录设为 `SKILL_ROOT`。`--config` 必须放在 `query`、`ask` 等子命令之前。
 - `query`、`ask` 返回后先检查 `runtime_context`，确认 `config_path`、`vault_root` 与 `kb_root` 来自本次选择的配置，再检查教材证据状态。
 - 稳定入口启动失败、配置无效，或 `page_anchor.match_status` 为 `unavailable` 时，只能报告“本地证据链当前不可用”并询问下一步。不得搜索其他同名 `.kaoyan-kb`、自动阅图、启动 OCR，或以通用知识补写教材结论。
+- `page_locator_index_stale` 或 `exercise_locator_index_stale` 表示正式输入的内容指纹已变化；先运行 `kb.py sync --indexes-only`，不得把旧索引结果继续当成可用证据。
 
 - `doctor`：检查路径、Python、OCR 和终端编码。
 - `book`：接入纸质书、PDF、页码映射、OCR、复核与分类。
@@ -155,6 +160,7 @@ inspect -> map-pages -> OCR -> review -> classify
 - OCR 置信度不等于章节分类置信度。
 - 人工文件、人工审核结果和人工考纲不得自动覆盖。
 - 删除、迁移、批量发布等操作必须先预览范围，并保留受控恢复路径。
+- 快照默认只保存代码、配置、人工审核、正式证据、学习状态和派生索引等轻量可变状态；不复制 PDF、图片、音视频、压缩包、OCR 缓存或其他可由原始资料重建的大型媒体。只有使用者明确要求全量媒体备份时才扩大快照范围。
 
 ## 隐私规则
 

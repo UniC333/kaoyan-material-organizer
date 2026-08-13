@@ -4,7 +4,8 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from common import ensure_kb_layout, load_json_or_default, save_json
+from common import ensure_kb_layout, load_json_or_default, now_iso, save_json
+from kaoyan_kb.domain.index_freshness import directory_json_inputs, fingerprint_index_inputs
 
 
 EXERCISE_LOCATOR_INDEX_NAME = "exercise_locator_index.json"
@@ -16,6 +17,142 @@ WORKED_SOLUTION_PATTERN = re.compile(r"【\s*(?:解|解答|分析与求解)\s*�
 def normalize_exercise_label(value: Any) -> str:
     match = re.search(r"(?:第\s*)?(\d{1,3})(?:\s*题)?", str(value or ""))
     return f"{int(match.group(1)):02d}" if match else ""
+
+
+def normalize_exercise_category(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"single-choice", "comprehensive"}:
+        return text
+    if any(token in text for token in ("单项选择", "单选", "选择题")):
+        return "single-choice"
+    if any(token in text for token in ("综合应用", "综合题")):
+        return "comprehensive"
+    return ""
+
+
+def extract_exercise_block(content: Any, exercise_label: Any, *, category: str = "") -> str:
+    """Return one numbered exercise block, or an empty string when it is not unique."""
+    label = normalize_exercise_label(exercise_label)
+    if not label:
+        return ""
+    target = int(label)
+    lines = str(content or "").splitlines()
+    starts: list[int] = []
+    labels: list[tuple[int, int]] = []
+    marker = re.compile(r"^\s*#{0,6}\s*(\d{1,3})[.．、]\s*")
+    requested_category = normalize_exercise_category(category)
+    has_requested_category_heading = bool(requested_category) and any(
+        re.match(r"^\s*#{1,6}\s*", line)
+        and normalize_exercise_category(line) == requested_category
+        for line in lines
+    )
+    active_category = ""
+    for index, line in enumerate(lines):
+        heading_category = normalize_exercise_category(line) if re.match(r"^\s*#{1,6}\s*", line) else ""
+        if heading_category:
+            active_category = heading_category
+        match = marker.match(line)
+        if not match:
+            continue
+        number = int(match.group(1))
+        labels.append((index, number))
+        category_matches = (
+            not requested_category
+            or (active_category == requested_category if has_requested_category_heading else active_category in {"", requested_category})
+        )
+        if number == target and category_matches:
+            starts.append(index)
+    if len(starts) != 1:
+        return ""
+    start = starts[0]
+    end = len(lines)
+    for index, _number in labels:
+        if index > start:
+            end = index
+            break
+    return "\n".join(lines[start:end]).strip()
+
+
+def resolve_section_anchor(*, book_title: str, chapter: str, query: str = "") -> dict[str, Any]:
+    """Resolve an exercise heading and retain the formal anchor used to normalize it."""
+    combined = " ".join(part for part in (str(chapter or ""), str(query or "")) if part)
+    numbers = re.findall(r"(?:第\s*)?(\d+(?:\.\d+)+)\s*(?:节)?", combined)
+    if not numbers:
+        chapter_match = re.search(r"(?:第\s*)?(\d+)\s*章", combined)
+        return {
+            "status": "not_requested",
+            "requested_section": "",
+            "section_root": chapter_match.group(1) if chapter_match else "",
+            "candidates": [],
+        }
+    requested = numbers[0]
+    parts = requested.split(".")
+    if len(parts) <= 2:
+        return {
+            "status": "not_applicable",
+            "requested_section": requested,
+            "section_root": requested,
+            "candidates": [],
+        }
+
+    layout = ensure_kb_layout()
+    source_ids = {
+        str(item.get("source_id") or "")
+        for path in layout["manifests"].joinpath("sources").glob("*.json")
+        for item in [load_json_or_default(path, {})]
+        if item.get("status") == "active"
+        and item.get("material_type") == "book-pdf"
+        and str(item.get("source_name") or "") == str(book_title or "")
+    }
+    candidates: list[dict[str, Any]] = []
+    for source_id in sorted(source_ids):
+        anchors = load_json_or_default(layout["indexes"] / "pdf_book_anchors" / f"{source_id}.json", {})
+        for anchor in anchors.get("anchors", []) or []:
+            title = str(anchor.get("title") or "").strip()
+            if not re.match(rf"^{re.escape(requested)}(?:\s|$)", title):
+                continue
+            if any(token in title for token in ("本节试题精选", "答案与解析")):
+                candidates.append(
+                    {
+                        "source_id": source_id,
+                        "title": title,
+                        "pdf_page": int(anchor.get("page_start", 0) or 0),
+                        "anchor_type": str(anchor.get("anchor_type") or ""),
+                    }
+                )
+    if not candidates:
+        return {
+            "status": "not_found",
+            "requested_section": requested,
+            "section_root": requested,
+            "candidates": [],
+        }
+    identities = {
+        (".".join(parts[:-1]), int(item.get("pdf_page", 0) or 0))
+        for item in candidates
+    }
+    if len(identities) != 1:
+        return {
+            "status": "ambiguous",
+            "requested_section": requested,
+            "section_root": ".".join(parts[:-1]),
+            "candidates": candidates,
+        }
+    section_root, pdf_page = next(iter(identities))
+    return {
+        "status": "exact",
+        "requested_section": requested,
+        "section_root": section_root,
+        "title": candidates[0]["title"],
+        "pdf_page": pdf_page,
+        "source_ids": sorted({str(item.get("source_id") or "") for item in candidates if item.get("source_id")}),
+        "candidates": candidates,
+    }
+
+
+def resolve_section_scope(*, book_title: str, chapter: str, query: str = "") -> str:
+    """Resolve an exercise/answer heading to its parent section using formal PDF anchors."""
+    return str(resolve_section_anchor(book_title=book_title, chapter=chapter, query=query).get("section_root") or "")
 
 
 def _root(section: str) -> str:
@@ -164,6 +301,27 @@ def build_worked_example_relations(evidences: list[dict[str, Any]]) -> list[dict
     return sorted(relations, key=lambda item: item["relation_id"])
 
 
+def exercise_locator_input_fingerprint(layout: dict[str, Any]) -> str:
+    queue_root = layout["review_queues"] / QUEUE_NAME
+    approvals = []
+    for path in sorted(queue_root.glob("*.json")) if queue_root.is_dir() else []:
+        payload = load_json_or_default(path, {})
+        approvals.append(
+            (
+                f"review-queues/{QUEUE_NAME}/{path.name}/approved-relations",
+                list(payload.get("approved_relations", []) or []),
+            )
+        )
+    return fingerprint_index_inputs(
+        files=[
+            *directory_json_inputs("manifests/sources", layout["manifests"] / "sources"),
+            *directory_json_inputs("evidence", layout["evidence"]),
+            *directory_json_inputs("indexes/pdf-book-anchors", layout["indexes"] / "pdf_book_anchors"),
+        ],
+        projections=approvals,
+    )
+
+
 def build_exercise_locator_index() -> dict[str, Any]:
     layout = ensure_kb_layout()
     all_evidences = [load_json_or_default(path, {}) for path in sorted(layout["evidence"].glob("*.json"))]
@@ -267,31 +425,86 @@ def build_exercise_locator_index() -> dict[str, Any]:
         existing_queue = load_json_or_default(queue_path, {})
         save_json(queue_path, {"queue_type": QUEUE_NAME, "source_id": source_id, "approved_relations": list(existing_queue.get("approved_relations", []) or []), "items": items, "summary": {"open_count": len(items)}})
     relations.extend(build_worked_example_relations(all_evidences))
-    payload = {"schema_version": "exercise-locator.v1", "relations": sorted(relations, key=lambda item: item["relation_id"]), "summary": {"relation_count": len(relations), "review_count": sum(len(items) for items in review_by_source.values()) + sum(item.get("relation_status") == "needs_review" for item in relations)}}
+    payload = {
+        "schema_version": "exercise-locator.v2",
+        "generated_at": now_iso(),
+        "input_fingerprint": exercise_locator_input_fingerprint(layout),
+        "relations": sorted(relations, key=lambda item: item["relation_id"]),
+        "summary": {"relation_count": len(relations), "review_count": sum(len(items) for items in review_by_source.values()) + sum(item.get("relation_status") == "needs_review" for item in relations)},
+    }
     save_json(layout["indexes"] / EXERCISE_LOCATOR_INDEX_NAME, payload)
     return payload
 
 
 def load_exercise_locator_index() -> dict[str, Any]:
-    return load_json_or_default(ensure_kb_layout()["indexes"] / EXERCISE_LOCATOR_INDEX_NAME, {"relations": []})
+    layout = ensure_kb_layout()
+    index_path = layout["indexes"] / EXERCISE_LOCATOR_INDEX_NAME
+    unavailable = {
+        "relations": [],
+        "_availability": {
+            "available": False,
+            "path": str(index_path),
+            "reason": "exercise_locator_index_missing",
+            "detail": "The selected knowledge base has no formal exercise locator index.",
+        },
+    }
+    if not index_path.is_file():
+        return unavailable
+    payload = load_json_or_default(index_path, {})
+    if not isinstance(payload, dict) or not isinstance(payload.get("relations"), list):
+        unavailable["_availability"].update(
+            reason="exercise_locator_index_invalid",
+            detail="The exercise locator index must contain a list-valued relations field.",
+        )
+        return unavailable
+    if str(payload.get("input_fingerprint") or "") != exercise_locator_input_fingerprint(layout):
+        unavailable["_availability"].update(
+            reason="exercise_locator_index_stale",
+            detail="Formal exercise locator inputs changed after the index was built; run kb.py sync --indexes-only.",
+        )
+        return unavailable
+    result = dict(payload)
+    result["_availability"] = {"available": True, "path": str(index_path), "reason": "", "detail": ""}
+    return result
+
+
+def _unavailable_relation(index: dict[str, Any]) -> dict[str, Any]:
+    availability = dict(index.get("_availability") or {})
+    if availability.get("available", True):
+        return {}
+    return {
+        "relation_status": "unavailable",
+        "unavailable_reason": str(availability.get("reason") or "exercise_locator_index_unavailable"),
+        "unavailable_detail": str(availability.get("detail") or ""),
+        "_availability": availability,
+    }
 
 
 def find_exact_relation(*, source_id: str, question_pdf_page: int, exercise_label: str) -> dict[str, Any]:
     label = normalize_exercise_label(exercise_label)
-    matches = [item for item in load_exercise_locator_index().get("relations", []) if item.get("source_id") == source_id and label == item.get("exercise_label") and question_pdf_page in set(item.get("question_pdf_pages", []))]
+    index = load_exercise_locator_index()
+    unavailable = _unavailable_relation(index)
+    if unavailable:
+        return unavailable
+    matches = [item for item in index.get("relations", []) if item.get("source_id") == source_id and label == item.get("exercise_label") and question_pdf_page in set(item.get("question_pdf_pages", []))]
     return matches[0] if len(matches) == 1 and matches[0].get("relation_status") == "exact" else {}
 
 
-def find_unique_relation_for_scope(*, book_title: str, chapter: str, exercise_label: str) -> dict[str, Any]:
+def find_unique_relation_for_scope(*, book_title: str, chapter: str, exercise_label: str, category: str = "", query: str = "") -> dict[str, Any]:
     """Resolve a relation without a page only when book and current chapter are unique."""
     if not book_title or not chapter:
         return {}
     label = normalize_exercise_label(exercise_label)
-    section_number = re.search(r"(?:第\s*)?(\d+(?:\.\d+)+)\s*(?:节)?", chapter)
-    chapter_number = re.search(r"(?:第\s*)?(\d+)\s*章", chapter)
-    if not label or (not section_number and not chapter_number):
+    section_anchor = resolve_section_anchor(book_title=book_title, chapter=chapter, query=query)
+    if section_anchor.get("status") == "ambiguous":
         return {}
-    scope = section_number.group(1) if section_number else chapter_number.group(1)
+    scope = str(section_anchor.get("section_root") or "")
+    section_number = re.search(r"^\d+\.\d+$", scope)
+    chapter_number = re.search(r"(?:第\s*)?(\d+)\s*章", chapter)
+    normalized_category = normalize_exercise_category(category or query)
+    if not label or (not scope and not chapter_number):
+        return {}
+    scope = scope or chapter_number.group(1)
     layout = ensure_kb_layout()
     sources = {
         str(item.get("source_id") or ""): str(item.get("source_name") or "")
@@ -299,10 +512,15 @@ def find_unique_relation_for_scope(*, book_title: str, chapter: str, exercise_la
         for item in [load_json_or_default(path, {})]
         if item.get("status") == "active" and item.get("material_type") == "book-pdf"
     }
+    index = load_exercise_locator_index()
+    unavailable = _unavailable_relation(index)
+    if unavailable:
+        return unavailable
     matches = [
-        item for item in load_exercise_locator_index().get("relations", [])
+        item for item in index.get("relations", [])
         if item.get("relation_status") == "exact"
         and normalize_exercise_label(item.get("exercise_label")) == label
+        and (not normalized_category or item.get("category") == normalized_category)
         and sources.get(str(item.get("source_id") or "")) == book_title
         and (
             str(item.get("section_root") or "") == scope
@@ -314,8 +532,12 @@ def find_unique_relation_for_scope(*, book_title: str, chapter: str, exercise_la
 
 
 def find_exact_worked_example_relation(*, book_id: str, printed_page: int, exercise_label: str) -> dict[str, Any]:
+    index = load_exercise_locator_index()
+    unavailable = _unavailable_relation(index)
+    if unavailable:
+        return unavailable
     matches = [
-        item for item in load_exercise_locator_index().get("relations", [])
+        item for item in index.get("relations", [])
         if item.get("relation_kind") == "same-book-worked-example"
         and item.get("book_id") == book_id
         and item.get("exercise_label") == exercise_label.replace(" ", "")

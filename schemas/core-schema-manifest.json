@@ -11,6 +11,7 @@
     "claim.schema.json",
     "canonical_card.schema.json",
     "query_artifact.schema.json",
+    "teaching_answer_view.schema.json",
     "conflict.schema.json",
     "learner_model.schema.json",
     "learner_event.schema.json"

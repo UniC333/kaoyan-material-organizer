@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from answer_local_question import build_answer_contract, render_text
+from answer_local_question import build_answer_contract, build_teaching_answer_view, render_text
 from common import default_vault_root_arg, resolve_subject
 from query_local_knowledge import explicit_page_subject_error, query_knowledge
 from save_local_answer import save_answer_contract, saved_at_label
@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--topk", type=int, default=3)
     parser.add_argument("--printed-page", type=int)
     parser.add_argument("--exercise-label")
-    parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser.add_argument("--format", choices=("text", "json", "teaching-json"), default="text")
     parser.add_argument("--save", action="store_true")
     parser.add_argument("--saved-at")
     return parser.parse_args()
@@ -55,18 +55,22 @@ def main() -> int:
         except ValueError as exc:
             raise SystemExit(f"[ERROR] no saved-QA write was made: {exc}") from exc
 
+    output_saved_at = saved_at_label(args.saved_at) if args.save else ""
     if args.format == "json":
         payload = {
             "saved": args.save,
-            "saved_at": saved_at_label(args.saved_at) if args.save else "",
+            "saved_at": output_saved_at,
             "runtime_context": dict(result.get("runtime_context") or {}),
             "answer": contract,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
+    elif args.format == "teaching-json":
+        payload = build_teaching_answer_view(contract, saved=args.save, saved_at=output_saved_at)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(render_text(contract), end="")
         if args.save:
-            print(f"\n已沉淀到本地问答入口，记录日期：{saved_at_label(args.saved_at)}")
+            print(f"\n已沉淀到本地问答入口，记录日期：{output_saved_at}")
     return 0
 
 

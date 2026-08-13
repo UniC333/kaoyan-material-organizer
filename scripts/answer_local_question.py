@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from common import default_vault_root_arg, ensure_kb_layout, load_json, resolve_subject, validate_entity_contract
-from query_local_knowledge import preferred_page_ref, query_knowledge, should_prefer_evidence_chapter
+from query_local_knowledge import build_teaching_bundle, preferred_page_ref, query_knowledge, should_prefer_evidence_chapter
 
 
-ANSWER_CONTRACT_VERSION = "m6.answer.v2"
+ANSWER_CONTRACT_VERSION = "m6.answer.v3"
+TEACHING_VIEW_VERSION = "m6.teaching.v1"
 STRUCTURED_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "exercise_pair"}
 CONTENT_SOURCE_LABELS = {
     "textbook_structured_evidence": "教材结构化证据",
@@ -46,6 +47,97 @@ def normalized_answer_grounding(result: dict) -> dict[str, Any]:
     return grounding
 
 
+def validate_teaching_contract_invariants(contract: dict[str, Any]) -> None:
+    """Reject contradictory teaching gates before a contract reaches a caller."""
+    grounding = dict(contract.get("answer_grounding") or {})
+    teaching = dict(contract.get("teaching_bundle") or {})
+    required = bool(grounding.get("required"))
+    exact = str(grounding.get("status") or "") == "exact_answer"
+    can_conclude = bool(grounding.get("can_conclude"))
+    teaching_status = str(teaching.get("status") or "")
+    problem_text = str(teaching.get("problem_text") or "").strip()
+    answer_text = str(teaching.get("source_answer_text") or "").strip()
+    citations = dict(teaching.get("citations") or {})
+
+    option = str(teaching.get("requested_option") or "")
+    if option not in {"", "A", "B", "C", "D"}:
+        raise ValueError(f"teaching contract has invalid requested_option: {option}")
+
+    if required:
+        if exact != can_conclude:
+            raise ValueError("teaching contract has contradictory exact-answer conclusion state")
+        if exact:
+            if teaching_status != "exact" or not problem_text or not answer_text:
+                raise ValueError("exact answer must expose an exact teaching bundle with problem and source answer text")
+            if not list(citations.get("problem_evidence_ids") or []) or not list(citations.get("solution_evidence_ids") or []):
+                raise ValueError("exact teaching bundle must retain both problem and solution evidence ids")
+        else:
+            if teaching_status != "blocked" or problem_text or answer_text:
+                raise ValueError("unconfirmed source answer must expose a blocked, content-free teaching bundle")
+            if not str(grounding.get("failure_reason") or "").strip() or not str(grounding.get("next_action") or "").strip():
+                raise ValueError("blocked source answer must explain the failure and next action")
+    elif teaching_status != "not_applicable" or problem_text or answer_text:
+        raise ValueError("ordinary queries must expose a content-free not_applicable teaching bundle")
+
+    crosscheck = dict(contract.get("page_crosscheck") or {})
+    if crosscheck.get("required") and str(crosscheck.get("status") or "") != "confirmed":
+        if can_conclude or teaching_status == "exact":
+            raise ValueError("unconfirmed page crosscheck cannot permit an exact teaching answer")
+        verification = dict(contract.get("page_verification") or {})
+        if verification.get("textbook_explanation_allowed"):
+            raise ValueError("unconfirmed page crosscheck cannot permit textbook explanation")
+
+
+def _compact_grounding_side(side: dict[str, Any]) -> dict[str, Any]:
+    if not side:
+        return {}
+    return {
+        key: side.get(key)
+        for key in ("book_title", "exercise_label", "evidence_ids", "printed_pages", "pdf_pages")
+        if side.get(key) not in (None, "", [])
+    }
+
+
+def build_teaching_answer_view(
+    contract: dict[str, Any],
+    *,
+    saved: bool = False,
+    saved_at: str = "",
+) -> dict[str, Any]:
+    """Project the full answer contract into a small, model-facing teaching view."""
+    validate_teaching_contract_invariants(contract)
+    grounding = dict(contract.get("answer_grounding") or {})
+    compact_grounding = {
+        "required": bool(grounding.get("required")),
+        "status": str(grounding.get("status") or "not_applicable"),
+        "can_conclude": bool(grounding.get("can_conclude")),
+        "problem": _compact_grounding_side(dict(grounding.get("problem") or {})),
+        "solution": _compact_grounding_side(dict(grounding.get("solution") or {})),
+        "failure_reason": str(grounding.get("failure_reason") or ""),
+        "next_action": str(grounding.get("next_action") or ""),
+    }
+    view = {
+        "teaching_view_version": TEACHING_VIEW_VERSION,
+        "answer_contract_version": str(contract.get("answer_contract_version") or ""),
+        "view": "teaching",
+        "saved": bool(saved),
+        "saved_at": str(saved_at or ""),
+        "subject": str(contract.get("subject") or ""),
+        "chapter": str(contract.get("chapter") or ""),
+        "question": str(contract.get("question") or ""),
+        "answer_mode": str(contract.get("answer_mode") or ""),
+        "runtime_context": dict(contract.get("runtime_context") or {}),
+        "request_resolution": dict(contract.get("request_resolution") or {}),
+        "page_crosscheck": dict(contract.get("page_crosscheck") or {}),
+        "page_verification": dict(contract.get("page_verification") or {}),
+        "answer_grounding": compact_grounding,
+        "citation_coverage_ok": bool(contract.get("citation_coverage_ok")),
+        "teaching_bundle": dict(contract.get("teaching_bundle") or {}),
+    }
+    validate_entity_contract("teaching_answer_view", view)
+    return view
+
+
 def _side_evidence_ids(side: dict[str, Any]) -> list[str]:
     values = list(side.get("evidence_ids") or [])
     if side.get("evidence_id"):
@@ -62,7 +154,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--question", required=True)
     parser.add_argument("--topk", type=int, default=3)
     parser.add_argument("--printed-page", type=int)
-    parser.add_argument("--format", choices=("text", "json"), default="text")
+    parser.add_argument("--format", choices=("text", "json", "teaching-json"), default="text")
     return parser.parse_args()
 
 
@@ -576,6 +668,8 @@ def content_provenance(result: dict, assessment: dict[str, str]) -> list[dict[st
 def build_answer_contract(result: dict) -> dict[str, Any]:
     citations = build_citations(result)
     grounding = normalized_answer_grounding(result)
+    request_resolution = dict(result.get("request_resolution") or {})
+    teaching = dict(result.get("teaching_bundle") or {}) or build_teaching_bundle(grounding, request_resolution)
     evidence_assessment = build_evidence_assessment(result, citations)
     provenance = content_provenance(result, evidence_assessment)
     direct = direct_conclusion(result)
@@ -637,6 +731,9 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "sections": sections,
         "citations": citations,
         "teaching_context": dict(result.get("teaching_context") or {}),
+        "request_resolution": request_resolution,
+        "page_crosscheck": dict(result.get("page_crosscheck") or {}),
+        "teaching_bundle": teaching,
         # Compatibility fields for older callers that consumed raw query output.
         "syllabus_route": result.get("syllabus_route", []),
         "references": result.get("references", []),
@@ -649,6 +746,7 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "runtime_context": dict(result.get("runtime_context") or {}),
         "query_result": result,
     }
+    validate_teaching_contract_invariants(contract)
     validate_entity_contract("query_artifact", contract)
     return contract
 
@@ -776,6 +874,8 @@ def main() -> int:
     contract = build_answer_contract(result)
     if args.format == "json":
         print(json.dumps(contract, ensure_ascii=False, indent=2))
+    elif args.format == "teaching-json":
+        print(json.dumps(build_teaching_answer_view(contract), ensure_ascii=False, indent=2))
     else:
         print(render_text(contract), end="")
     return 0

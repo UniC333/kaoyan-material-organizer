@@ -10,11 +10,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from common import display_path, ensure_parent_dir, filesystem_path, load_runtime_config, now_iso, save_json, sha256_for_file
+from common import display_path, ensure_parent_dir, filesystem_path, load_json_or_default, load_runtime_config, now_iso, save_json, sha256_for_file
 
 
 STAGING_MARKER = ".kaoyan-snapshot-machine-owned.json"
 MIN_CAPACITY_RESERVE_BYTES = 1024 * 1024
+WORKSPACE_RUNTIME_DIRS = {
+    ".git", ".venv", ".pytest_cache", "__pycache__", ".tmp", ".mypy_cache", ".ruff_cache", "htmlcov",
+}
+KB_REBUILDABLE_DIRS = {"ocr", "runs", "sources"}
+SNAPSHOT_POLICY = "mutable-state-no-media-v2"
+MEDIA_SUFFIXES = {
+    ".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff",
+    ".mp3", ".wav", ".m4a", ".flac", ".mp4", ".mov", ".avi", ".mkv", ".zip", ".7z", ".rar",
+}
 
 
 class SnapshotCapacityError(RuntimeError):
@@ -38,19 +47,38 @@ def staging_root(root: Path) -> Path:
 def allocate_snapshot_id(root: Path) -> str:
     stamp = datetime.now().strftime("%Y%m%d")
     root.mkdir(parents=True, exist_ok=True)
-    existing = sorted(root.glob(f"SNAP-{stamp}-*"))
-    return f"SNAP-{stamp}-{len(existing) + 1:03d}"
+    existing_ids = {path.name for path in root.glob(f"SNAP-{stamp}-*")}
+    staging = staging_root(root)
+    if staging.is_dir():
+        for path in sorted(staging.glob(f"SNAP-{stamp}-*")):
+            marker = load_json_or_default(path / STAGING_MARKER, {})
+            if marker.get("machine_owned_snapshot") and marker.get("snapshot_id") == path.name and marker.get("snapshot_policy") == SNAPSHOT_POLICY:
+                return path.name
+            existing_ids.add(path.name)
+    sequence = 1
+    while f"SNAP-{stamp}-{sequence:03d}" in existing_ids:
+        sequence += 1
+    return f"SNAP-{stamp}-{sequence:03d}"
 
 
-def relative_files(base: Path, *, exclude: set[Path] | None = None) -> list[Path]:
+def relative_files(base: Path, *, exclude: set[Path] | None = None, exclude_dir_names: set[str] | None = None, exclude_suffixes: set[str] | None = None) -> list[Path]:
     skipped = {path.resolve() for path in (exclude or set())}
+    skipped_names = set(exclude_dir_names or set())
+    skipped_suffixes = {str(value).lower() for value in (exclude_suffixes or set())}
     items: list[Path] = []
     if not base.exists():
         return items
-    for root, _, filenames in os.walk(filesystem_path(base)):
+    for root, dirnames, filenames in os.walk(filesystem_path(base)):
         root_path = Path(display_path(root))
+        dirnames[:] = [
+            name for name in dirnames
+            if name not in skipped_names
+            and not any(candidate == (root_path / name).resolve() or candidate in (root_path / name).resolve().parents for candidate in skipped)
+        ]
         for filename in sorted(filenames):
             path = root_path / filename
+            if path.suffix.lower() in skipped_suffixes:
+                continue
             resolved = path.resolve()
             if any(parent == resolved or parent in resolved.parents for parent in skipped):
                 continue
@@ -64,13 +92,15 @@ def copy_root(snapshot_files_root: Path, label: str, source_root: Path, rel_path
         source_path = source_root / rel_path
         target_path = snapshot_files_root / label / rel_path
         ensure_parent_dir(target_path)
-        shutil.copy2(filesystem_path(source_path), filesystem_path(target_path))
+        source_size = os.stat(filesystem_path(source_path)).st_size
+        if not target_path.is_file() or os.stat(filesystem_path(target_path)).st_size != source_size or sha256_for_file(target_path) != sha256_for_file(source_path):
+            shutil.copy2(filesystem_path(source_path), filesystem_path(target_path))
         copied.append(
             {
                 "root": label,
                 "relative_path": rel_path.as_posix(),
                 "sha256": sha256_for_file(source_path),
-                "size_bytes": os.stat(filesystem_path(source_path)).st_size,
+                "size_bytes": source_size,
             }
         )
     return copied
@@ -96,7 +126,7 @@ def write_staging_marker(staging_dir: Path, snapshot_id: str) -> None:
     staging_dir.mkdir(parents=True, exist_ok=True)
     save_json(
         staging_dir / STAGING_MARKER,
-        {"machine_owned_snapshot": True, "snapshot_id": snapshot_id, "created_at": now_iso(), "purpose": "snapshot-create-staging"},
+        {"machine_owned_snapshot": True, "snapshot_id": snapshot_id, "snapshot_policy": SNAPSHOT_POLICY, "created_at": now_iso(), "purpose": "snapshot-create-staging"},
         ignored_compare_keys=(),
     )
 
@@ -147,9 +177,14 @@ def main() -> int:
     kb_root = runtime.kb_root.resolve()
     backup_root = runtime.backup_root.resolve()
 
-    workspace_files = relative_files(workspace_root, exclude={backup_root, kb_root, vault_root})
-    vault_files = relative_files(vault_root)
-    kb_files = relative_files(kb_root, exclude={backup_root})
+    workspace_files = relative_files(workspace_root, exclude={backup_root, kb_root, vault_root}, exclude_dir_names=WORKSPACE_RUNTIME_DIRS, exclude_suffixes=MEDIA_SUFFIXES)
+    vault_files = relative_files(vault_root, exclude_suffixes=MEDIA_SUFFIXES)
+    kb_files = relative_files(
+        kb_root,
+        exclude={backup_root},
+        exclude_dir_names=KB_REBUILDABLE_DIRS,
+        exclude_suffixes=MEDIA_SUFFIXES,
+    )
 
     capacity = ensure_snapshot_capacity(
         snapshots_dir,
@@ -176,6 +211,7 @@ def main() -> int:
             "files": files,
             "file_count": len(files),
             "machine_owned_snapshot": True,
+            "snapshot_policy": SNAPSHOT_POLICY,
             "ownership_marker": STAGING_MARKER,
             "capacity": capacity,
         }
