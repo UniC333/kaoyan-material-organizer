@@ -35,6 +35,8 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 默认只通过 `scripts/kb.py` 调用功能：
 
 - 教材页码、章节、题号、选项或“按书讲解”请求的第一项实质动作必须是调用本地 `query` 或 `ask`。不得先生成通用讲解再补定位。常规调用只传使用者原话和已知的学科、教材名，让确定性链路解析“第 94 页”“94 页起”“3.3.6”“第 4 题 C 项”等信号；只有使用者明确指定严格页码时才额外传 `--printed-page`。
+- 该门禁适用于首轮和后续追问。后续追问必须把本会话已经确认的教材、页码、章节和题号继续传给 `query` 或 `ask`，不得因为使用者只说“第 13 题”“这个 C 项”就丢失来源上下文；没有本轮结构化结果时不得凭记忆复述教材答案。
+- 精确页码已定位但使用者未给题号时，只接受 `request_resolution.exercise_resolution.status=inferred_unique` 的正式题目关系消歧；`ambiguous`、`not_found` 或 `unavailable` 时停止解题，只询问一个必要信息。不得用普通语义检索、选项字母或模型知识猜题。
 - Windows 诊断模板：`SKILL_ROOT\.venv\Scripts\python.exe SKILL_ROOT\scripts\kb.py --config SKILL_ROOT\kaoyan.config.json query --subject <学科> --book-title <教材名> --query <使用者原话> --format json`。给教学模型消费时优先用同参数的 `ask --format teaching-json`；完整 `json` 保留为诊断和保存契约。返回后必须先检查 `request_resolution`、`page_crosscheck`、`answer_grounding` 与 `teaching_bundle`；需要页码交叉核验但状态不是 `confirmed`，或 `teaching_bundle.status` 不是 `exact` 时，只报告状态并提出一个必要澄清问题。
 - 普通教材检索与讲解优先使用 Terra `medium`。链路失败、歧义或缺证据时不得自动升级 Sol，也不得用更强模型猜答案；Sol 只在使用者明确选择后用于复杂推导或链路开发。
 
@@ -121,7 +123,7 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 5. 需要展示指针、状态或步骤变化时调用可用的交互可视化技能；只需要教材风格静态插图时调用图像生成技能。不要要求使用者记住技能名称，自然语言意图足以路由。
 6. 保留原书变量名、代码顺序和结构条件；明确区分原始证据、书中结论与新增的解释层。
 
-教材事实核验必须先走 `kb.py ask` 或 `kb.py query` 的结构化结果。没有正式 claim/evidence/OCR 时，只能说明“当前本地识别结果未确认”，不得把章节摘要、页码映射或补充讲解说成书上原文。已定位原图但无结构化正文时，默认停在未确认；只有使用者继续明确要求后才人工阅图，并标注为“人工阅图核对”，不可冒充 OCR 引用。
+教材事实核验必须先走 `kb.py ask` 或 `kb.py query` 的结构化结果，禁止“先回答、后定位”。没有正式 claim/evidence/OCR 时，只能说明“当前本地识别结果未确认”，不得把章节摘要、页码映射或补充讲解说成书上原文。已定位原图但无结构化正文时，默认停在未确认；只有使用者继续明确要求后才人工阅图，并标注为“人工阅图核对”，不可冒充 OCR 引用。
 
 ### 按页讲解响应契约
 
