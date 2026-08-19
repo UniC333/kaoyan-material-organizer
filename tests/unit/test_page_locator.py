@@ -14,7 +14,7 @@ if str(SCRIPTS) not in sys.path:
 from kaoyan_kb.domain import page_locator
 from kaoyan_kb.domain import exercise_locator
 from kaoyan_kb.domain.index_freshness import fingerprint_index_inputs
-from query_local_knowledge import build_page_crosscheck, infer_exercise_from_exact_page, parse_page_anchor, resolve_request
+from query_local_knowledge import build_page_crosscheck, infer_exercise_from_exact_page, parse_page_anchor, resolve_current_task_book, resolve_request
 from query_local_knowledge import apply_exercise_relation, apply_hard_page_route, build_reference_items, exact_evidence_hits_for_locator
 import sync_exam_kb
 import create_snapshot
@@ -188,6 +188,69 @@ def test_parse_page_anchor_accepts_common_page_and_exercise_forms() -> None:
     assert parse_page_anchor("p.49 最下方") ["requested_page"] == 49
     assert parse_page_anchor("第49页") ["requested_page"] == 49
     assert parse_page_anchor("49页") ["requested_page"] == 49
+    assert parse_page_anchor("第25页例1")["requested_exercise_label"] == "例1"
+
+
+def test_request_resolution_preserves_worked_example_prefix() -> None:
+    resolved = resolve_request(
+        query="高数13页例8怎么做",
+        book_title="高等数学辅导讲义基础篇",
+        chapter=None,
+        printed_page=13,
+        exercise_label=None,
+    )
+
+    assert resolved["exercise_label"] == "例8"
+    assert resolved["exercise_resolution"] == {
+        "status": "explicit",
+        "source": "query",
+        "exercise_label": "例8",
+        "requested_option": "",
+        "candidate_labels": [],
+        "matched_terms": [],
+        "container_path": [],
+    }
+
+    page_local = resolve_request(
+        query="第8页第一个例题",
+        book_title="高等数学辅导讲义基础篇",
+        chapter=None,
+        printed_page=8,
+        exercise_label="例（P8页内1）",
+    )
+    assert page_local["exercise_label"] == "例（P8页内1）"
+
+    structured = resolve_request(
+        query="高数基础篇 P18 题型四例1怎么做",
+        book_title="高等数学辅导讲义基础篇",
+        chapter=None,
+        printed_page=None,
+        exercise_label=None,
+    )
+    assert structured["container_path"] == ["题型四"]
+    assert structured["exercise_resolution"]["container_path"] == ["题型四"]
+    assert resolve_request(query="P18 题型四的例1", book_title="高等数学辅导讲义基础篇", chapter=None, printed_page=None, exercise_label=None)["container_path"] == ["题型四"]
+    assert resolve_request(query="P18 题型四中例1", book_title="高等数学辅导讲义基础篇", chapter=None, printed_page=None, exercise_label=None)["container_path"] == ["题型四"]
+    assert resolve_request(query="P18 题型四 无穷小的比较例1", book_title="高等数学辅导讲义基础篇", chapter=None, printed_page=None, exercise_label=None)["container_path"] == ["题型四 无穷小的比较"]
+    assert resolve_request(query="P18 题型4 的例2", book_title="高等数学辅导讲义基础篇", chapter=None, printed_page=None, exercise_label=None)["container_path"] == ["题型4"]
+    assert exercise_locator.normalize_container_label("题型4 无穷小的比较") == exercise_locator.normalize_container_label("题型四 无穷小的比较")
+
+
+def test_current_task_default_book_requires_one_explicit_math_title(tmp_path: Path) -> None:
+    task_path = tmp_path / "01_任务" / "当前任务.md"
+    task_path.parent.mkdir(parents=True)
+    task_path.write_text("- 数学当前只跟汤家凤《考研数学高等数学辅导讲义 基础篇》\n", encoding="utf-8")
+
+    inferred = resolve_current_task_book(vault_root=tmp_path, subject="数学", explicit_book_title=None)
+    explicit = resolve_current_task_book(vault_root=tmp_path, subject="数学", explicit_book_title="李正元数一")
+    non_math = resolve_current_task_book(vault_root=tmp_path, subject="408", explicit_book_title=None)
+
+    assert inferred["status"] == "exact"
+    assert inferred["source"] == "current_task_default"
+    assert inferred["book_title"] == "考研数学高等数学辅导讲义 基础篇"
+    assert explicit["source"] == "explicit"
+    assert explicit["book_title"] == "李正元数一"
+    assert non_math["status"] == "not_applicable"
 
 
 def test_request_resolution_distinguishes_page_semantics(monkeypatch) -> None:
@@ -624,6 +687,115 @@ def test_worked_example_relation_links_p64_question_to_p65_solution() -> None:
     assert relation["answer"]["evidence_ids"] == ["EV-MATH-000098"]
     assert relation["answer"]["printed_pages"] == [65]
     assert "\\frac{\\pi}{3}+2-\\sqrt3" in relation["answer"]["content"]
+
+
+def test_plain_worked_example_relations_accept_integer_labels_and_restart_by_page() -> None:
+    evidences = [
+        {
+            "evidence_id": f"EV-TANG-{page}",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "例1 求极限。\n解 书中解答。",
+            "page_classification_refs": [
+                {
+                    "book_id": "tang-math1",
+                    "book_title": "汤家凤高数基础篇",
+                    "chapter_id": "CH1",
+                    "printed_page": page,
+                    "source_image_path": f"P{page}.jpg",
+                }
+            ],
+        }
+        for page in (25, 30)
+    ]
+
+    relations = exercise_locator.build_worked_example_relations(evidences)
+
+    assert len(relations) == 2
+    assert {item["relation_id"] for item in relations} == {
+        "EXW-tang-math1-CH1-p25-例1",
+        "EXW-tang-math1-CH1-p30-例1",
+    }
+    assert all(item["relation_status"] == "exact" for item in relations)
+
+
+def test_unnumbered_worked_examples_receive_page_local_labels() -> None:
+    evidences = [
+        {
+            "evidence_id": "EV-TANG-8",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "[例] 讨论分段函数的极限。\n解 第一题答案。\n[例] 讨论指数函数的极限。\n解 第二题答案。",
+            "page_classification_refs": [
+                {
+                    "book_id": "tang-math1",
+                    "book_title": "汤家凤高数基础篇",
+                    "chapter_id": "CH1",
+                    "printed_page": 8,
+                    "source_image_path": "P8.jpg",
+                }
+            ],
+        }
+    ]
+
+    relations = exercise_locator.build_worked_example_relations(evidences)
+
+    assert [item["exercise_label"] for item in relations] == ["例（P8页内1）", "例（P8页内2）"]
+    assert all(item["relation_status"] == "exact" for item in relations)
+
+
+def test_same_page_restarted_labels_are_exact_and_page_local() -> None:
+    evidences = [
+        {
+            "evidence_id": "EV-TANG-18",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "例1 求数列极限。\n解 第一题答案。\n# 题型四 无穷小的比较\n例1 比较无穷小。\n解 第二题答案。",
+            "page_classification_refs": [
+                {
+                    "book_id": "tang-math1",
+                    "book_title": "汤家凤高数基础篇",
+                    "chapter_id": "CH1",
+                    "printed_page": 18,
+                    "source_image_path": "P18.jpg",
+                }
+            ],
+        }
+    ]
+
+    relations = exercise_locator.build_worked_example_relations(evidences)
+
+    assert [item["exercise_label"] for item in relations] == ["例1", "例1"]
+    assert [item["container_path"] for item in relations] == [[], ["题型四 无穷小的比较"]]
+    assert len({item["location_key"] for item in relations}) == 2
+    assert all(item["relation_status"] == "exact" for item in relations)
+    assert "题型四" not in relations[0]["answer"]["content"]
+
+
+def test_worked_example_container_path_resolves_same_page_restarted_label(monkeypatch, tmp_path: Path) -> None:
+    layout = {"indexes": tmp_path / "indexes", "manifests": tmp_path / "manifests", "evidence": tmp_path / "evidence", "review_queues": tmp_path / "queues"}
+    for path in layout.values():
+        path.mkdir(parents=True, exist_ok=True)
+    evidences = [{
+        "evidence_id": "EV-TANG-18", "verification_status": "source_grounded", "source_grounded": True,
+        "content": "例1 第一题。\n解 第一解。\n# 题型四 无穷小的比较\n例1 第二题。\n解 第二解。",
+        "page_classification_refs": [{"book_id": "tang-math1", "book_title": "汤家凤高数基础篇", "chapter_id": "CH1", "printed_page": 18, "source_image_path": "P18.jpg"}],
+    }]
+    relations = exercise_locator.build_worked_example_relations(evidences)
+    monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
+    monkeypatch.setattr(exercise_locator, "exercise_locator_input_fingerprint", lambda _layout: "fresh")
+    _write_json(layout["indexes"] / exercise_locator.EXERCISE_LOCATOR_INDEX_NAME, {"input_fingerprint": "fresh", "relations": relations})
+
+    ambiguous = exercise_locator.find_exact_worked_example_relation(book_id="tang-math1", printed_page=18, exercise_label="例1")
+    exact = exercise_locator.find_exact_worked_example_relation(book_id="tang-math1", printed_page=18, exercise_label="例1", container_path=["题型四"])
+    arabic_ordinal = exercise_locator.find_exact_worked_example_relation(book_id="tang-math1", printed_page=18, exercise_label="例1", container_path=["题型4"])
+
+    assert ambiguous["relation_status"] == "needs_review"
+    assert ambiguous["candidate_locations"][1]["container_path"] == ["题型四 无穷小的比较"]
+    assert exact["relation_status"] == "exact"
+    assert exact["container_path"] == ["题型四 无穷小的比较"]
+    assert arabic_ordinal["relation_status"] == "exact"
+    assert arabic_ordinal["location_key"] == exact["location_key"]
 
 
 def test_exercise_locator_does_not_treat_summary_number_as_answer(monkeypatch, tmp_path: Path) -> None:

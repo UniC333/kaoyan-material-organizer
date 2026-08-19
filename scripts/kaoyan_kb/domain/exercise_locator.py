@@ -10,13 +10,105 @@ from kaoyan_kb.domain.index_freshness import directory_json_inputs, fingerprint_
 
 EXERCISE_LOCATOR_INDEX_NAME = "exercise_locator_index.json"
 QUEUE_NAME = "exercise-locator"
-WORKED_EXAMPLE_PATTERN = re.compile(r"【\s*例\s*(\d+(?:\.\d+)+)\s*】")
-WORKED_SOLUTION_PATTERN = re.compile(r"【\s*(?:解|解答|分析与求解)\s*】")
+WORKED_EXAMPLE_PATTERN = re.compile(
+    r"(?m)^\s*(?:#{1,6}\s*)?(?:【\s*|\[\s*)?例\s*([0-9]+(?:\.[0-9]+)*)?(?:\s*】|\s*\]|(?=\s|[：:、.．▶►]|$))"
+)
+WORKED_SOLUTION_PATTERN = re.compile(
+    r"(?m)^\s*(?:#{1,6}\s*)?(?:【\s*)?(?:解|解答|证明|分析与求解)(?:\s*】|(?=\s|[：:、.．]|$))"
+)
+MARKDOWN_HEADING_PATTERN = re.compile(r"(?m)^\s*#{1,6}\s+")
+CONTAINER_HEADING_PATTERN = re.compile(
+    r"^(?:题型|专题|方法|模型|考点|类型)\s*(?:[0-9]+|[零一二三四五六七八九十两]+)(?:\s*[：:、-]?\s*.*)?$"
+)
+CONTAINER_ORDINAL_PATTERN = re.compile(
+    r"^(?P<kind>题型|专题|方法|模型|考点|类型)\s*(?P<ordinal>[0-9]+|[零一二三四五六七八九十两]+)(?=\s|[：:、\-]|$)"
+)
+CHINESE_DIGITS = {"零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "两": 2}
 
 
 def normalize_exercise_label(value: Any) -> str:
     match = re.search(r"(?:第\s*)?(\d{1,3})(?:\s*题)?", str(value or ""))
     return f"{int(match.group(1)):02d}" if match else ""
+
+
+def _container_ordinal_value(value: str) -> int | None:
+    """Parse the small Chinese/Arabic ordinals used by structural headings."""
+    text = str(value or "").strip()
+    if text.isdigit():
+        return int(text)
+    if not text or any(char not in {*CHINESE_DIGITS, "十"} for char in text):
+        return None
+    total = 0
+    current = 0
+    for char in text:
+        if char == "十":
+            total += (current or 1) * 10
+            current = 0
+        else:
+            current = CHINESE_DIGITS[char]
+    return total + current
+
+
+def stable_container_label(value: Any) -> str:
+    """Return the display-derived key kept in persisted relation identifiers."""
+    return re.sub(r"[\s：:、\-—（）()\[\]【】]+", "", str(value or "").strip()).lower()
+
+
+def normalize_container_label(value: Any) -> str:
+    """Return a comparison key, equating numbered Chinese structural headings."""
+    text = str(value or "").strip()
+    match = CONTAINER_ORDINAL_PATTERN.match(text)
+    if not match:
+        return stable_container_label(text)
+    ordinal = _container_ordinal_value(match.group("ordinal"))
+    if ordinal is None:
+        return stable_container_label(text)
+    canonical = f"{match.group('kind')}{ordinal}{text[match.end():]}"
+    return stable_container_label(canonical)
+
+
+def container_path_from_query(query: str) -> list[str]:
+    """Extract the learner-facing structural heading before an example label."""
+    text = str(query or "")
+    match = re.search(
+        r"((?:题型|专题|方法|模型|考点|类型)\s*(?:[0-9]+|[零一二三四五六七八九十两]+)(?:\s*[：:、-]?\s*[^例，。；,;\n]*?)?)\s*(?=例\s*[0-9])",
+        text,
+    )
+    if not match:
+        return []
+    # Natural Chinese commonly inserts a possessive/locative particle before
+    # the example label (for example “题型四的例1”).  It is not part of the
+    # printed structural heading and must not affect exact matching.
+    value = re.sub(r"(?:的|中|里|内)$", "", match.group(1).strip()).strip()
+    return [value] if value else []
+
+
+def _container_heading(line: str) -> str:
+    plain = re.sub(r"^\s*#{1,6}\s*", "", str(line or "").strip())
+    return plain if CONTAINER_HEADING_PATTERN.fullmatch(plain) else ""
+
+
+def _location_key(*, book_id: str, chapter_id: str, printed_page: int, container_path: list[str], exercise_label: str, ordinal: int) -> str:
+    # Keep persisted location keys display-derived so this comparison-only
+    # normalization does not rewrite established textbook identities.
+    path = "/".join(stable_container_label(item) for item in container_path) or "root"
+    return f"worked:{book_id}|{chapter_id}|p{printed_page}|{path}|{exercise_label}|{ordinal}"
+
+
+def _candidate_location(item: dict[str, Any]) -> dict[str, Any]:
+    question = dict(item.get("question") or {})
+    return {
+        "exercise_label": str(item.get("exercise_label") or ""),
+        "container_path": list(item.get("container_path") or []),
+        "printed_pages": list(question.get("printed_pages") or []),
+        "location_key": str(item.get("location_key") or ""),
+    }
+
+
+def _container_path_matches(requested: list[str], candidate: list[str]) -> bool:
+    if len(requested) != len(candidate):
+        return False
+    return all(actual == expected or actual.startswith(expected) for expected, actual in zip(requested, candidate))
 
 
 def normalize_exercise_category(value: Any) -> str:
@@ -269,14 +361,51 @@ def build_worked_example_relations(evidences: list[dict[str, Any]]) -> list[dict
             cursor += 1
         combined = "".join(parts)
         examples = list(WORKED_EXAMPLE_PATTERN.finditer(combined))
+        unnumbered_by_page: dict[int, int] = defaultdict(int)
+        container_headings = [
+            (match.start(), _container_heading(match.group(0)))
+            for match in re.finditer(r"(?m)^.*$", combined)
+            if _container_heading(match.group(0))
+        ]
+        ordinals: dict[tuple[int, tuple[str, ...], str], int] = defaultdict(int)
         for index, marker in enumerate(examples):
             segment_end = examples[index + 1].start() if index + 1 < len(examples) else len(combined)
             solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
+            if solution_markers:
+                next_heading = MARKDOWN_HEADING_PATTERN.search(combined, solution_markers[0].end(), segment_end)
+                if next_heading:
+                    segment_end = next_heading.start()
+                    solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
             solution_start = solution_markers[0].start() if solution_markers else segment_end
             relation_status = "exact" if len(solution_markers) == 1 else "needs_review" if solution_markers else "question_only"
-            exercise_label = f"例{marker.group(1)}"
+            question = _span_side(intervals, marker.start(), solution_start, combined)
+            question_pages = list(question.get("printed_pages", []))
+            page_token = min(question_pages) if question_pages else 0
+            printed_number = str(marker.group(1) or "").strip()
+            if printed_number:
+                exercise_label = f"例{printed_number}"
+            else:
+                unnumbered_by_page[page_token] += 1
+                exercise_label = f"例（P{page_token}页内{unnumbered_by_page[page_token]}）"
+            container_path = [heading for offset, heading in container_headings if offset < marker.start()][-1:]
+            ordinal_key = (page_token, tuple(stable_container_label(item) for item in container_path), exercise_label)
+            ordinals[ordinal_key] += 1
+            container_ordinal = ordinals[ordinal_key]
+            location_key = _location_key(
+                book_id=book_id,
+                chapter_id=chapter_id,
+                printed_page=page_token,
+                container_path=container_path,
+                exercise_label=exercise_label,
+                ordinal=container_ordinal,
+            )
+            relation_id = (
+                f"EXW-{book_id}-{chapter_id}-p{page_token}-{exercise_label}"
+                if not container_path and container_ordinal == 1
+                else f"EXW-{book_id}-{chapter_id}-p{page_token}-{stable_container_label(container_path[-1]) if container_path else 'root'}-{exercise_label}-{container_ordinal}"
+            )
             candidates.append({
-                "relation_id": f"EXW-{book_id}-{chapter_id}-{exercise_label}",
+                "relation_id": relation_id,
                 "relation_kind": "same-book-worked-example",
                 "relation_status": relation_status,
                 "book_id": book_id,
@@ -284,13 +413,40 @@ def build_worked_example_relations(evidences: list[dict[str, Any]]) -> list[dict
                 "chapter_id": chapter_id,
                 "chapter_title": records[0].get("chapter_title", ""),
                 "exercise_label": exercise_label,
-                "question": _span_side(intervals, marker.start(), solution_start, combined),
+                "container_path": container_path,
+                "container_ordinal": container_ordinal,
+                "location_key": location_key,
+                "question": question,
                 "answer": _span_side(intervals, solution_start, segment_end, combined) if solution_markers else {},
             })
 
-    grouped_candidates: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    repeated_on_page: dict[tuple[str, str, int, tuple[str, ...], str], list[dict[str, Any]]] = defaultdict(list)
     for candidate in candidates:
-        grouped_candidates[(candidate["book_id"], candidate["chapter_id"], candidate["exercise_label"])].append(candidate)
+        question_pages = list((candidate.get("question") or {}).get("printed_pages", []))
+        page_token = min(question_pages) if question_pages else 0
+        path = tuple(stable_container_label(item) for item in candidate.get("container_path", []) or [])
+        repeated_on_page[(candidate["book_id"], candidate["chapter_id"], page_token, path, candidate["exercise_label"])].append(candidate)
+    for (_book_id, _chapter_id, _page_token, _path, _printed_label), items in repeated_on_page.items():
+        if len(items) < 2:
+            continue
+        for ordinal, candidate in enumerate(items, start=1):
+            candidate["container_ordinal"] = ordinal
+            question_pages = list((candidate.get("question") or {}).get("printed_pages", []))
+            page_token = min(question_pages) if question_pages else 0
+            candidate["location_key"] = _location_key(
+                book_id=candidate["book_id"], chapter_id=candidate["chapter_id"], printed_page=page_token,
+                container_path=list(candidate.get("container_path") or []), exercise_label=str(candidate["exercise_label"]), ordinal=ordinal,
+            )
+            container_items = list(candidate.get("container_path") or [])
+            candidate["relation_id"] = (
+                f"EXW-{candidate['book_id']}-{candidate['chapter_id']}-p{page_token}-{candidate['exercise_label']}"
+                if not container_items and ordinal == 1
+                else f"EXW-{candidate['book_id']}-{candidate['chapter_id']}-p{page_token}-{stable_container_label(container_items[-1]) if container_items else 'root'}-{candidate['exercise_label']}-{ordinal}"
+            )
+
+    grouped_candidates: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for candidate in candidates:
+        grouped_candidates[str(candidate.get("location_key") or "")].append(candidate)
     relations: list[dict[str, Any]] = []
     for items in grouped_candidates.values():
         relation = dict(items[0])
@@ -530,6 +686,32 @@ def list_exact_relations_for_question_page(*, source_id: str, question_pdf_page:
     }
 
 
+def list_exact_worked_example_relations(*, book_id: str, printed_page: int) -> dict[str, Any]:
+    """List grounded same-book examples, including printed unnumbered examples."""
+    index = load_exercise_locator_index()
+    unavailable = _unavailable_relation(index)
+    if unavailable:
+        return {
+            "status": "unavailable",
+            "relations": [],
+            "unavailable_reason": unavailable.get("unavailable_reason", "exercise_locator_index_unavailable"),
+            "unavailable_detail": unavailable.get("unavailable_detail", ""),
+            "_availability": dict(unavailable.get("_availability") or {}),
+        }
+    relations = [
+        {**item, "question_content": str((item.get("question") or {}).get("content") or "")}
+        for item in index.get("relations", []) or []
+        if item.get("relation_kind") == "same-book-worked-example"
+        and item.get("relation_status") == "exact"
+        and str(item.get("book_id") or "") == str(book_id or "")
+        and int(printed_page or 0) in {int(page) for page in (item.get("question") or {}).get("printed_pages", []) or []}
+    ]
+    return {
+        "status": "exact",
+        "relations": sorted(relations, key=lambda item: str(item.get("exercise_label") or "")),
+    }
+
+
 def find_unique_relation_for_scope(*, book_title: str, chapter: str, exercise_label: str, category: str = "", query: str = "") -> dict[str, Any]:
     """Resolve a relation without a page only when book and current chapter are unique."""
     if not book_title or not chapter:
@@ -571,16 +753,37 @@ def find_unique_relation_for_scope(*, book_title: str, chapter: str, exercise_la
     return matches[0] if len(matches) == 1 else {}
 
 
-def find_exact_worked_example_relation(*, book_id: str, printed_page: int, exercise_label: str) -> dict[str, Any]:
+def find_exact_worked_example_relation(
+    *, book_id: str, printed_page: int, exercise_label: str, container_path: list[str] | None = None
+) -> dict[str, Any]:
     index = load_exercise_locator_index()
     unavailable = _unavailable_relation(index)
     if unavailable:
         return unavailable
+    normalized_requested = exercise_label.replace(" ", "")
+    requested_container = [normalize_container_label(item) for item in (container_path or []) if normalize_container_label(item)]
     matches = [
         item for item in index.get("relations", [])
         if item.get("relation_kind") == "same-book-worked-example"
         and item.get("book_id") == book_id
-        and item.get("exercise_label") == exercise_label.replace(" ", "")
+        and (
+            item.get("exercise_label") == normalized_requested
+            or str(item.get("exercise_label") or "").startswith(f"{normalized_requested}（P{printed_page}页内")
+        )
         and printed_page in set((item.get("question") or {}).get("printed_pages", []))
     ]
-    return matches[0] if len(matches) == 1 else {}
+    if requested_container:
+        matches = [
+            item for item in matches
+            if _container_path_matches(requested_container, [normalize_container_label(value) for value in item.get("container_path", []) or []])
+        ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        return {
+            "relation_status": "needs_review",
+            "relation_id": "",
+            "candidates": matches,
+            "candidate_locations": [_candidate_location(item) for item in matches],
+        }
+    return {}

@@ -74,10 +74,14 @@ def normalize_book_title(value: Any) -> str:
 
 def parse_exercise_label(query: str) -> str:
     text = str(query or "")
-    match = re.search(r"(?:例|题|习题)\s*([0-9]+(?:[.．-][0-9]+)+)", text, flags=re.IGNORECASE)
+    match = re.search(
+        r"例\s*([0-9]+(?:[.．-][0-9]+)*)|(?:题|习题)\s*([0-9]+(?:[.．-][0-9]+)+)",
+        text,
+        flags=re.IGNORECASE,
+    )
     if not match:
         return ""
-    return "例" + re.sub(r"[．-]", ".", match.group(1))
+    return "例" + re.sub(r"[．-]", ".", match.group(1) or match.group(2))
 
 
 def _is_formal_source_path(path: Path) -> bool:

@@ -50,6 +50,14 @@ def _page_key(item: dict[str, Any]) -> str:
     return str(item.get("page_id", "")).strip()
 
 
+def _reviewed_printed_page(page: dict[str, Any], decision: dict[str, Any], pdf_page: int) -> int:
+    value = decision.get("printed_page", page.get("printed_page", pdf_page))
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return pdf_page
+
+
 def _page_summary(page_id: str, items: list[dict[str, Any]]) -> dict[str, Any]:
     first = items[0]
     counts = {
@@ -162,7 +170,11 @@ def build_pdf_ocr_review_artifact(
             summary = _no_review_required_page_summary(page, classifications_by_page_id.get(page_id, {}))
         pdf_page = int(page.get("pdf_page", page.get("printed_page", 0)) or 0)
         decision = page_decisions.get(pdf_page, {})
+        printed_page = _reviewed_printed_page(page, decision, pdf_page)
+        summary["printed_page"] = printed_page
+        summary["printed_page_label"] = f"印刷第{printed_page}页（PDF第{pdf_page}页）"
         summary["pdf_page"] = pdf_page
+        summary["page_header_verified"] = bool(decision.get("page_header_verified", False))
         summary["page_review_note"] = decision.get("note", "")
         summary["page_reviewed_at"] = decision.get("reviewed_at", "")
         # A page decision is mandatory.  Flagged blocks must also be closed.
