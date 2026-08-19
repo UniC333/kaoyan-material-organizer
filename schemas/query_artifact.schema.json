@@ -21,6 +21,7 @@
     "subject": {"type": "string"},
     "query": {"type": "string"},
     "answer_mode": {"type": "string"},
+    "book_resolution": {"type": "object"},
     "request_resolution": {
       "type": "object",
       "properties": {
@@ -42,6 +43,7 @@
     },
     "page_crosscheck": {"type": "object"},
     "page_verification": {"type": "object"},
+    "textbook_location": {"type": "object"},
     "answer_grounding": {
       "type": "object",
       "required": ["required", "status", "can_conclude", "problem", "solution", "failure_reason", "next_action"],

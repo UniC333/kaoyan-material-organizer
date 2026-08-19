@@ -27,6 +27,7 @@
     "chapter": {"type": "string"},
     "question": {"type": "string"},
     "answer_mode": {"type": "string"},
+    "book_resolution": {"type": "object"},
     "runtime_context": {"type": "object"},
     "request_resolution": {
       "type": "object",
@@ -49,6 +50,7 @@
     },
     "page_crosscheck": {"type": "object"},
     "page_verification": {"type": "object"},
+    "textbook_location": {"type": "object"},
     "answer_grounding": {"type": "object"},
     "citation_coverage_ok": {"type": "boolean"},
     "teaching_bundle": {"type": "object"}

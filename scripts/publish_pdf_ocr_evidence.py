@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from common import allocate_kb_id, build_provenance_record, build_source_span, ensure_kb_layout, load_all_json, load_json_or_default, now_iso, save_json, stable_fingerprint, validate_entity_contract
+from config import load_runtime_config
+from ocr.cache import cache_paths_for_request
 
 
 def parse_args() -> argparse.Namespace:
@@ -18,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pdf-source-id", required=True)
     parser.add_argument("--report-path", required=True)
     parser.add_argument("--review-artifact-path", required=True)
+    parser.add_argument("--chapter-number", type=int)
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
     return parser.parse_args()
 
@@ -33,8 +36,40 @@ def _existing_by_key(layout: dict[str, Path]) -> dict[str, dict[str, Any]]:
     return {str(item.get("evidence_key", "")): item for item in load_all_json(layout["evidence"]) if item.get("evidence_key")}
 
 
-def publish(*, subject: str, book_title: str, pdf_source_id: str, report_path: Path, review_artifact_path: Path) -> dict[str, Any]:
+def _reviewed_page_text(normalized: dict[str, Any], overlay: dict[str, dict[str, Any]]) -> str:
+    """Build effective OCR text while preserving accepted human corrections."""
+    values: list[str] = []
+    for candidate in normalized.get("chunk_candidates", []):
+        if not isinstance(candidate, dict):
+            continue
+        decision = overlay.get(str(candidate.get("block_id", "")), {})
+        corrected = str(decision.get("corrected_text", "")).strip()
+        if decision.get("review_status") == "accepted" and corrected:
+            values.append(corrected)
+        else:
+            text = str(candidate.get("text", "")).strip()
+            if text:
+                values.append(text)
+    if values:
+        return "\n".join(values)
+    return "\n".join(
+        str(item.get("text", "")).strip()
+        for item in normalized.get("pages", [])
+        if isinstance(item, dict) and str(item.get("text", "")).strip()
+    )
+
+
+def _resolved_printed_page(chapter: dict[str, Any], handoff_item: dict[str, Any], pdf_page: int) -> int:
+    value = handoff_item.get("printed_page", chapter.get("printed_page", pdf_page))
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return pdf_page
+
+
+def publish(*, subject: str, book_title: str, pdf_source_id: str, report_path: Path, review_artifact_path: Path, chapter_number: int | None = None) -> dict[str, Any]:
     layout = ensure_kb_layout()
+    runtime = load_runtime_config()
     report = load_json_or_default(report_path, {})
     artifact = load_json_or_default(review_artifact_path, {})
     if not report or not artifact:
@@ -47,20 +82,29 @@ def publish(*, subject: str, book_title: str, pdf_source_id: str, report_path: P
     existing = _existing_by_key(layout)
     written: list[dict[str, Any]] = []
     for chapter in report.get("pages", report.get("chapters", [])):
-        chapter_number = int(chapter.get("chapter_number", 0) or 0)
+        item_chapter_number = int(chapter.get("chapter_number", 0) or 0)
+        if chapter_number is not None and item_chapter_number != chapter_number:
+            continue
         pdf_page = int(chapter.get("pdf_page", chapter.get("page_start", 0)) or 0)
         printed_page = pdf_page
         page_id = f"PDFPAGE-{pdf_source_id}-{pdf_page:04d}"
         handoff_item = handoff.get(page_id, {})
         if handoff_item.get("review_status") not in {"accepted", "not-required"}:
             continue
+        printed_page = _resolved_printed_page(chapter, handoff_item, pdf_page)
         normalized = load_json_or_default(Path(str(chapter.get("normalized_path", ""))), {})
-        pages = normalized.get("pages", [])
-        text = "\n".join(str(item.get("text", "")).strip() for item in pages if isinstance(item, dict) and str(item.get("text", "")).strip())
+        request_key = str(normalized.get("request_key", ""))
+        overlay_path = cache_paths_for_request(runtime.ocr_cache_root, request_key)["overlay"]
+        overlay = {
+            str(item.get("block_id", "")): item
+            for item in load_json_or_default(overlay_path, {}).get("items", [])
+            if isinstance(item, dict) and item.get("block_id")
+        }
+        text = _reviewed_page_text(normalized, overlay)
         if not text:
             continue
-        chunk_id = f"PDFOCR-{chapter_number:04d}-{pdf_page:04d}"
-        chapter_id = f"PDFCH-{pdf_source_id}-{chapter_number:04d}"
+        chunk_id = f"PDFOCR-{item_chapter_number:04d}-{pdf_page:04d}"
+        chapter_id = f"PDFCH-{pdf_source_id}-{item_chapter_number:04d}"
         evidence_key = stable_fingerprint({"source_id": pdf_source_id, "chapter_id": chapter_id, "chunk_id": chunk_id, "source_sha256": normalized.get("source_file_sha256", "")})
         current = existing.get(evidence_key, {})
         span = build_source_span(
@@ -89,6 +133,8 @@ def publish(*, subject: str, book_title: str, pdf_source_id: str, report_path: P
             "chunk_id": chunk_id,
             "title": str(chapter.get("chapter_title", "")).strip() or f"第{chapter_number}章",
             "content": text,
+            "pdf_page": pdf_page,
+            "printed_page": printed_page,
             "evidence_type": "concept",
             "origin_type": "pdf_page_ocr",
             "verification_status": "reviewed",
@@ -125,6 +171,7 @@ def main() -> int:
         pdf_source_id=args.pdf_source_id,
         report_path=Path(args.report_path),
         review_artifact_path=Path(args.review_artifact_path),
+        chapter_number=args.chapter_number,
     )
     if args.format == "json":
         print(json.dumps(payload, ensure_ascii=False, indent=2))

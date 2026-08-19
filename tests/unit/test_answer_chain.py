@@ -13,7 +13,38 @@ if str(SCRIPTS) not in sys.path:
 
 import answer_local_question as answer_module
 import ask_local_knowledge as ask_module
+import build_pdf_ocr_review_artifact as pdf_review_artifact_module
+import publish_pdf_ocr_evidence as pdf_publish_module
 from save_local_answer import save_answer_contract, save_eligibility
+
+
+def test_pdf_ocr_publication_uses_accepted_review_overlay() -> None:
+    normalized = {
+        "chunk_candidates": [
+            {"block_id": "b1", "text": "next[1]=l"},
+            {"block_id": "b2", "text": "unchanged"},
+        ]
+    }
+    overlay = {
+        "b1": {"review_status": "accepted", "corrected_text": "next[1]=1"},
+        "b2": {"review_status": "pending", "corrected_text": "wrong"},
+    }
+
+    assert pdf_publish_module._reviewed_page_text(normalized, overlay) == "next[1]=1\nunchanged"
+
+
+def test_pdf_ocr_publication_keeps_printed_page_separate_from_pdf_page() -> None:
+    chapter = {"printed_page": 121}
+    handoff = {"printed_page": 109}
+
+    assert pdf_publish_module._resolved_printed_page(chapter, handoff, 121) == 109
+
+
+def test_pdf_review_artifact_uses_confirmed_printed_page() -> None:
+    page = {"printed_page": 121}
+    decision = {"printed_page": 109, "page_header_verified": True}
+
+    assert pdf_review_artifact_module._reviewed_printed_page(page, decision, 121) == 109
 
 
 def _result(*, intent: str = "define", answer_mode: str = "chapter_fallback", page_anchor: dict | None = None) -> dict:

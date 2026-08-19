@@ -7,13 +7,27 @@ from typing import Any
 
 from common import ensure_kb_layout, load_json_or_default, save_json
 from config import load_runtime_config
+from kaoyan_kb.domain.exercise_locator import container_path_from_query, normalize_container_label, stable_container_label
 
 
 BOOK_SERIES_INDEX_NAME = "book_series_index.json"
 EXERCISE_PAIR_INDEX_NAME = "exercise_pair_index.json"
 EXERCISE_TYPES = {"choice", "fill_blank", "worked"}
-WORKED_EXAMPLE_PATTERN = re.compile(r"【\s*例\s*([0-9]+(?:\.[0-9]+)+)\s*】")
-WORKED_SOLUTION_PATTERN = re.compile(r"【\s*(?:解|解答|分析与求解)\s*】")
+WORKED_EXAMPLE_PATTERN = re.compile(
+    r"(?m)^\s*(?:#{1,6}\s*)?(?:【\s*|\[\s*)?例\s*([0-9]+(?:\.[0-9]+)*)?(?:\s*】|\s*\]|(?=\s|[：:、.．▶►]|$))"
+)
+WORKED_SOLUTION_PATTERN = re.compile(
+    r"(?m)^\s*(?:#{1,6}\s*)?(?:【\s*)?(?:解|解答|证明|分析与求解)(?:\s*】|(?=\s|[：:、.．]|$))"
+)
+MARKDOWN_HEADING_PATTERN = re.compile(r"(?m)^\s*#{1,6}\s+")
+CONTAINER_HEADING_PATTERN = re.compile(
+    r"^(?:题型|专题|方法|模型|考点|类型)\s*(?:[0-9]+|[零一二三四五六七八九十两]+)(?:\s*[：:、-]?\s*.*)?$"
+)
+
+
+def _container_heading(line: str) -> str:
+    plain = re.sub(r"^\s*#{1,6}\s*", "", str(line or "").strip())
+    return plain if CONTAINER_HEADING_PATTERN.fullmatch(plain) else ""
 
 
 def normalize_alias(value: Any) -> str:
@@ -153,7 +167,7 @@ def _chinese_number(token: str) -> int | None:
 
 def parse_exercise_request(query: str) -> dict[str, Any]:
     text = str(query or "")
-    example_match = re.search(r"例\s*([0-9]+(?:\.[0-9]+)+)", text)
+    example_match = re.search(r"例\s*([0-9]+(?:\.[0-9]+)*)", text)
     exercise_label = f"例{example_match.group(1)}" if example_match else ""
     chapter_match = re.search(r"第\s*([0-9零一二三四五六七八九十两]+)\s*章", text)
     chapter_number = _chinese_number(chapter_match.group(1)) if chapter_match else None
@@ -253,10 +267,21 @@ def worked_example_pairs_from_evidence(evidences: list[dict[str, Any]]) -> list[
             cursor += 1
         combined = "".join(parts)
         examples = list(WORKED_EXAMPLE_PATTERN.finditer(combined))
+        unnumbered_by_page: dict[int, int] = {}
+        container_headings = [
+            (match.start(), _container_heading(match.group(0)))
+            for match in re.finditer(r"(?m)^.*$", combined)
+            if _container_heading(match.group(0))
+        ]
+        ordinals: dict[tuple[int, tuple[str, ...], str], int] = {}
         for index, marker in enumerate(examples):
             segment_end = examples[index + 1].start() if index + 1 < len(examples) else len(combined)
             solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
-            exercise_label = f"例{marker.group(1)}"
+            if solution_markers:
+                next_heading = MARKDOWN_HEADING_PATTERN.search(combined, solution_markers[0].end(), segment_end)
+                if next_heading:
+                    segment_end = next_heading.start()
+                    solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
             if len(solution_markers) == 1:
                 solution_start = solution_markers[0].start()
                 pair_status = "exact_pair"
@@ -271,9 +296,30 @@ def worked_example_pairs_from_evidence(evidences: list[dict[str, Any]]) -> list[
                 solution_start = solution_markers[0].start()
             question = _span_side(records, intervals, marker.start(), question_end, combined)
             solution = _span_side(records, intervals, solution_start, segment_end, combined) if solution_markers else {}
+            question_pages = list(question.get("printed_pages", []))
+            page_token = min(question_pages) if question_pages else 0
+            printed_number = str(marker.group(1) or "").strip()
+            if printed_number:
+                exercise_label = f"例{printed_number}"
+            else:
+                unnumbered_by_page[page_token] = unnumbered_by_page.get(page_token, 0) + 1
+                exercise_label = f"例（P{page_token}页内{unnumbered_by_page[page_token]}）"
+            container_path = [heading for offset, heading in container_headings if offset < marker.start()][-1:]
+            ordinal_key = (page_token, tuple(stable_container_label(item) for item in container_path), exercise_label)
+            ordinals[ordinal_key] = ordinals.get(ordinal_key, 0) + 1
+            container_ordinal = ordinals[ordinal_key]
+            path_key = "/".join(stable_container_label(item) for item in container_path) or "root"
+            exercise_key = (
+                f"worked:{book_id}|{chapter_id}|p{page_token}|{exercise_label}"
+                if not container_path and container_ordinal == 1
+                else f"worked:{book_id}|{chapter_id}|p{page_token}|{path_key}|{exercise_label}|{container_ordinal}"
+            )
             candidates.append(
                 {
-                    "exercise_key": f"worked:{book_id}|{chapter_id}|{exercise_label}",
+                    # Handouts commonly restart at 例1 in each subsection. The
+                    # first question page keeps those labels distinct while the
+                    # public exercise label remains the one printed in the book.
+                    "exercise_key": exercise_key,
                     "pair_kind": "same_book_worked_example",
                     "series_id": "",
                     "book_id": book_id,
@@ -281,6 +327,9 @@ def worked_example_pairs_from_evidence(evidences: list[dict[str, Any]]) -> list[
                     "chapter_id": chapter_id,
                     "chapter_title": records[0].get("chapter_title", ""),
                     "exercise_label": exercise_label,
+                    "container_path": container_path,
+                    "container_ordinal": container_ordinal,
+                    "location_key": f"worked:{book_id}|{chapter_id}|p{page_token}|{path_key}|{exercise_label}|{container_ordinal}",
                     "exercise_type": "worked",
                     "pair_status": pair_status,
                     "question": question,
@@ -377,20 +426,43 @@ def resolve_answer_grounding(
     items = [item for item in index.get("items", []) if item.get("pair_kind") == "same_book_worked_example"]
     requested_book_id = str(page_anchor.get("book_id") or "")
     requested_title = normalize_alias(page_anchor.get("book_title") or book_title)
-    exercise_label = str(request.get("exercise_label") or page_anchor.get("requested_exercise_label") or "").replace(" ", "")
+    # The page route may carry a reviewed page-local label for repeated or
+    # printed unnumbered examples.  It is more specific than the raw query
+    # parser's base label (for example ``例1``), so keep it authoritative.
+    exercise_label = str(page_anchor.get("requested_exercise_label") or request.get("exercise_label") or "").replace(" ", "")
+    requested_container = list(page_anchor.get("requested_container_path") or container_path_from_query(query))
     requested_page = page_anchor.get("requested_page")
     if requested_book_id:
         items = [item for item in items if str(item.get("book_id") or "") == requested_book_id]
     elif requested_title:
         items = [item for item in items if normalize_alias(item.get("book_title")) == requested_title]
-    if exercise_label:
-        items = [item for item in items if str(item.get("exercise_label") or "").replace(" ", "") == exercise_label]
     if requested_page is not None:
         page = int(requested_page)
         items = [item for item in items if page in list((item.get("question") or {}).get("printed_pages", []))]
+    if exercise_label:
+        page_local_prefix = f"{exercise_label}（P{int(requested_page)}页内" if requested_page is not None else ""
+        items = [
+            item for item in items
+            if str(item.get("exercise_label") or "").replace(" ", "") == exercise_label
+            or (page_local_prefix and str(item.get("exercise_label") or "").replace(" ", "").startswith(page_local_prefix))
+        ]
+    if requested_container:
+        requested_container_key = [normalize_container_label(value) for value in requested_container]
+        items = [
+            item for item in items
+            if len(item.get("container_path", []) or []) == len(requested_container_key)
+            and all(
+                normalize_container_label(actual) == expected or normalize_container_label(actual).startswith(expected)
+                for expected, actual in zip(requested_container_key, item.get("container_path", []) or [])
+            )
+        ]
 
     if len(items) > 1:
-        grounding.update(status="answer_ambiguous", failure_reason="找到多个可能的原题—题解关系。", next_action="请补充准确题号或教材页码。")
+        candidates = [
+            " / ".join(item.get("container_path") or []) or f"P{(item.get('question') or {}).get('printed_pages', ['?'])[0]}"
+            for item in items
+        ]
+        grounding.update(status="answer_ambiguous", failure_reason="找到多个可能的原题—题解关系。", next_action=f"请补充结构标题，例如：{'、'.join(candidates)}。")
         return grounding
     if not items:
         if page_status == "exact_asset":
@@ -494,6 +566,7 @@ def resolve_exercise_route(*, query: str, book_route: dict[str, Any]) -> dict[st
         "chapter_number": request["chapter_number"],
         "exercise_type": request["exercise_type"],
         "exercise_number": request["exercise_number"],
+        "exercise_label": request["exercise_label"],
     }
     for key, value in filters.items():
         if value not in (None, ""):
@@ -583,7 +656,16 @@ def build_exercise_pair_index() -> dict[str, Any]:
         item["question"] = questions[0] if len(questions) == 1 else {"candidates": questions}
         item["solution"] = solutions[0] if len(solutions) == 1 else ({"candidates": solutions} if solutions else {})
         items.append(item)
-    items.extend(worked_example_pairs_from_evidence(all_evidences))
+    worked_items = worked_example_pairs_from_evidence(all_evidences)
+    for item in worked_items:
+        linked = volume_map.get(str(item.get("book_id") or ""))
+        if not linked:
+            continue
+        series, volume = linked
+        item["series_id"] = str(series.get("series_id") or "")
+        stages = [str(stage) for stage in volume.get("stages", []) if str(stage)]
+        item["stage"] = stages[0] if len(stages) == 1 else ""
+    items.extend(worked_items)
     items.sort(
         key=lambda item: (
             str(item.get("series_id") or item.get("book_id") or ""),

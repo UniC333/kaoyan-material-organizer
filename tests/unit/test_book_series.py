@@ -79,6 +79,71 @@ def test_exercise_request_and_pair_route(monkeypatch) -> None:
     assert result["pair_status"] == "exact_pair"
 
 
+def test_plain_worked_example_route_uses_page_and_integer_label(monkeypatch) -> None:
+    monkeypatch.setattr(
+        book_series,
+        "load_exercise_pair_index",
+        lambda: {
+            "items": [
+                {
+                    "series_id": "TANG2027-M1",
+                    "stage": "basic",
+                    "exercise_label": label,
+                    "exercise_key": f"worked:tang|CH1|p25|{label}",
+                    "pair_status": "exact_pair",
+                    "question": {"printed_pages": [25]},
+                    "solution": {"printed_pages": [25]},
+                }
+                for label in ("例1", "例2")
+            ]
+        },
+    )
+
+    result = book_series.resolve_exercise_route(
+        query="第25页例1的答案",
+        book_route={"series_id": "TANG2027-M1", "stage": "basic", "match_status": "exact_series"},
+    )
+
+    assert result["match_status"] == "exact_exercise"
+    assert result["exercise_key"] == "worked:tang|CH1|p25|例1"
+
+
+def test_page_local_worked_label_overrides_base_query_label(monkeypatch) -> None:
+    monkeypatch.setattr(
+        book_series,
+        "load_exercise_pair_index",
+        lambda: {
+            "items": [
+                {
+                    "pair_kind": "same_book_worked_example",
+                    "book_id": "tang",
+                    "book_title": "汤家凤高数基础篇",
+                    "exercise_label": "例1（P18页内1）",
+                    "pair_status": "exact_pair",
+                    "question": {"printed_pages": [18], "content": "原题"},
+                    "solution": {"printed_pages": [18], "content": "原书答案"},
+                }
+            ]
+        },
+    )
+
+    result = book_series.resolve_answer_grounding(
+        query="P18 例1 问答验收",
+        book_title="汤家凤高数基础篇",
+        page_anchor={
+            "requested_page": 18,
+            "requested_exercise_label": "例1（P18页内1）",
+            "book_id": "tang",
+            "match_status": "exact_evidence",
+        },
+        book_route={"series_id": "TANG2027-M1"},
+        exercise_route={},
+    )
+
+    assert result["status"] == "exact_answer"
+    assert result["can_conclude"] is True
+
+
 def test_ocr_chapter_filter_handles_question_and_solution_ids(tmp_path: Path) -> None:
     chapters = {
         "chapters": [
@@ -141,6 +206,67 @@ def test_same_book_worked_example_pairs_question_page_with_next_page_solution() 
     assert pair["question"]["printed_pages"] == [64]
     assert pair["solution"]["printed_pages"] == [65]
     assert "\\frac{\\pi}{3}+2-\\sqrt3" in pair["solution"]["content"]
+
+
+def test_plain_handout_examples_pair_by_page_and_accept_proof_marker() -> None:
+    evidences = [
+        {
+            "evidence_id": "EV-MATH-PLAIN-25",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "例1 求极限。\n解 书中解答。\n例2 证明命题。\n证明 书中证明。",
+            "page_classification_refs": [
+                {
+                    "book_id": "tang-math1",
+                    "book_title": "汤家凤高数基础篇",
+                    "chapter_id": "CH1",
+                    "printed_page": 25,
+                    "source_image_path": "P25.jpg",
+                }
+            ],
+        }
+    ]
+
+    pairs = book_series.worked_example_pairs_from_evidence(evidences)
+
+    assert [item["exercise_label"] for item in pairs] == ["例1", "例2"]
+    assert all(item["pair_status"] == "exact_pair" for item in pairs)
+    assert {item["exercise_key"] for item in pairs} == {
+        "worked:tang-math1|CH1|p25|例1",
+        "worked:tang-math1|CH1|p25|例2",
+    }
+    assert book_series.parse_exercise_request("第25页例1的答案")["exercise_label"] == "例1"
+
+
+def test_restarted_plain_example_number_is_distinguished_by_question_page() -> None:
+    evidences = []
+    for page in (25, 30):
+        evidences.append(
+            {
+                "evidence_id": f"EV-MATH-PLAIN-{page}",
+                "verification_status": "source_grounded",
+                "source_grounded": True,
+                "content": "例1 题目。\n解 答案。",
+                "page_classification_refs": [
+                    {
+                        "book_id": "tang-math1",
+                        "book_title": "汤家凤高数基础篇",
+                        "chapter_id": "CH1",
+                        "printed_page": page,
+                        "source_image_path": f"P{page}.jpg",
+                    }
+                ],
+            }
+        )
+
+    pairs = book_series.worked_example_pairs_from_evidence(evidences)
+
+    assert len(pairs) == 2
+    assert {item["exercise_key"] for item in pairs} == {
+        "worked:tang-math1|CH1|p25|例1",
+        "worked:tang-math1|CH1|p30|例1",
+    }
+    assert all(item["pair_status"] == "exact_pair" for item in pairs)
 
 
 def test_resolve_answer_grounding_requires_exact_pair(monkeypatch) -> None:
