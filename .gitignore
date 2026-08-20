@@ -20,6 +20,9 @@ __pycache__/
 /.tmp/
 /.local-api-smoke/
 
+# Locally generated project visualization.
+/project-development-timeline.html
+
 # Machine-local paths and remote-OCR policy. Commit the example only.
 /kaoyan.config.json
 !/kaoyan.config.example.json
