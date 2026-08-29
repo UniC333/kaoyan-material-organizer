@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Iterable
 
 
@@ -98,16 +98,34 @@ def latest_review_state(events: Iterable[dict[str, Any]]) -> dict[tuple[str, str
             "due_date": str(payload.get("due_date", "")),
             "estimated_minutes": int(payload.get("estimated_minutes", 0) or 0),
             "tags": [str(item) for item in list(payload.get("tags", []))],
+            "source_task_id": str(payload.get("source_task_id", "")).strip(),
+            "source_message_ids": [
+                str(item).strip() for item in payload.get("source_message_ids", []) if str(item).strip()
+            ],
             "last_reviewed_at": str(event.get("occurred_at", "")),
         }
     return states
 
 
 def previous_interval_for(
-    events: Iterable[dict[str, Any]], subject: str, chapter_title: str, node_id: str
+    events: Iterable[dict[str, Any]],
+    subject: str,
+    chapter_title: str,
+    node_id: str,
+    *,
+    before_or_at: str | None = None,
 ) -> int | None:
     del chapter_title
-    state = latest_review_state(events).get((subject.strip(), node_id.strip()))
+    candidates = list(events)
+    if before_or_at:
+        cutoff = datetime.fromisoformat(before_or_at.replace("Z", "+00:00"))
+        candidates = [
+            event
+            for event in candidates
+            if str(event.get("occurred_at", "")).strip()
+            and datetime.fromisoformat(str(event["occurred_at"]).replace("Z", "+00:00")) <= cutoff
+        ]
+    state = latest_review_state(candidates).get((subject.strip(), node_id.strip()))
     if not state:
         return None
     value = int(state.get("interval_days", 0) or 0)

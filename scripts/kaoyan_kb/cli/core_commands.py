@@ -15,7 +15,13 @@ def add_core_commands(subparsers: argparse._SubParsersAction, *, formatter_class
     ask.add_argument("--subject")
     ask.add_argument("--chapter")
     ask.add_argument("--book-title")
-    ask.add_argument("--question", required=True)
+    ask_question = ask.add_mutually_exclusive_group(required=True)
+    ask_question.add_argument("--question", dest="question")
+    ask_question.add_argument(
+        "--query",
+        dest="question",
+        help="compatibility alias for --question",
+    )
     ask.add_argument("--topk", type=int, default=3)
     ask.add_argument("--printed-page", type=int)
     ask.add_argument("--exercise-label")

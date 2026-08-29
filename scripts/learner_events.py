@@ -7,13 +7,25 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import learner_file_map, load_json_or_default, now_iso, save_json, stable_fingerprint
+from common import kb_root, learner_file_map, load_json_or_default, now_iso, save_json, save_text, stable_fingerprint
 from kaoyan_kb.domain.learner_model import build_learner_model_payload
 from kaoyan_kb.domain.review_scheduler import latest_review_state
 
-EVENT_SCHEMA_VERSION = "0.3.0"
-ALLOWED_SOURCE_KINDS = {"learner_safe_query_answer", "query_answer", "legacy_saved_answer", "codex_conversation_distillation"}
-ALLOWED_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "chapter_fallback", "learner_understanding"}
+EVENT_SCHEMA_VERSION = "0.4.0"
+ALLOWED_SOURCE_KINDS = {
+    "learner_safe_query_answer",
+    "query_answer",
+    "legacy_saved_answer",
+    "codex_conversation_distillation",
+    "codex_chapter_review",
+}
+ALLOWED_ANSWER_MODES = {
+    "canonical_claim",
+    "accepted_evidence",
+    "chapter_fallback",
+    "learner_understanding",
+    "learner_review_result",
+}
 REQUIRES_CITATIONS = {"canonical_claim", "accepted_evidence"}
 
 
@@ -27,8 +39,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_events(default: Path | None = None) -> list[dict[str, Any]]:
-    events_path = learner_file_map(default)["events"]
+def _load_events_path(events_path: Path) -> list[dict[str, Any]]:
     if not events_path.exists():
         return []
     events: list[dict[str, Any]] = []
@@ -38,6 +49,14 @@ def load_events(default: Path | None = None) -> list[dict[str, Any]]:
             continue
         events.append(json.loads(text))
     return events
+
+
+def load_events_readonly(default: Path | None = None) -> list[dict[str, Any]]:
+    return _load_events_path(kb_root(default) / "learner" / "learner_events.jsonl")
+
+
+def load_events(default: Path | None = None) -> list[dict[str, Any]]:
+    return _load_events_path(learner_file_map(default)["events"])
 
 
 def build_source_provenance(payload: dict[str, Any]) -> dict[str, Any]:
@@ -54,6 +73,10 @@ def build_source_provenance(payload: dict[str, Any]) -> dict[str, Any]:
         "citation_coverage_ok": bool(citation_coverage_ok),
         "reference_count": len(references),
         "syllabus_node_ids": [str(item.get("node_id", "")).strip() for item in syllabus_route if str(item.get("node_id", "")).strip()],
+        "source_task_id": str(payload.get("source_task_id", "")).strip(),
+        "source_message_ids": [
+            str(item).strip() for item in payload.get("source_message_ids", []) if str(item).strip()
+        ],
     }
 
 
@@ -85,6 +108,9 @@ def build_intake_decision(payload: dict[str, Any], source_provenance: dict[str, 
     elif answer_mode == "learner_understanding":
         status = "accepted"
         reason = "confirmed_learner_understanding"
+    elif source_kind == "codex_chapter_review" and answer_mode == "learner_review_result":
+        status = "accepted"
+        reason = "confirmed_chapter_review_result"
     else:
         status = "accepted"
         reason = "grounded_query_answer"
@@ -98,23 +124,22 @@ def build_intake_decision(payload: dict[str, Any], source_provenance: dict[str, 
     }
 
 
-def append_event(
+def build_event(
     *,
     subject: str,
     chapter_title: str,
     event_type: str,
     payload: dict[str, Any],
-    default: Path | None = None,
+    occurred_at: str | None = None,
 ) -> dict[str, Any]:
-    files = learner_file_map(default)
-    occurred_at = now_iso()
+    event_time = occurred_at or now_iso()
     source_provenance = build_source_provenance(payload)
     intake_decision = build_intake_decision(payload, source_provenance)
-    event = {
+    return {
         "schema_version": EVENT_SCHEMA_VERSION,
         "event_id": stable_fingerprint(
             {
-                "occurred_at": occurred_at,
+                "occurred_at": event_time,
                 "subject": subject,
                 "chapter_title": chapter_title,
                 "event_type": event_type,
@@ -122,16 +147,46 @@ def append_event(
             }
         ),
         "event_type": event_type,
-        "occurred_at": occurred_at,
+        "occurred_at": event_time,
         "subject": subject,
         "chapter_title": chapter_title,
         "source_provenance": source_provenance,
         "intake_decision": intake_decision,
         "payload": payload,
     }
+
+
+def append_events(events: list[dict[str, Any]], *, default: Path | None = None) -> list[dict[str, Any]]:
+    """Append one validated batch with a single atomic replacement of the JSONL file."""
+    if not events:
+        return []
+    files = learner_file_map(default)
     files["root"].mkdir(parents=True, exist_ok=True)
-    with files["events"].open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+    existing = files["events"].read_text(encoding="utf-8") if files["events"].exists() else ""
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    block = "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events)
+    save_text(files["events"], existing + block)
+    return events
+
+
+def append_event(
+    *,
+    subject: str,
+    chapter_title: str,
+    event_type: str,
+    payload: dict[str, Any],
+    default: Path | None = None,
+    occurred_at: str | None = None,
+) -> dict[str, Any]:
+    event = build_event(
+        subject=subject,
+        chapter_title=chapter_title,
+        event_type=event_type,
+        payload=payload,
+        occurred_at=occurred_at,
+    )
+    append_events([event], default=default)
     return event
 
 
@@ -163,6 +218,11 @@ def rebuild_views(default: Path | None = None) -> dict[str, dict[str, Any]]:
                         "fluency": exercise_payload.get("fluency", ""),
                         "effective_fluency": exercise_payload.get("effective_fluency", ""),
                         "due_date": exercise_payload.get("due_date", ""),
+                        "review_id": exercise_payload.get("review_id", ""),
+                        "question_id": exercise_payload.get("question_id", ""),
+                        "hint_used": bool(exercise_payload.get("hint_used", False)),
+                        "source_task_id": exercise_payload.get("source_task_id", ""),
+                        "source_message_ids": list(exercise_payload.get("source_message_ids", [])),
                     }
                 )
         if event.get("event_type") != "question_saved":

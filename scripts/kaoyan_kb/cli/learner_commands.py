@@ -66,8 +66,13 @@ def add_learner_commands(subparsers: argparse._SubParsersAction, *, formatter_cl
     exercise = commands.add_parser("exercise")
     exercise.add_argument("--subject")
     exercise.add_argument("--chapter")
-    exercise.add_argument("--node", required=True)
-    exercise.add_argument("--result", choices=("right", "wrong", "partial"), required=True)
+    exercise.add_argument("--node")
+    exercise.add_argument("--result", choices=("right", "wrong", "partial"))
+    exercise.add_argument(
+        "--batch-json",
+        help="UTF-8 adaptive-review-batch.v1 file; previews unless --yes is also supplied",
+    )
+    exercise.add_argument("--yes", action="store_true", help="commit a validated --batch-json atomically")
     exercise.add_argument("--tag", action="append", default=[])
     exercise.add_argument("--note", default="")
     exercise.add_argument("--context", choices=("ordinary", "chapter_review", "scheduled_review"), default="ordinary")

@@ -120,6 +120,8 @@ $env:MISTRAL_API_KEY = "your-key"
 
 教材、讲义、题集、例题或题目照片中的解题请求还必须检查 `answer_grounding`。只有 `status=exact_answer` 且 `can_conclude=true` 才能输出答案判断或 AI 补充推导；题目页的 `exact_evidence` 不能代替原书答案。答案未找到、存在歧义、仅定位原图或链路不可用时，问答会失败关闭且 `ask --save` 保持零写入。
 
+`request_resolution.source_request_kind` 把来源请求分为 `generic`、`page_content` 和 `exercise`。普通概念检索走 `generic`；解释教材某页的定义、代码或段落走 `page_content`，只有同来源、同印刷页且已复核的 `page_content_bundle.status=exact` 才能按原页讲解；有来源题目走 `exercise`，继续要求 `answer_grounding.status=exact_answer`。页内讲解和习题答案是两套独立门禁，不能互相替代。
+
 精确页码已定位但自然语言没有题号时，查询只从该页 `relation_status=exact` 且题干可唯一切片的正式习题关系中消歧。单题页直接采用；多题页必须命中唯一的区分性题干词组，答案正文、普通语义检索和选项字母均不参与题目身份判断。结果记录在 `request_resolution.exercise_resolution`：`explicit` 表示显式题号，`inferred_unique` 表示正式题干唯一命中；`ambiguous`、`not_found`、`unavailable` 均失败关闭，其中题目不唯一时只要求补充题号。
 
 纸质习题书可登记书系别名、分册与题解配对。照片书源先注册，再按阶段或章节预览 OCR 范围：
@@ -131,6 +133,12 @@ $env:MISTRAL_API_KEY = "your-key"
 
 `--dry-run` 不访问远程 OCR，也不写 `page_ocr_status.json`。OCR、复核和分类完成后，先预览 `book publish-exercises`；只有追加 `--yes` 才会把审核通过的习题发布到 evidence。问答结果中的 `book_route` 和 `exercise_route` 分别说明书系识别及题目—题解配对状态。
 
+`book exercise-coverage` 同时支持 PDF 与照片教材。`--source-id` 是统一参数，旧的 `--pdf-source-id` 继续兼容；追加 `--verify-query-ask` 会逐关系验证检索与教学问答入口，`--expected-relations` 固定预期数量，`--require-complete` 在关系数、答案门禁或来源页码任一不一致时返回非零：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\kb.py book exercise-coverage --subject 数学 --book-title "考研数学高等数学辅导讲义 基础篇" --source-id SRC-MATH-0006 --chapter-number 2 --verify-query-ask --expected-relations 26 --require-complete --format json
+```
+
 按页查询必须提供 `--subject`；已知时也应提供 `--book-title`。结果中的 `page_verification` 会分别说明页面定位、题号正文核验、命中层及能否按教材正文讲解。例如 `exact_asset + unverified + page_asset` 表示“原页已定位、教材正文未确认”，并不表示该页不存在。
 
 ### 有来源题目的原书答案门控
@@ -141,15 +149,17 @@ $env:MISTRAL_API_KEY = "your-key"
 .\.venv\Scripts\python.exe scripts\kb.py ask --subject 数学 --book-title 李正元数一 --printed-page 64 --question "例3.8 第一问，检查我的过程" --format json
 ```
 
-给教学模型或自动化消费时可改用 `--format teaching-json`。它只输出请求解析、页码交叉核验、答案门控、引用覆盖和教学包；`--format json` 继续保留完整诊断契约。即使同时使用 `--save`，程序也会先用完整契约完成保存，再把终端输出投影为紧凑视图。
+`ask` 的规范参数是 `--question`；为兼容历史命令也接受 `--query`，二者互斥并归一到同一问题字段。比较多道例题时，先为每道题分别执行精确 `ask`，全部通过来源门禁后再比较。
+
+给教学模型或自动化消费时可改用 `--format teaching-json`。当前视图版本是 `m6.teaching.v2`，它输出请求解析、页码交叉核验、答案门控、引用覆盖、`teaching_bundle` 和 `page_content_bundle`；`--format json` 继续保留完整诊断契约。即使同时使用 `--save`，程序也会先用完整契约完成保存，再把终端输出投影为紧凑视图。
 
 `answer_grounding.status` 可能为 `exact_answer`、`answer_asset_only`、`answer_ambiguous`、`answer_not_found`、`answer_unavailable` 或 `not_applicable`。除 `exact_answer` 外，有来源题目均失败关闭：不输出解题结论、不以 AI 独立推导补位；`ask --save` 还要求原题和原书答案的证据引用同时完整，否则保持零写入。明确说明是自拟题时不启用此门控。
 
 ### 会话续接与学习记录
 
-长对话先以“当前任务 + 学科专题锚点”确定真实停点。教材页码、题号、选项或原文请求必须先调用 `kb.py query/ask`，禁止“先回答、后定位”；后续追问继续携带本会话已确认的教材、页码、章节和题号。教材回答必须把教材结构化证据、仅原页定位、补充推导和学习者反馈分别标注；补充推导不能沿用原题页码或题号。
+长对话先以“当前任务 + 学科专题锚点”确定真实停点。教材页码、题号、选项或原文请求必须先调用 `kb.py query/ask`，禁止“先回答、后定位”；后续追问必须把本会话结构化结果已经确认的教材、印刷页、章节、容器和题号继续显式带入下一次调用。教材回答必须把教材结构化证据、仅原页定位、补充推导和学习者反馈分别标注；补充推导不能沿用原题页码或题号。若一次学习请求触发了 OCR、证据或索引修复，最终验收必须重放最初的自然语言请求，不能只依据索引数量或通用测试宣告完成。
 
-讲解本身不写入学习资料。使用者明确要求“记录”或“同步”后，才可用 `kb.py learner distill` 生成候选并通过 `apply --yes` 发布。候选记录原题/补充内容关系、来源类型、掌握状态、下次续接和一个可选自测；学习者反馈只用于后续教学，不能成为教材事实证据。
+讲解本身不写入学习资料。使用者明确要求“记录”“同步”或日终收束时，按 Asia/Shanghai 当天范围读取学习工作区中的 Codex 任务正文，更新当前任务、专题锚点和周记录；周记录保留紧凑来源任务 ID，最终说明扫描、纳入和跳过的任务。标题或摘要不能替代正文，任务分页或日期覆盖不完整时不得声称已汇总全天。只有一个明确主概念时才可用 `kb.py learner distill` 生成候选并通过 `apply --yes` 发布；多主题无主次时不额外蒸馏。
 
 ### 章末复盘与自适应复习
 
@@ -157,6 +167,13 @@ $env:MISTRAL_API_KEY = "your-key"
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\kb.py learner exercise --subject 数学 --chapter 第三章 --node MATH-INTEGRAL-001 --result right --context chapter_review --review-id chapter-3-review --question-id question-1 --fluency not_fluent --duration-minutes 8 --format json
+```
+
+正式章末复盘本身即授权写入 learner 层。整次复盘优先使用 `adaptive-review-batch.v1` JSON；命令默认只预览，全部项目合法后才用 `--yes` 一次性写入，并保留原始复盘时间、来源任务/消息、知识点键、客观结果、熟练度和提示使用情况：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\kb.py learner exercise --batch-json <chapter-review.json> --format json
+.\.venv\Scripts\python.exe scripts\kb.py learner exercise --batch-json <chapter-review.json> --yes --format json
 ```
 
 熟练度可选 `very_fluent`、`fairly_fluent`、`not_fluent` 和 `needs_remediation`。首次间隔分别为 14、7、3、1 天；客观错误或部分完成会限制有效熟练度，但不会覆盖使用者的原始自评。
