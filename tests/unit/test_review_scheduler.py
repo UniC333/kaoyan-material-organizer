@@ -14,6 +14,7 @@ from kaoyan_kb.domain.review_scheduler import (
     effective_fluency,
     is_duplicate_review_event,
     next_interval_days,
+    previous_interval_for,
     schedule_fields,
 )
 
@@ -112,6 +113,33 @@ def test_latest_event_replaces_older_state_for_same_knowledge_point() -> None:
     queue = build_due_queue([older, newer], plan_date="2026-08-12")
 
     assert queue["status"] == "nothing_due"
+
+
+def test_historical_batch_ignores_review_events_that_happened_later() -> None:
+    older = _event(
+        event_id="older",
+        node_id="MATH-1",
+        fluency="not_fluent",
+        due_date="2026-08-04",
+        occurred_at="2026-08-01T10:00:00+08:00",
+    )
+    future = _event(
+        event_id="future",
+        node_id="MATH-1",
+        fluency="very_fluent",
+        due_date="2026-09-20",
+        occurred_at="2026-09-01T10:00:00+08:00",
+    )
+
+    interval = previous_interval_for(
+        [older, future],
+        "数学",
+        "第三章",
+        "MATH-1",
+        before_or_at="2026-08-27T10:00:00+08:00",
+    )
+
+    assert interval == 3
 
 
 def test_review_identity_is_idempotent_per_question_and_knowledge_point() -> None:

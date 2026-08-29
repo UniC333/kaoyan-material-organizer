@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/kaoyan/chapter-review-batch.schema.json",
+  "title": "Chapter review batch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "subject",
+    "chapter_title",
+    "review_id",
+    "reviewed_at",
+    "source",
+    "items"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "adaptive-review-batch.v1"
+    },
+    "subject": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chapter_title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "review_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reviewed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "message_ids"],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["node_id", "question_id", "result", "fluency", "hint_used"],
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "question_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "result": {
+            "enum": ["right", "partial", "wrong"]
+          },
+          "fluency": {
+            "enum": ["very_fluent", "fairly_fluent", "not_fluent", "needs_remediation"]
+          },
+          "hint_used": {
+            "type": "boolean"
+          },
+          "duration_minutes": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "tags": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

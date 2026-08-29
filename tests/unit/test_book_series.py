@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
+import build_exercise_coverage_report as coverage_module
 from kaoyan_kb.domain import book_series
 from ocr_book_pages import _selected_pages
 from publish_book_exercises import _effective_text
@@ -23,6 +25,126 @@ SERIES_INDEX = {
         }
     ]
 }
+
+
+def _verified_query_result(*, source_id: str, printed: bool) -> dict:
+    page_key = "printed_pages" if printed else "pdf_pages"
+    page_anchor = {"source_id": source_id, "requested_page": 30} if printed else {"match_status": "not_requested"}
+    return {
+        "request_resolution": {"source_request_kind": "exercise"},
+        "answer_grounding": {
+            "status": "exact_answer",
+            "can_conclude": True,
+            "problem": {"evidence_ids": ["EV-Q"], page_key: [30 if printed else 55]},
+            "solution": {"evidence_ids": ["EV-A"], page_key: [31 if printed else 61]},
+        },
+        "teaching_bundle": {"status": "exact"},
+        "page_anchor": page_anchor,
+    }
+
+
+def _mock_coverage_answer(monkeypatch, result: dict) -> None:
+    monkeypatch.setattr(coverage_module, "query_knowledge", lambda *args, **kwargs: result)
+    monkeypatch.setattr(coverage_module, "build_answer_contract", lambda query_result: {"query_result": query_result})
+    monkeypatch.setattr(
+        coverage_module,
+        "build_teaching_answer_view",
+        lambda contract: {
+            "teaching_view_version": coverage_module.TEACHING_VIEW_VERSION,
+            "answer_grounding": dict(result["answer_grounding"]),
+            "citation_coverage_ok": True,
+        },
+    )
+
+
+def test_photo_exercise_coverage_verifies_nested_source_pages_and_both_entry_gates(monkeypatch, tmp_path: Path) -> None:
+    relation = {
+        "relation_id": "PHOTO-1",
+        "relation_kind": "same-book-worked-example",
+        "relation_status": "exact",
+        "book_title": "照片教材",
+        "chapter_id": "CH-02",
+        "exercise_label": "例1",
+        "question": {"source_id": "SRC-PHOTO", "evidence_ids": ["EV-Q"], "printed_pages": [30]},
+        "answer": {"source_id": "SRC-PHOTO", "evidence_ids": ["EV-A"], "printed_pages": [31]},
+    }
+    result = _verified_query_result(source_id="SRC-PHOTO", printed=True)
+    _mock_coverage_answer(monkeypatch, result)
+
+    verification = coverage_module.verify_relation(
+        relation=relation,
+        subject="数学",
+        book_title="照片教材",
+        source_id="SRC-PHOTO",
+        vault_root=tmp_path,
+        evidence_by_id={
+            "EV-Q": {"source_id": "SRC-PHOTO"},
+            "EV-A": {"source_id": "SRC-PHOTO"},
+        },
+    )
+
+    assert coverage_module.relation_source_id(relation) == "SRC-PHOTO"
+    assert coverage_module.relation_chapter_number(relation) == 2
+    assert verification["verification_status"] == "passed"
+    assert verification["query_ok"] is True
+    assert verification["ask_ok"] is True
+    assert verification["page_source_consistent"] is True
+    assert verification["answer_gate_ok"] is True
+
+
+def test_pdf_exercise_coverage_keeps_pdf_pages_and_fails_on_source_mismatch(monkeypatch, tmp_path: Path) -> None:
+    relation = {
+        "relation_id": "PDF-1",
+        "relation_status": "exact",
+        "source_id": "SRC-PDF",
+        "section_root": "2.3",
+        "category": "comprehensive",
+        "exercise_label": "01",
+        "question_evidence_ids": ["EV-Q"],
+        "question_pdf_pages": [55],
+        "answer_evidence_ids": ["EV-A"],
+        "answer_pdf_pages": [61],
+    }
+    result = _verified_query_result(source_id="SRC-PDF", printed=False)
+    _mock_coverage_answer(monkeypatch, result)
+
+    verification = coverage_module.verify_relation(
+        relation=relation,
+        subject="408",
+        book_title="王道数据结构",
+        source_id="SRC-PDF",
+        vault_root=tmp_path,
+        evidence_by_id={
+            "EV-Q": {"source_id": "SRC-PDF"},
+            "EV-A": {"source_id": "WRONG-SOURCE"},
+        },
+    )
+
+    assert coverage_module.relation_chapter_number(relation) == 2
+    assert verification["query_ok"] is True
+    assert verification["ask_ok"] is True
+    assert verification["page_source_consistent"] is False
+    assert "evidence_source_mismatch" in verification["failure_reasons"]
+
+
+def test_exercise_coverage_require_complete_returns_nonzero(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "build_exercise_coverage_report.py",
+            "--subject",
+            "数学",
+            "--book-title",
+            "教材",
+            "--require-complete",
+            "--format",
+            "quiet",
+        ],
+    )
+    monkeypatch.setattr(coverage_module, "build_report", lambda args: ({"summary": {"complete": False}}, False))
+
+    assert coverage_module.main() == 2
 
 
 def test_alias_resolves_series_but_alias_only_is_ambiguous(monkeypatch) -> None:

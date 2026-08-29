@@ -31,7 +31,9 @@ def add_book_commands(subparsers: argparse._SubParsersAction, *, formatter_class
         item = command(name); item.add_argument("--subject", required=True); item.add_argument("--book-title", required=True); item.add_argument("--pdf-source-id", default=""); item.add_argument(extra, default=""); item.add_argument("--format", choices=("json", "quiet"), default="json")
     pdf_publish = command("pdf-ocr-publish"); pdf_publish.add_argument("--subject", required=True); pdf_publish.add_argument("--book-title", required=True); pdf_publish.add_argument("--pdf-source-id", required=True); pdf_publish.add_argument("--report-path", required=True); pdf_publish.add_argument("--review-artifact-path", required=True); pdf_publish.add_argument("--chapter-number", type=int); pdf_publish.add_argument("--format", choices=("json", "quiet"), default="json")
     page_review = command("pdf-ocr-page-review"); page_review.add_argument("--pdf-source-id", required=True); page_review.add_argument("--pdf-page", required=True, type=int); page_review.add_argument("--printed-page", type=int); page_review.add_argument("--page-header-confirmed", action="store_true"); page_review.add_argument("--review-status", choices=("pending", "accepted", "rejected"), required=True); page_review.add_argument("--note", default=""); page_review.add_argument("--format", choices=("json", "quiet"), default="json")
-    coverage = command("exercise-coverage"); coverage.add_argument("--subject", required=True); coverage.add_argument("--book-title", required=True); coverage.add_argument("--pdf-source-id", default=""); coverage.add_argument("--chapter-number", type=int); coverage.add_argument("--format", choices=("json", "quiet"), default="json")
+    coverage = command("exercise-coverage"); coverage.add_argument("--subject", required=True); coverage.add_argument("--book-title", required=True)
+    coverage_source = coverage.add_mutually_exclusive_group(); coverage_source.add_argument("--source-id", default=""); coverage_source.add_argument("--pdf-source-id", default="", help="compatibility alias for --source-id")
+    coverage.add_argument("--chapter-number", type=int); coverage.add_argument("--verify-query-ask", action="store_true"); coverage.add_argument("--expected-relations", type=int); coverage.add_argument("--require-complete", action="store_true"); coverage.add_argument("--format", choices=("json", "quiet"), default="json")
     review = command("ocr-review").add_subparsers(dest="ocr_review_command", required=True)
     queue = review.add_parser("queue"); queue.add_argument("--book-root", required=True); queue.add_argument("--review-type", choices=("table", "equation", "low-confidence")); queue.add_argument("--format", choices=("json", "quiet"), default="json")
     apply = review.add_parser("apply"); apply.add_argument("--request-key", required=True); apply.add_argument("--block-id", required=True); apply.add_argument("--review-status", choices=("pending", "accepted", "rejected", "ignored"), required=True); apply.add_argument("--corrected-text", default=""); apply.add_argument("--note", default=""); apply.add_argument("--format", choices=("json", "quiet"), default="json")
@@ -114,8 +116,13 @@ def dispatch_book(args: argparse.Namespace, run_script: Callable[..., str]) -> s
         if args.page_header_confirmed: forwarded.append("--page-header-confirmed")
         return run_script("review_pdf_ocr_page.py", *forwarded)
     if c == "exercise-coverage":
-        forwarded = _format(args, "--subject", args.subject, "--book-title", args.book_title, "--pdf-source-id", args.pdf_source_id)
+        forwarded = _format(args, "--subject", args.subject, "--book-title", args.book_title)
+        if args.source_id: forwarded.extend(["--source-id", args.source_id])
+        elif args.pdf_source_id: forwarded.extend(["--pdf-source-id", args.pdf_source_id])
         if args.chapter_number is not None: forwarded.extend(["--chapter-number", str(args.chapter_number)])
+        if args.verify_query_ask: forwarded.append("--verify-query-ask")
+        if args.expected_relations is not None: forwarded.extend(["--expected-relations", str(args.expected_relations)])
+        if args.require_complete: forwarded.append("--require-complete")
         return run_script("build_exercise_coverage_report.py", *forwarded)
     if c == "ocr-review":
         if args.ocr_review_command == "queue":

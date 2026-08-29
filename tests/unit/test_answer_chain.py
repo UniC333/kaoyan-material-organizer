@@ -14,9 +14,33 @@ if str(SCRIPTS) not in sys.path:
 import answer_local_question as answer_module
 import ask_local_knowledge as ask_module
 import build_pdf_ocr_review_artifact as pdf_review_artifact_module
+import kb as kb_module
 import publish_pdf_ocr_evidence as pdf_publish_module
 import query_local_knowledge as query_module
 from save_local_answer import save_answer_contract, save_eligibility
+
+
+def test_ask_query_alias_is_normalized_by_direct_and_wrapper_parsers(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["ask_local_knowledge.py", "--subject", "数学", "--query", "同一个问题"])
+    direct = ask_module.parse_args()
+    wrapper = kb_module.build_parser().parse_args(["ask", "--subject", "数学", "--query", "同一个问题"])
+
+    assert direct.question == "同一个问题"
+    assert wrapper.question == "同一个问题"
+
+
+def test_ask_question_and_query_alias_are_mutually_exclusive(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ask_local_knowledge.py", "--subject", "数学", "--question", "一", "--query", "二"],
+    )
+    with pytest.raises(SystemExit):
+        ask_module.parse_args()
+    with pytest.raises(SystemExit):
+        kb_module.build_parser().parse_args(
+            ["ask", "--subject", "数学", "--question", "一", "--query", "二"]
+        )
 
 
 def test_pdf_ocr_publication_uses_accepted_review_overlay() -> None:
