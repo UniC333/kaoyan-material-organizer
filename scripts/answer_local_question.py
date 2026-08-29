@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from common import default_vault_root_arg, ensure_kb_layout, load_json, resolve_subject, validate_entity_contract
-from query_local_knowledge import build_teaching_bundle, preferred_page_ref, query_knowledge, should_prefer_evidence_chapter
+from query_local_knowledge import build_page_content_bundle, build_teaching_bundle, preferred_page_ref, query_knowledge, should_prefer_evidence_chapter
 
 
 ANSWER_CONTRACT_VERSION = "m6.answer.v3"
-TEACHING_VIEW_VERSION = "m6.teaching.v1"
+TEACHING_VIEW_VERSION = "m6.teaching.v2"
 STRUCTURED_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "exercise_pair"}
 CONTENT_SOURCE_LABELS = {
     "textbook_structured_evidence": "教材结构化证据",
@@ -79,9 +79,30 @@ def validate_teaching_contract_invariants(contract: dict[str, Any]) -> None:
     elif teaching_status != "not_applicable" or problem_text or answer_text:
         raise ValueError("ordinary queries must expose a content-free not_applicable teaching bundle")
 
+    request_kind = str((contract.get("request_resolution") or {}).get("source_request_kind") or "generic")
+    page_content = dict(contract.get("page_content_bundle") or {})
+    page_content_status = str(page_content.get("status") or "not_applicable")
+    page_content_text = str(page_content.get("content") or "").strip()
+    page_anchor = dict(contract.get("page_anchor") or {})
+    if request_kind == "page_content":
+        if page_content_status == "exact":
+            if str(page_anchor.get("match_status") or "") != "exact_evidence":
+                raise ValueError("exact page content requires an exact-evidence page anchor")
+            if not page_content_text or not list(page_content.get("evidence_ids") or []):
+                raise ValueError("exact page content must retain reviewed text and evidence ids")
+        elif page_content_status in {"asset_only", "blocked"}:
+            if page_content_text:
+                raise ValueError("unconfirmed page content must remain content-free")
+            if not str(page_content.get("failure_reason") or "").strip() or not str(page_content.get("next_action") or "").strip():
+                raise ValueError("blocked page content must explain the failure and next action")
+        else:
+            raise ValueError("page-content requests must expose exact, asset_only, or blocked state")
+    elif page_content_status != "not_applicable" or page_content_text:
+        raise ValueError("non-page requests must expose a content-free not_applicable page bundle")
+
     crosscheck = dict(contract.get("page_crosscheck") or {})
     if crosscheck.get("required") and str(crosscheck.get("status") or "") != "confirmed":
-        if can_conclude or teaching_status == "exact":
+        if (required and (can_conclude or teaching_status == "exact")) or page_content_status == "exact":
             raise ValueError("unconfirmed page crosscheck cannot permit an exact teaching answer")
         verification = dict(contract.get("page_verification") or {})
         if verification.get("textbook_explanation_allowed"):
@@ -96,6 +117,23 @@ def _compact_grounding_side(side: dict[str, Any]) -> dict[str, Any]:
         for key in ("book_title", "exercise_label", "evidence_ids", "printed_pages", "pdf_pages")
         if side.get(key) not in (None, "", [])
     }
+
+
+def _compact_page_anchor(anchor: dict[str, Any]) -> dict[str, Any]:
+    if not anchor:
+        return {}
+    printed_page = anchor.get("requested_page") if anchor.get("requested_page") is not None else anchor.get("printed_page")
+    compact = {
+        "match_status": str(anchor.get("match_status") or ""),
+        "book_title": str(anchor.get("book_title") or anchor.get("requested_book_title") or ""),
+        "source_id": str(anchor.get("source_id") or anchor.get("book_id") or ""),
+        "requested_page": anchor.get("requested_page"),
+        "printed_page": printed_page,
+        "pdf_page": anchor.get("pdf_page"),
+        "evidence_ids": list(anchor.get("evidence_ids") or []),
+        "match_basis": str(anchor.get("match_basis") or ""),
+    }
+    return {key: value for key, value in compact.items() if value not in (None, "", [])}
 
 
 def build_teaching_answer_view(
@@ -131,10 +169,12 @@ def build_teaching_answer_view(
         "request_resolution": dict(contract.get("request_resolution") or {}),
         "page_crosscheck": dict(contract.get("page_crosscheck") or {}),
         "page_verification": dict(contract.get("page_verification") or {}),
+        "page_anchor": _compact_page_anchor(dict(contract.get("page_anchor") or {})),
         "textbook_location": dict(contract.get("textbook_location") or {}),
         "answer_grounding": compact_grounding,
         "citation_coverage_ok": bool(contract.get("citation_coverage_ok")),
         "teaching_bundle": dict(contract.get("teaching_bundle") or {}),
+        "page_content_bundle": dict(contract.get("page_content_bundle") or {}),
     }
     validate_entity_contract("teaching_answer_view", view)
     return view
@@ -672,6 +712,12 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
     grounding = normalized_answer_grounding(result)
     request_resolution = dict(result.get("request_resolution") or {})
     teaching = dict(result.get("teaching_bundle") or {}) or build_teaching_bundle(grounding, request_resolution)
+    page_content = dict(result.get("page_content_bundle") or {}) or build_page_content_bundle(
+        request_resolution=request_resolution,
+        page_anchor=dict(result.get("page_anchor") or {}),
+        evidences=list(result.get("evidence_hits") or []),
+        page_crosscheck=dict(result.get("page_crosscheck") or {}),
+    )
     evidence_assessment = build_evidence_assessment(result, citations)
     provenance = content_provenance(result, evidence_assessment)
     direct = direct_conclusion(result)
@@ -737,6 +783,7 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "request_resolution": request_resolution,
         "page_crosscheck": dict(result.get("page_crosscheck") or {}),
         "teaching_bundle": teaching,
+        "page_content_bundle": page_content,
         # Compatibility fields for older callers that consumed raw query output.
         "syllabus_route": result.get("syllabus_route", []),
         "references": result.get("references", []),

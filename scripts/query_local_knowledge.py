@@ -12,7 +12,7 @@ from typing import Any
 from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, learner_file_map, load_all_json, load_json, resolve_subject, runtime_context_payload
 from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator
 from kaoyan_kb.domain.exercise_locator import container_path_from_query, extract_exercise_block, find_exact_relation, find_exact_worked_example_relation, find_unique_relation_for_scope, list_exact_relations_for_question_page, list_exact_worked_example_relations, normalize_exercise_category, normalize_exercise_label, resolve_section_anchor
-from kaoyan_kb.domain.book_series import parse_exercise_request, resolve_answer_grounding, resolve_book_route, resolve_exercise_route
+from kaoyan_kb.domain.book_series import classify_source_request, has_exercise_request_signal, parse_exercise_request, resolve_answer_grounding, resolve_book_route, resolve_exercise_route
 from kaoyan_kb.domain.teaching_context import build_bounded_teaching_context
 from learner_events import load_events
 from retrieve_knowledge import retrieve as retrieve_index
@@ -173,9 +173,7 @@ def parse_requested_option(query: str, exercise_label: str = "") -> str:
 
 
 def needs_exercise_identity(query: str, requested_option: str = "") -> bool:
-    text = str(query or "")
-    tokens = ("例题", "题目", "这题", "该题", "第几题", "选项", "答案", "过程", "怎么做", "计算", "证明", "填空")
-    return bool(requested_option or any(token in text for token in tokens))
+    return has_exercise_request_signal(query, requested_option=requested_option)
 
 
 def _normalize_exercise_match_text(value: Any) -> str:
@@ -306,8 +304,16 @@ def resolve_request(
         category = "single-choice"
     label_source = "cli" if exercise_label and label else "query" if label else ""
     container_path = container_path_from_query(text)
+    source_request_kind = classify_source_request(
+        query=text,
+        book_title=book_title,
+        page_anchor={"requested_page": page, "requested_exercise_label": label},
+        exercise_label=label,
+        requested_option=requested_option,
+    )
     return {
         "original_query": text,
+        "source_request_kind": source_request_kind,
         "book_title": str(book_title or ""),
         "chapter_input": str(chapter or ""),
         "section_root": section_scope,
@@ -761,12 +767,13 @@ def build_answer_grounding(
     evidences: list[dict[str, Any]],
     page_crosscheck: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    text = str(query or "")
-    problem_tokens = ("例", "题", "问", "过程", "答案", "解", "计算", "证明", "选择", "选项", "填空", "怎么做", "结果")
-    source_tokens = ("教材", "讲义", "题集", "题目照片", "照片", "图中", "书上", "书里", "原书")
-    explicit_source = bool(book_title or page_anchor.get("requested_page") is not None or page_anchor.get("book_id") or any(token in text for token in source_tokens))
-    problem_like = bool(page_anchor.get("requested_exercise_label") or exercise_anchor.get("exercise_label") or any(token in text for token in problem_tokens) or any(token in text for token in ("这道题", "该题")))
-    required = explicit_source and problem_like and not any(token in text for token in ("自拟", "我编", "原创题"))
+    request_kind = classify_source_request(
+        query=query,
+        book_title=book_title,
+        page_anchor=page_anchor,
+        exercise_label=str(exercise_anchor.get("exercise_label") or ""),
+    )
+    required = request_kind == "exercise"
     grounding = {
         "required": required,
         "status": "answer_not_found" if required else "not_applicable",
@@ -896,6 +903,119 @@ def build_teaching_bundle(grounding: dict[str, Any], request_resolution: dict[st
             "solution_pdf_pages": list(solution.get("pdf_pages", []) or []),
         },
         "failure_reason": "" if can_conclude else str(grounding.get("failure_reason") or "原题或原书答案未确认。"),
+    }
+
+
+def _empty_page_content_bundle(
+    *,
+    status: str = "not_applicable",
+    failure_reason: str = "",
+    next_action: str = "",
+    page_anchor: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    anchor = dict(page_anchor or {})
+    printed_page = anchor.get("requested_page") if anchor.get("requested_page") is not None else anchor.get("printed_page")
+    pdf_page = anchor.get("pdf_page")
+    return {
+        "status": status,
+        "source_id": str(anchor.get("source_id") or anchor.get("book_id") or ""),
+        "book_title": str(anchor.get("book_title") or anchor.get("requested_book_title") or ""),
+        "evidence_ids": [],
+        "printed_pages": [int(printed_page)] if printed_page is not None else [],
+        "pdf_pages": [int(pdf_page)] if pdf_page is not None else [],
+        "content": "",
+        "failure_reason": failure_reason,
+        "next_action": next_action,
+    }
+
+
+def _reviewed_page_evidence(evidence: dict[str, Any]) -> bool:
+    return bool(evidence.get("source_grounded")) and (
+        str(evidence.get("review_status") or "") in {"accepted", "approved"}
+        or str(evidence.get("verification_status") or "") == "reviewed"
+    )
+
+
+def build_page_content_bundle(
+    *,
+    request_resolution: dict[str, Any],
+    page_anchor: dict[str, Any],
+    evidences: list[dict[str, Any]],
+    page_crosscheck: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Expose only reviewed evidence from the exact requested textbook page."""
+    if str(request_resolution.get("source_request_kind") or "generic") != "page_content":
+        return _empty_page_content_bundle()
+    crosscheck = dict(page_crosscheck or {})
+    if crosscheck.get("required") and str(crosscheck.get("status") or "") != "confirmed":
+        return _empty_page_content_bundle(
+            status="blocked",
+            failure_reason=str(crosscheck.get("reason") or "页码线索与正式小节锚点尚未完成交叉核验。"),
+            next_action="请先核对教材版本、小节编号和起始页。",
+            page_anchor=page_anchor,
+        )
+    page_status = str(page_anchor.get("match_status") or "not_found")
+    if page_status == "exact_asset":
+        return _empty_page_content_bundle(
+            status="asset_only",
+            failure_reason="教材原页已定位，但教材正文尚未审核发布。",
+            next_action="如需继续，请先人工核对原页或发布审核后的页面证据。",
+            page_anchor=page_anchor,
+        )
+    if page_status != "exact_evidence":
+        reasons = {
+            "unavailable": "本地证据链当前不可用。",
+            "ambiguous": "存在多个教材或页面候选，无法唯一定位页面正文。",
+            "unmapped": "该印刷页尚未建立正式页码映射。",
+            "not_requested": "尚未给出可唯一定位的教材页码。",
+            "not_found": "正式页码索引中没有找到该印刷页。",
+        }
+        return _empty_page_content_bundle(
+            status="blocked",
+            failure_reason=reasons.get(page_status, "教材页面正文尚未确认。"),
+            next_action="请先补齐唯一教材、印刷页码和审核证据。",
+            page_anchor=page_anchor,
+        )
+
+    anchor_ids = [str(item) for item in page_anchor.get("evidence_ids", []) if str(item)]
+    if page_anchor.get("matched_evidence_id"):
+        anchor_ids.insert(0, str(page_anchor["matched_evidence_id"]))
+    anchor_ids = list(dict.fromkeys(anchor_ids))
+    by_id = {str(item.get("evidence_id") or ""): item for item in evidences}
+    source_id = str(page_anchor.get("source_id") or page_anchor.get("book_id") or "")
+    printed_page = page_anchor.get("requested_page")
+    pdf_page = page_anchor.get("pdf_page")
+    reviewed: list[dict[str, Any]] = []
+    for evidence_id in anchor_ids:
+        evidence = by_id.get(evidence_id)
+        if not evidence or not _reviewed_page_evidence(evidence):
+            continue
+        if source_id and evidence.get("source_id") and str(evidence.get("source_id")) != source_id:
+            continue
+        if printed_page is not None and evidence.get("printed_page") is not None and int(evidence["printed_page"]) != int(printed_page):
+            continue
+        if pdf_page is not None and evidence.get("pdf_page") is not None and int(evidence["pdf_page"]) != int(pdf_page):
+            continue
+        if str(evidence.get("content") or "").strip():
+            reviewed.append(evidence)
+    if not reviewed:
+        return _empty_page_content_bundle(
+            status="blocked",
+            failure_reason="页面已定位，但没有同源、同页且审核通过的正文证据。",
+            next_action="请先审核并发布该页 evidence。",
+            page_anchor=page_anchor,
+        )
+
+    return {
+        "status": "exact",
+        "source_id": source_id,
+        "book_title": str(page_anchor.get("book_title") or page_anchor.get("requested_book_title") or ""),
+        "evidence_ids": [str(item.get("evidence_id") or "") for item in reviewed],
+        "printed_pages": [int(printed_page)] if printed_page is not None else [],
+        "pdf_pages": [int(pdf_page)] if pdf_page is not None else [],
+        "content": "\n\n".join(str(item.get("content") or "").strip() for item in reviewed),
+        "failure_reason": "",
+        "next_action": "",
     }
 
 
@@ -1570,6 +1690,12 @@ def query_knowledge(
                 result["answer_mode"] = "exercise_unconfirmed"
                 result["fallback_note"] = str(result["answer_grounding"].get("failure_reason") or "页码线索尚未完成小节锚点核验。")
             result["teaching_bundle"] = build_teaching_bundle(result["answer_grounding"], request_resolution)
+            result["page_content_bundle"] = build_page_content_bundle(
+                request_resolution=request_resolution,
+                page_anchor=page_anchor,
+                evidences=evidences,
+                page_crosscheck=page_crosscheck,
+            )
             result["page_verification"] = build_page_verification_summary(page_anchor, result["answer_mode"], page_crosscheck)
             attach_exercise_index_runtime(result)
             return result
@@ -1577,6 +1703,12 @@ def query_knowledge(
         result["answer_grounding"] = build_answer_grounding(query=query, book_title=effective_book_title, page_anchor=result["page_anchor"], exercise_anchor=exercise_anchor, evidences=[], page_crosscheck=page_crosscheck)
         result["textbook_location"] = build_textbook_location(request_resolution, exercise_anchor)
         result["teaching_bundle"] = build_teaching_bundle(result["answer_grounding"], request_resolution)
+        result["page_content_bundle"] = build_page_content_bundle(
+            request_resolution=request_resolution,
+            page_anchor=page_anchor,
+            evidences=[],
+            page_crosscheck=page_crosscheck,
+        )
         result["page_verification"] = build_page_verification_summary(page_anchor, result["answer_mode"], page_crosscheck)
         attach_exercise_index_runtime(result)
         return result
@@ -1791,6 +1923,12 @@ def query_knowledge(
         "request_resolution": request_resolution,
     }
     result["teaching_bundle"] = build_teaching_bundle(answer_grounding, request_resolution)
+    result["page_content_bundle"] = build_page_content_bundle(
+        request_resolution=request_resolution,
+        page_anchor=page_anchor,
+        evidences=evidences,
+        page_crosscheck=page_crosscheck,
+    )
     attach_exercise_index_runtime(result)
     return result
 

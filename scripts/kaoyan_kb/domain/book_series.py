@@ -20,8 +20,22 @@ WORKED_SOLUTION_PATTERN = re.compile(
     r"(?m)^\s*(?:#{1,6}\s*)?(?:【\s*)?(?:解|解答|证明|分析与求解)(?:\s*】|(?=\s|[：:、.．]|$))"
 )
 MARKDOWN_HEADING_PATTERN = re.compile(r"(?m)^\s*#{1,6}\s+")
+WORKED_PAGE_GAP_PATTERN = re.compile(r"(?m)^\s*#\s+__NONCONTIGUOUS_PAGE_GAP__\s*$")
+WORKED_ANSWER_BOUNDARY_PATTERN = re.compile(
+    r"(?m)^\s*(?:(?:定理|定义)\s*\d*|\(\s*\d+\s*\)\s*若函数|本章学习诊断)"
+)
 CONTAINER_HEADING_PATTERN = re.compile(
     r"^(?:题型|专题|方法|模型|考点|类型)\s*(?:[0-9]+|[零一二三四五六七八九十两]+)(?:\s*[：:、-]?\s*.*)?$"
+)
+SOURCE_REQUEST_TOKENS = ("教材", "讲义", "题集", "题目照片", "照片", "图中", "书上", "书里", "原书")
+SELF_AUTHORED_TOKENS = ("自拟", "我编", "原创题")
+PAGE_CONTENT_TOKENS = ("理解", "没看懂", "看不懂", "不明白", "解释", "讲解", "怎么来的", "为什么", "代码", "公式", "定义", "段落", "原文", "这一页", "这里")
+EXERCISE_REQUEST_PATTERN = re.compile(
+    r"(?:这|那|该|本)\s*(?:道)?\s*题|题目照片|原题|题解|解答|答案|"
+    r"怎么做|如何作答|求解|解题|怎么\s*解(?!释)|如何\s*解(?!释)|"
+    r"检查(?:一下)?(?:这道题|该题|本题|[^，。！？]*过程)|核对[^，。！？]*过程|"
+    r"(?:第\s*)?\d+\s*(?:题|问)|例题|例\s*\d+(?:\.\d+)*|"
+    r"选择题|填空题|解答题|证明题|计算题|选项|证明过程|计算过程|计算结果"
 )
 
 
@@ -190,6 +204,58 @@ def parse_exercise_request(query: str) -> dict[str, Any]:
     }
 
 
+def has_exercise_request_signal(
+    query: str,
+    *,
+    exercise_label: str = "",
+    exercise_number: int | None = None,
+    requested_option: str = "",
+) -> bool:
+    """Return whether the request identifies or asks to solve a sourced exercise."""
+    text = str(query or "")
+    return bool(
+        str(exercise_label or "").strip()
+        or exercise_number is not None
+        or str(requested_option or "").strip()
+        or EXERCISE_REQUEST_PATTERN.search(text)
+    )
+
+
+def classify_source_request(
+    *,
+    query: str,
+    book_title: str | None,
+    page_anchor: dict[str, Any],
+    exercise_label: str = "",
+    exercise_number: int | None = None,
+    requested_option: str = "",
+    book_route: dict[str, Any] | None = None,
+) -> str:
+    """Classify source-grounded requests without treating ``理解/解释`` as answers."""
+    text = str(query or "")
+    if any(token in text for token in SELF_AUTHORED_TOKENS):
+        return "generic"
+    explicit_source = bool(
+        book_title
+        or page_anchor.get("requested_page") is not None
+        or page_anchor.get("book_id")
+        or (book_route or {}).get("series_id")
+        or any(token in text for token in SOURCE_REQUEST_TOKENS)
+    )
+    if not explicit_source:
+        return "generic"
+    if has_exercise_request_signal(
+        text,
+        exercise_label=exercise_label or str(page_anchor.get("requested_exercise_label") or ""),
+        exercise_number=exercise_number,
+        requested_option=requested_option,
+    ):
+        return "exercise"
+    if page_anchor.get("requested_page") is not None or any(token in text for token in PAGE_CONTENT_TOKENS):
+        return "page_content"
+    return "generic"
+
+
 def _grounded_page_records(evidences: list[dict[str, Any]]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     seen: set[tuple[str, str, int, str]] = set()
@@ -257,7 +323,13 @@ def worked_example_pairs_from_evidence(evidences: list[dict[str, Any]]) -> list[
         parts: list[str] = []
         intervals: list[tuple[int, int, dict[str, Any]]] = []
         cursor = 0
+        previous_page: int | None = None
         for record in records:
+            current_page = int(record["printed_page"])
+            if previous_page is not None and current_page > previous_page + 1:
+                gap_text = "# __NONCONTIGUOUS_PAGE_GAP__\n"
+                parts.append(gap_text)
+                cursor += len(gap_text)
             page_text = str(record["content"])
             start = cursor
             parts.append(page_text)
@@ -265,6 +337,7 @@ def worked_example_pairs_from_evidence(evidences: list[dict[str, Any]]) -> list[
             intervals.append((start, cursor, record))
             parts.append("\n")
             cursor += 1
+            previous_page = current_page
         combined = "".join(parts)
         examples = list(WORKED_EXAMPLE_PATTERN.finditer(combined))
         unnumbered_by_page: dict[int, int] = {}
@@ -276,11 +349,21 @@ def worked_example_pairs_from_evidence(evidences: list[dict[str, Any]]) -> list[
         ordinals: dict[tuple[int, tuple[str, ...], str], int] = {}
         for index, marker in enumerate(examples):
             segment_end = examples[index + 1].start() if index + 1 < len(examples) else len(combined)
+            page_gap = WORKED_PAGE_GAP_PATTERN.search(combined, marker.end(), segment_end)
+            if page_gap:
+                segment_end = page_gap.start()
             solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
             if solution_markers:
-                next_heading = MARKDOWN_HEADING_PATTERN.search(combined, solution_markers[0].end(), segment_end)
-                if next_heading:
-                    segment_end = next_heading.start()
+                boundary_matches = [
+                    match
+                    for match in (
+                        MARKDOWN_HEADING_PATTERN.search(combined, solution_markers[0].end(), segment_end),
+                        WORKED_ANSWER_BOUNDARY_PATTERN.search(combined, solution_markers[0].end(), segment_end),
+                    )
+                    if match
+                ]
+                if boundary_matches:
+                    segment_end = min(match.start() for match in boundary_matches)
                     solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
             if len(solution_markers) == 1:
                 solution_start = solution_markers[0].start()
@@ -373,23 +456,15 @@ def resolve_answer_grounding(
     exercise_route: dict[str, Any],
 ) -> dict[str, Any]:
     request = parse_exercise_request(query)
-    text = str(query or "")
-    problem_tokens = ("例", "题", "问", "过程", "答案", "解", "计算", "证明", "选择", "填空", "怎么做", "结果")
-    source_tokens = ("教材", "讲义", "题集", "题目照片", "照片", "图中", "书上", "书里", "原书")
-    problem_like = bool(
-        request.get("exercise_label")
-        or request.get("exercise_number") is not None
-        or (page_anchor.get("requested_page") is not None and any(token in text for token in problem_tokens))
-        or any(token in text for token in ("这道题", "该题"))
+    request_kind = classify_source_request(
+        query=query,
+        book_title=book_title,
+        page_anchor=page_anchor,
+        exercise_label=str(request.get("exercise_label") or ""),
+        exercise_number=request.get("exercise_number"),
+        book_route=book_route,
     )
-    explicit_source = bool(
-        book_title
-        or page_anchor.get("requested_page") is not None
-        or page_anchor.get("book_id")
-        or book_route.get("series_id")
-        or any(token in text for token in source_tokens)
-    )
-    sourced = problem_like and explicit_source and not any(token in text for token in ("自拟", "我编", "原创题"))
+    sourced = request_kind == "exercise"
     grounding = _answer_grounding_base(required=sourced)
     if not sourced:
         return grounding

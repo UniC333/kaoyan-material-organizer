@@ -13,9 +13,11 @@
     "request_resolution",
     "page_crosscheck",
     "page_verification",
+    "page_anchor",
     "answer_grounding",
     "citation_coverage_ok",
-    "teaching_bundle"
+    "teaching_bundle",
+    "page_content_bundle"
   ],
   "properties": {
     "teaching_view_version": {"type": "string"},
@@ -32,6 +34,7 @@
     "request_resolution": {
       "type": "object",
       "properties": {
+        "source_request_kind": {"enum": ["generic", "page_content", "exercise"]},
         "exercise_resolution": {
           "type": "object",
           "required": ["status", "source", "exercise_label", "requested_option", "candidate_labels", "matched_terms"],
@@ -50,10 +53,27 @@
     },
     "page_crosscheck": {"type": "object"},
     "page_verification": {"type": "object"},
+    "page_anchor": {"type": "object"},
     "textbook_location": {"type": "object"},
     "answer_grounding": {"type": "object"},
     "citation_coverage_ok": {"type": "boolean"},
-    "teaching_bundle": {"type": "object"}
+    "teaching_bundle": {"type": "object"},
+    "page_content_bundle": {
+      "type": "object",
+      "required": ["status", "source_id", "book_title", "evidence_ids", "printed_pages", "pdf_pages", "content", "failure_reason", "next_action"],
+      "properties": {
+        "status": {"enum": ["exact", "asset_only", "blocked", "not_applicable"]},
+        "source_id": {"type": "string"},
+        "book_title": {"type": "string"},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+        "printed_pages": {"type": "array", "items": {"type": "integer"}},
+        "pdf_pages": {"type": "array", "items": {"type": "integer"}},
+        "content": {"type": "string"},
+        "failure_reason": {"type": "string"},
+        "next_action": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

@@ -269,6 +269,66 @@ def test_restarted_plain_example_number_is_distinguished_by_question_page() -> N
     assert all(item["pair_status"] == "exact_pair" for item in pairs)
 
 
+def test_worked_example_pairs_do_not_cross_missing_printed_pages() -> None:
+    evidences = [
+        {
+            "evidence_id": "EV-P54",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "例1 只有题目。",
+            "page_classification_refs": [
+                {"book_id": "tang-math1", "book_title": "汤家凤高数基础篇", "chapter_id": "CH3", "printed_page": 54}
+            ],
+        },
+        {
+            "evidence_id": "EV-P64",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "解 不应配给P54。\n例2 P64题目。\n解 P64答案。",
+            "page_classification_refs": [
+                {"book_id": "tang-math1", "book_title": "汤家凤高数基础篇", "chapter_id": "CH3", "printed_page": 64}
+            ],
+        },
+    ]
+
+    pairs = book_series.worked_example_pairs_from_evidence(evidences)
+
+    p54 = next(item for item in pairs if item["exercise_label"] == "例1")
+    p64 = next(item for item in pairs if item["exercise_label"] == "例2")
+    assert p54["pair_status"] == "question_only"
+    assert not p54["solution"]
+    assert p64["pair_status"] == "exact_pair"
+
+
+def test_worked_example_answer_stops_before_following_theory() -> None:
+    evidences = [
+        {
+            "evidence_id": "EV-P30",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "例2 求常数。\n解 答案。\n(3) 若函数可导，则连续。\n证明 理论证明。",
+            "page_classification_refs": [
+                {"book_id": "tang-math1", "book_title": "汤家凤高数基础篇", "chapter_id": "CH2", "printed_page": 30}
+            ],
+        },
+        {
+            "evidence_id": "EV-P44",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "例1 求证。\n证明 例题证明。\n定理2 某定理。\n证明 定理证明。",
+            "page_classification_refs": [
+                {"book_id": "tang-math1", "book_title": "汤家凤高数基础篇", "chapter_id": "CH3", "printed_page": 44}
+            ],
+        },
+    ]
+
+    pairs = book_series.worked_example_pairs_from_evidence(evidences)
+
+    assert all(item["pair_status"] == "exact_pair" for item in pairs)
+    assert "理论证明" not in next(item for item in pairs if item["exercise_label"] == "例2")["solution"]["content"]
+    assert "定理证明" not in next(item for item in pairs if item["exercise_label"] == "例1")["solution"]["content"]
+
+
 def test_resolve_answer_grounding_requires_exact_pair(monkeypatch) -> None:
     monkeypatch.setattr(
         book_series,
