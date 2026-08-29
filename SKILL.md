@@ -51,9 +51,9 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 默认只通过 `scripts/kb.py` 调用功能：
 
 - 教材页码、章节、题号、选项或“按书讲解”请求的第一项实质动作必须是调用本地 `query` 或 `ask`。不得先生成通用讲解再补定位。常规调用只传使用者原话和已知的学科、教材名，让确定性链路解析“第 94 页”“94 页起”“3.3.6”“第 4 题 C 项”等信号；只有使用者明确指定严格页码时才额外传 `--printed-page`。
-- 该门禁适用于首轮和后续追问。后续追问必须把本会话已经确认的教材、页码、章节和题号继续传给 `query` 或 `ask`，不得因为使用者只说“第 13 题”“这个 C 项”就丢失来源上下文；没有本轮结构化结果时不得凭记忆复述教材答案。
+- 该门禁适用于首轮和后续追问。后续追问必须把本会话已经确认的教材、页码、章节和题号继续显式传给 `query` 或 `ask`，不得因为使用者只说“第 13 题”“这个 C 项”就丢失来源上下文；没有本轮结构化结果时不得凭记忆复述教材答案。当前对话已有教材截图或照片时先检查现有附件，不得在附件仍可用时重复索取。
 - 精确页码已定位但使用者未给题号时，只接受 `request_resolution.exercise_resolution.status=inferred_unique` 的正式题目关系消歧；`ambiguous`、`not_found` 或 `unavailable` 时停止解题，只询问一个必要信息。不得用普通语义检索、选项字母或模型知识猜题。
-- Windows 诊断模板：`SKILL_ROOT\.venv\Scripts\python.exe SKILL_ROOT\scripts\kb.py --config SKILL_ROOT\kaoyan.config.json query --subject <学科> --book-title <教材名> --query <使用者原话> --format json`。给教学模型消费时优先用同参数的 `ask --format teaching-json`；完整 `json` 保留为诊断和保存契约。返回后必须先检查 `request_resolution`、`page_crosscheck`、`answer_grounding` 与 `teaching_bundle`；需要页码交叉核验但状态不是 `confirmed`，或 `teaching_bundle.status` 不是 `exact` 时，只报告状态并提出一个必要澄清问题。
+- Windows 诊断模板：`SKILL_ROOT\.venv\Scripts\python.exe SKILL_ROOT\scripts\kb.py --config SKILL_ROOT\kaoyan.config.json query --subject <学科> --book-title <教材名> --query <使用者原话> --format json`。给教学模型消费时优先用同参数的 `ask --format teaching-json`；完整 `json` 保留为诊断和保存契约。返回后必须先检查 `request_resolution.source_request_kind`、`page_crosscheck`、`answer_grounding`、`teaching_bundle` 与 `page_content_bundle`。`exercise` 请求只有 `teaching_bundle.status=exact` 才能输出原书答案；`page_content` 请求只有 `page_content_bundle.status=exact` 才能按审核正文讲解。需要页码交叉核验但状态不是 `confirmed` 时，只报告状态并提出一个必要澄清问题。
 - 普通教材检索与讲解优先使用 Terra `medium`。链路失败、歧义或缺证据时不得自动升级 Sol，也不得用更强模型猜答案；Sol 只在使用者明确选择后用于复杂推导或链路开发。
 
 - 读取本技能后，把当前 `SKILL.md` 所在目录视为 `SKILL_ROOT`。若当前工作目录不是 `SKILL_ROOT`，不得从学习 Vault 拼接 `\.venv`、`scripts` 或 `.kaoyan-kb` 相对路径。
@@ -146,6 +146,8 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 当使用者说“讲 P72”“解释第 49 页例题”或等价的页码请求时，先在回答开头给出教材定位状态，再决定能否按原题讲解：
 
 若该页请求指向一道有来源题目，页面定位之后还必须检查 `answer_grounding`；响应顺序固定为“答案定位状态 -> 原书答案 -> 使用者过程中的第一个错误等号 -> AI 补充推导”。未达到 `exact_answer` 时，后面三部分均不得生成实质解题内容。
+
+若该页请求只是理解、解释或讲解代码、公式、定义和段落，按 `page_content` 处理，不触发原书习题答案门禁。`page_content_bundle.status=exact` 时，响应顺序固定为“教材定位状态 -> 原页相关代码或文字 -> 教学解释”；`asset_only` 或 `blocked` 时不得输出或继承该页正文，只能在状态说明后提供明确标注且不继承页码、原书变量或原文身份的“补充讲解”。
 
 - `exact_evidence`：只围绕该印刷页和已列出的正式证据讲解；书中结论、题号和原书变量可以明确归因。
 - `exact_asset`：只确认原页已定位，必须说明“教材正文未确认”；除非使用者随后明确要求人工阅图，否则不要复述或讲解为该页原题。

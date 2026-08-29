@@ -15,6 +15,7 @@ import answer_local_question as answer_module
 import ask_local_knowledge as ask_module
 import build_pdf_ocr_review_artifact as pdf_review_artifact_module
 import publish_pdf_ocr_evidence as pdf_publish_module
+import query_local_knowledge as query_module
 from save_local_answer import save_answer_contract, save_eligibility
 
 
@@ -335,3 +336,149 @@ def test_teaching_contract_rejects_conflicting_exact_gate() -> None:
                 "teaching_bundle": {"status": "blocked"},
             }
         )
+
+
+def _page_content_request(kind: str = "page_content") -> dict:
+    return {
+        "original_query": "解释 P117 的 nextval 代码",
+        "source_request_kind": kind,
+        "page": {"number": 117, "semantics": "exact_page", "explicit_cli": True},
+        "exercise_resolution": {
+            "status": "not_requested",
+            "source": "",
+            "exercise_label": "",
+            "requested_option": "",
+            "candidate_labels": [],
+            "matched_terms": [],
+        },
+    }
+
+
+def _page_content_anchor(status: str = "exact_evidence") -> dict:
+    return {
+        "requested_page": 117,
+        "match_status": status,
+        "book_id": "SRC-408-0004",
+        "book_title": "王道数据结构",
+        "source_id": "SRC-408-0004",
+        "pdf_page": 129,
+        "evidence_ids": ["EV-408-000068"],
+        "matched_evidence_id": "EV-408-000068",
+        "match_basis": "formal_page_locator_index",
+    }
+
+
+def _reviewed_page_content_evidence(**overrides: object) -> dict:
+    result = {
+        "evidence_id": "EV-408-000068",
+        "source_id": "SRC-408-0004",
+        "book_title": "王道数据结构",
+        "printed_page": 117,
+        "pdf_page": 129,
+        "content": "if (T.ch[i]!=T.ch[j]) nextval[i]=j; else nextval[i]=nextval[j];",
+        "source_grounded": True,
+        "verification_status": "reviewed",
+        "review_status": "accepted",
+    }
+    result.update(overrides)
+    return result
+
+
+def test_exact_page_content_bundle_keeps_reviewed_source_and_both_page_numbers() -> None:
+    bundle = query_module.build_page_content_bundle(
+        request_resolution=_page_content_request(),
+        page_anchor=_page_content_anchor(),
+        evidences=[_reviewed_page_content_evidence()],
+    )
+
+    assert bundle["status"] == "exact"
+    assert bundle["source_id"] == "SRC-408-0004"
+    assert bundle["evidence_ids"] == ["EV-408-000068"]
+    assert bundle["printed_pages"] == [117]
+    assert bundle["pdf_pages"] == [129]
+    assert "nextval[i]" in bundle["content"]
+
+
+@pytest.mark.parametrize(
+    ("page_status", "bundle_status"),
+    [
+        ("exact_asset", "asset_only"),
+        ("ambiguous", "blocked"),
+        ("unmapped", "blocked"),
+        ("not_found", "blocked"),
+        ("unavailable", "blocked"),
+    ],
+)
+def test_unconfirmed_page_content_states_never_expose_text(page_status: str, bundle_status: str) -> None:
+    bundle = query_module.build_page_content_bundle(
+        request_resolution=_page_content_request(),
+        page_anchor=_page_content_anchor(page_status),
+        evidences=[_reviewed_page_content_evidence()],
+    )
+
+    assert bundle["status"] == bundle_status
+    assert bundle["content"] == ""
+    assert bundle["failure_reason"]
+    assert bundle["next_action"]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"review_status": "pending", "verification_status": "candidate"},
+        {"source_grounded": False},
+        {"source_id": "SRC-OTHER"},
+        {"printed_page": 118},
+        {"pdf_page": 130},
+    ],
+)
+def test_page_content_bundle_rejects_unreviewed_or_mismatched_evidence(overrides: dict) -> None:
+    bundle = query_module.build_page_content_bundle(
+        request_resolution=_page_content_request(),
+        page_anchor=_page_content_anchor(),
+        evidences=[_reviewed_page_content_evidence(**overrides)],
+    )
+
+    assert bundle["status"] == "blocked"
+    assert bundle["content"] == ""
+
+
+def test_unconfirmed_page_crosscheck_blocks_reviewed_page_content() -> None:
+    bundle = query_module.build_page_content_bundle(
+        request_resolution=_page_content_request(),
+        page_anchor=_page_content_anchor(),
+        evidences=[_reviewed_page_content_evidence()],
+        page_crosscheck={"required": True, "status": "conflict", "reason": "页码线索与正式小节标题锚点冲突。"},
+    )
+
+    assert bundle["status"] == "blocked"
+    assert bundle["content"] == ""
+    assert "冲突" in bundle["failure_reason"]
+
+
+def test_teaching_v2_exposes_compact_page_anchor_and_reviewed_page_text(monkeypatch) -> None:
+    evidence = _reviewed_page_content_evidence()
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [{"evidence_id": "EV-408-000068"}])
+    result = _result(answer_mode="accepted_evidence", page_anchor=_page_content_anchor())
+    result.update(
+        subject="408",
+        chapter="第4章 串",
+        query="解释 P117 的 nextval 代码",
+        fallback_note="",
+        book_resolution={"status": "exact", "source": "explicit", "book_title": "王道数据结构"},
+        request_resolution=_page_content_request(),
+        page_crosscheck={"required": False, "status": "not_requested"},
+        page_verification={"page_location_status": "exact_evidence", "textbook_explanation_allowed": True},
+        evidence_hits=[evidence],
+        runtime_context={},
+    )
+
+    view = answer_module.build_teaching_answer_view(answer_module.build_answer_contract(result))
+
+    assert view["teaching_view_version"] == "m6.teaching.v2"
+    assert view["page_anchor"]["printed_page"] == 117
+    assert view["page_anchor"]["pdf_page"] == 129
+    assert view["page_content_bundle"]["status"] == "exact"
+    assert "nextval[i]" in view["page_content_bundle"]["content"]
+    assert view["answer_grounding"]["status"] == "not_applicable"
+    assert view["teaching_bundle"]["status"] == "not_applicable"

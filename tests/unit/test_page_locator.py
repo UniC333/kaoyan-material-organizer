@@ -13,8 +13,9 @@ if str(SCRIPTS) not in sys.path:
 
 from kaoyan_kb.domain import page_locator
 from kaoyan_kb.domain import exercise_locator
+from kaoyan_kb.domain import book_series
 from kaoyan_kb.domain.index_freshness import fingerprint_index_inputs
-from query_local_knowledge import build_page_crosscheck, infer_exercise_from_exact_page, parse_page_anchor, resolve_current_task_book, resolve_request
+from query_local_knowledge import build_answer_grounding, build_page_crosscheck, infer_exercise_from_exact_page, parse_page_anchor, resolve_current_task_book, resolve_request
 from query_local_knowledge import apply_exercise_relation, apply_hard_page_route, build_reference_items, exact_evidence_hits_for_locator
 import sync_exam_kb
 import create_snapshot
@@ -285,6 +286,76 @@ def test_request_resolution_parses_option_without_exercise_label() -> None:
     assert resolved["exercise_label"] == ""
     assert resolved["requested_option"] == "C"
     assert resolved["exercise_resolution"]["status"] == "not_requested"
+
+
+def test_request_resolution_separates_page_explanation_from_exercise_answer() -> None:
+    page_content = resolve_request(
+        query="现在我能理解117页，但 else nextval[i]=nextval[j] 是怎么来的？",
+        book_title="王道数据结构",
+        chapter=None,
+        printed_page=117,
+        exercise_label=None,
+    )
+    exercise = resolve_request(
+        query="P117 第4题怎么做",
+        book_title="王道数据结构",
+        chapter=None,
+        printed_page=117,
+        exercise_label=None,
+    )
+    generic = resolve_request(
+        query="KMP 的 j 回退和并查集 find 有什么联系？",
+        book_title=None,
+        chapter=None,
+        printed_page=None,
+        exercise_label=None,
+    )
+
+    assert page_content["source_request_kind"] == "page_content"
+    assert exercise["source_request_kind"] == "exercise"
+    assert generic["source_request_kind"] == "generic"
+    assert generic["page"]["semantics"] == "none"
+
+
+def test_understanding_and_explanation_do_not_trigger_either_answer_grounding_path(monkeypatch) -> None:
+    query = "解释 P117 的 nextval 代码，我还没理解这里"
+    anchor = {"requested_page": 117, "book_id": "SRC-408-0004", "match_status": "exact_evidence"}
+    monkeypatch.setattr(book_series, "load_exercise_pair_index", lambda: {"items": []})
+
+    local_grounding = build_answer_grounding(
+        query=query,
+        book_title="王道数据结构",
+        page_anchor=anchor,
+        exercise_anchor={},
+        evidences=[],
+    )
+    series_grounding = book_series.resolve_answer_grounding(
+        query=query,
+        book_title="王道数据结构",
+        page_anchor=anchor,
+        book_route={},
+        exercise_route={},
+    )
+
+    assert local_grounding["status"] == "not_applicable"
+    assert series_grounding["status"] == "not_applicable"
+
+
+def test_explicit_exercise_still_requires_exact_source_answer(monkeypatch) -> None:
+    anchor = {"requested_page": 117, "book_id": "SRC-408-0004", "match_status": "exact_evidence"}
+    monkeypatch.setattr(book_series, "load_exercise_pair_index", lambda: {"items": []})
+
+    grounding = book_series.resolve_answer_grounding(
+        query="P117 第4题 C 选项怎么判断？",
+        book_title="王道数据结构",
+        page_anchor=anchor,
+        book_route={},
+        exercise_route={},
+    )
+
+    assert grounding["required"] is True
+    assert grounding["status"] == "answer_not_found"
+    assert grounding["can_conclude"] is False
 
 
 def test_request_resolution_keeps_multiple_direct_options_ambiguous() -> None:
@@ -717,6 +788,103 @@ def test_plain_worked_example_relations_accept_integer_labels_and_restart_by_pag
         "EXW-tang-math1-CH1-p30-例1",
     }
     assert all(item["relation_status"] == "exact" for item in relations)
+
+
+def test_worked_example_relations_do_not_pair_across_missing_printed_pages() -> None:
+    evidences = [
+        {
+            "evidence_id": "EV-TANG-54",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "例1 求不定积分。",
+            "page_classification_refs": [
+                {
+                    "book_id": "tang-math1",
+                    "book_title": "汤家凤高数基础篇",
+                    "chapter_id": "CH3",
+                    "printed_page": 54,
+                    "source_image_path": "P54.jpg",
+                }
+            ],
+        },
+        {
+            "evidence_id": "EV-TANG-64",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "解 这是另一连续页段中的解答。\n例2 求定积分。\n解 第二题答案。",
+            "page_classification_refs": [
+                {
+                    "book_id": "tang-math1",
+                    "book_title": "汤家凤高数基础篇",
+                    "chapter_id": "CH3",
+                    "printed_page": 64,
+                    "source_image_path": "P64.jpg",
+                }
+            ],
+        },
+    ]
+
+    relations = exercise_locator.build_worked_example_relations(evidences)
+
+    first = next(item for item in relations if item["exercise_label"] == "例1")
+    second = next(item for item in relations if item["exercise_label"] == "例2")
+    assert first["relation_status"] == "question_only"
+    assert first["answer"] == {}
+    assert second["relation_status"] == "exact"
+    assert second["question"]["printed_pages"] == [64]
+    assert second["answer"]["printed_pages"] == [64]
+
+
+def test_worked_example_answer_stops_before_following_theorem_proof() -> None:
+    evidences = [
+        {
+            "evidence_id": "EV-TANG-44",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "例1 证明一个结论。\n证明 例题证明。\n定理2 拉格朗日中值定理。\n证明 定理证明。",
+            "page_classification_refs": [
+                {
+                    "book_id": "tang-math1",
+                    "book_title": "汤家凤高数基础篇",
+                    "chapter_id": "CH3",
+                    "printed_page": 44,
+                    "source_image_path": "P44.jpg",
+                }
+            ],
+        }
+    ]
+
+    relations = exercise_locator.build_worked_example_relations(evidences)
+
+    assert len(relations) == 1
+    assert relations[0]["relation_status"] == "exact"
+    assert relations[0]["answer"]["content"] == "证明 例题证明。"
+
+
+def test_worked_example_answer_stops_before_numbered_theory_paragraph() -> None:
+    evidences = [
+        {
+            "evidence_id": "EV-TANG-30",
+            "verification_status": "source_grounded",
+            "source_grounded": True,
+            "content": "例2 求常数。\n解 常数为2。\n(3) 若函数可导，则函数连续。\n证明 理论证明。",
+            "page_classification_refs": [
+                {
+                    "book_id": "tang-math1",
+                    "book_title": "汤家凤高数基础篇",
+                    "chapter_id": "CH2",
+                    "printed_page": 30,
+                    "source_image_path": "P30.jpg",
+                }
+            ],
+        }
+    ]
+
+    relations = exercise_locator.build_worked_example_relations(evidences)
+
+    assert len(relations) == 1
+    assert relations[0]["relation_status"] == "exact"
+    assert relations[0]["answer"]["content"] == "解 常数为2。"
 
 
 def test_unnumbered_worked_examples_receive_page_local_labels() -> None:

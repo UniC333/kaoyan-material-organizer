@@ -25,6 +25,7 @@
     "request_resolution": {
       "type": "object",
       "properties": {
+        "source_request_kind": {"enum": ["generic", "page_content", "exercise"]},
         "exercise_resolution": {
           "type": "object",
           "required": ["status", "source", "exercise_label", "requested_option", "candidate_labels", "matched_terms"],
@@ -70,6 +71,22 @@
         "exercise_label": {"type": "string"},
         "citations": {"type": "object"},
         "failure_reason": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "page_content_bundle": {
+      "type": "object",
+      "required": ["status", "source_id", "book_title", "evidence_ids", "printed_pages", "pdf_pages", "content", "failure_reason", "next_action"],
+      "properties": {
+        "status": {"enum": ["exact", "asset_only", "blocked", "not_applicable"]},
+        "source_id": {"type": "string"},
+        "book_title": {"type": "string"},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+        "printed_pages": {"type": "array", "items": {"type": "integer"}},
+        "pdf_pages": {"type": "array", "items": {"type": "integer"}},
+        "content": {"type": "string"},
+        "failure_reason": {"type": "string"},
+        "next_action": {"type": "string"}
       },
       "additionalProperties": false
     },

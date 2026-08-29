@@ -17,6 +17,9 @@ WORKED_SOLUTION_PATTERN = re.compile(
     r"(?m)^\s*(?:#{1,6}\s*)?(?:【\s*)?(?:解|解答|证明|分析与求解)(?:\s*】|(?=\s|[：:、.．]|$))"
 )
 MARKDOWN_HEADING_PATTERN = re.compile(r"(?m)^\s*#{1,6}\s+")
+WORKED_ANSWER_BOUNDARY_PATTERN = re.compile(
+    r"(?m)^\s*(?:(?:定理|定义)\s*\d*|\(\s*\d+\s*\)\s*若函数|本章学习诊断)"
+)
 CONTAINER_HEADING_PATTERN = re.compile(
     r"^(?:题型|专题|方法|模型|考点|类型)\s*(?:[0-9]+|[零一二三四五六七八九十两]+)(?:\s*[：:、-]?\s*.*)?$"
 )
@@ -346,9 +349,23 @@ def build_worked_example_relations(evidences: list[dict[str, Any]]) -> list[dict
     for record in _grounded_printed_page_records(evidences):
         grouped[(record["book_id"], record["chapter_id"])].append(record)
 
-    candidates: list[dict[str, Any]] = []
+    contiguous_groups: list[tuple[str, str, list[dict[str, Any]]]] = []
     for (book_id, chapter_id), records in grouped.items():
         records.sort(key=lambda item: (int(item["printed_page"]), str(item["evidence_id"])))
+        segment: list[dict[str, Any]] = []
+        previous_page: int | None = None
+        for record in records:
+            printed_page = int(record["printed_page"])
+            if segment and previous_page is not None and printed_page > previous_page + 1:
+                contiguous_groups.append((book_id, chapter_id, segment))
+                segment = []
+            segment.append(record)
+            previous_page = printed_page
+        if segment:
+            contiguous_groups.append((book_id, chapter_id, segment))
+
+    candidates: list[dict[str, Any]] = []
+    for book_id, chapter_id, records in contiguous_groups:
         parts: list[str] = []
         intervals: list[tuple[int, int, dict[str, Any]]] = []
         cursor = 0
@@ -372,9 +389,13 @@ def build_worked_example_relations(evidences: list[dict[str, Any]]) -> list[dict
             segment_end = examples[index + 1].start() if index + 1 < len(examples) else len(combined)
             solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
             if solution_markers:
-                next_heading = MARKDOWN_HEADING_PATTERN.search(combined, solution_markers[0].end(), segment_end)
-                if next_heading:
-                    segment_end = next_heading.start()
+                boundary_matches = [
+                    match
+                    for pattern in (MARKDOWN_HEADING_PATTERN, WORKED_ANSWER_BOUNDARY_PATTERN)
+                    if (match := pattern.search(combined, solution_markers[0].end(), segment_end))
+                ]
+                if boundary_matches:
+                    segment_end = min(match.start() for match in boundary_matches)
                     solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
             solution_start = solution_markers[0].start() if solution_markers else segment_end
             relation_status = "exact" if len(solution_markers) == 1 else "needs_review" if solution_markers else "question_only"
