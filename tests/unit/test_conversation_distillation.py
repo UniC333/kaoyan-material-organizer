@@ -103,19 +103,19 @@ def test_skill_contract_keeps_state_first_recording_boundaries() -> None:
     assert "状态优先分流" in skill
     assert "普通进度陈述默认零写入" in skill
     assert "纯时长、背词、章节推进等进度不生成问答" in skill
-    assert "当天多主题且无明确主次时跳过蒸馏" in skill
+    assert "多任务形成多个主题且没有明确主次时不蒸馏" in skill
 
 
-def test_skill_contract_requires_complete_cross_task_daily_closure() -> None:
+def test_skill_contract_delegates_cross_task_closure_to_vault_authority() -> None:
     skill = (Path(__file__).resolve().parents[2] / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "任务列表按更新时间发现候选" in skill
-    assert "标题和摘要只用于发现" in skill
-    assert "分页读取直到已经越过该日期" in skill
-    assert "对候选任务按任务 ID 去重" in skill
-    assert "扫描、纳入、跳过" in skill
-    assert "不得声称已经汇总全天" in skill
-    assert "工作目录位于配置 `vault_root`" in skill
+    assert "00_总计划/26_主控与对话规则.md" in skill
+    assert "唯一权威" in skill
+    assert "主控规则缺失、不可读或无法从本次 `vault_root` 唯一定位时" in skill
+    assert "会话水位线必须最后更新" in skill
+    assert "不得读取、汇总或写入其他会话" not in skill
+    assert "Asia/Shanghai 当天全部考研学习任务" not in skill
+    assert "工作目录位于配置 `vault_root`" not in skill
 
 
 def test_publish_without_confirmation_has_zero_writes(tmp_path: Path) -> None:
