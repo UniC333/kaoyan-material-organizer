@@ -1,0 +1,184 @@
+{
+  "title": "conversation_scan_manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "mode",
+    "budget",
+    "write_authorized",
+    "old_local_watermark",
+    "old_global_watermark",
+    "scan_upper",
+    "discovery",
+    "tasks",
+    "facts"
+  ],
+  "properties": {
+    "schema_version": {"const": "conversation-scan-manifest.v1"},
+    "mode": {"enum": ["lightweight", "detailed_audit"]},
+    "budget": {
+      "type": "object",
+      "required": ["page_count", "ambiguity_task_count", "limit_triggered"],
+      "properties": {
+        "page_count": {"type": "integer", "minimum": 0},
+        "ambiguity_task_count": {"type": "integer", "minimum": 0},
+        "limit_triggered": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "write_authorized": {"type": "boolean"},
+    "old_local_watermark": {"$ref": "#/$defs/timestamp"},
+    "old_global_watermark": {"$ref": "#/$defs/timestamp"},
+    "scan_upper": {"$ref": "#/$defs/timestamp"},
+    "discovery": {
+      "type": "object",
+      "required": ["active", "pinned", "archived", "local_fallback", "unavailable_hosts", "unavailable_sources"],
+      "properties": {
+        "active": {
+          "type": "object",
+          "required": ["limit", "returned_count", "items"],
+          "properties": {
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            "returned_count": {"type": "integer", "minimum": 0, "maximum": 50},
+            "items": {"type": "array", "maxItems": 50, "items": {"$ref": "#/$defs/discovery_item"}}
+          },
+          "additionalProperties": false
+        },
+        "pinned": {
+          "type": "object",
+          "required": ["complete", "items"],
+          "properties": {
+            "complete": {"type": "boolean"},
+            "items": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/discovery_item"}}
+          },
+          "additionalProperties": false
+        },
+        "archived": {
+          "type": "object",
+          "required": ["local_complete", "global_complete", "items"],
+          "properties": {
+            "local_complete": {"type": "boolean"},
+            "global_complete": {"type": "boolean"},
+            "items": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/discovery_item"}}
+          },
+          "additionalProperties": false
+        },
+        "local_fallback": {
+          "type": "object",
+          "required": ["schema_status", "schema_version", "items"],
+          "properties": {
+            "schema_status": {"enum": ["not_needed", "supported", "missing", "unsupported", "incomplete"]},
+            "schema_version": {"type": "string"},
+            "items": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/discovery_item"}}
+          },
+          "additionalProperties": false
+        },
+        "unavailable_hosts": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/unavailable"}},
+        "unavailable_sources": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/unavailable"}}
+      },
+      "additionalProperties": false
+    },
+    "tasks": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/task_body"}},
+    "facts": {"type": "array", "maxItems": 500, "items": {"$ref": "#/$defs/fact"}}
+  },
+  "$defs": {
+    "timestamp": {"anyOf": [{"type": "string"}, {"type": "integer"}, {"type": "number"}]},
+    "source_kind": {"enum": ["local_codex", "remote_codex", "chatgpt"]},
+    "discovery_item": {
+      "type": "object",
+      "required": ["task_id", "source_kind", "host_id", "updated_at"],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "source_kind": {"$ref": "#/$defs/source_kind"},
+        "host_id": {"type": "string", "minLength": 1},
+        "updated_at": {"$ref": "#/$defs/timestamp"}
+      },
+      "additionalProperties": false
+    },
+    "unavailable": {
+      "type": "object",
+      "required": ["id", "scope"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "scope": {"enum": ["local_codex", "global_other"]}
+      },
+      "additionalProperties": false
+    },
+    "user_message": {
+      "type": "object",
+      "required": ["message_id", "text"],
+      "properties": {
+        "message_id": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1, "maxLength": 12000}
+      },
+      "additionalProperties": false
+    },
+    "turn": {
+      "type": "object",
+      "required": ["turn_id", "started_at", "user_messages"],
+      "properties": {
+        "turn_id": {"type": "string", "minLength": 1},
+        "started_at": {"$ref": "#/$defs/timestamp"},
+        "user_messages": {"type": "array", "maxItems": 100, "items": {"$ref": "#/$defs/user_message"}}
+      },
+      "additionalProperties": false
+    },
+    "task_body": {
+      "type": "object",
+      "required": [
+        "task_id",
+        "source_kind",
+        "host_id",
+        "status",
+        "updated_at_before",
+        "updated_at_after",
+        "history_exhausted",
+        "next_cursor",
+        "read_error",
+        "body_source",
+        "turns"
+      ],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "source_kind": {"$ref": "#/$defs/source_kind"},
+        "host_id": {"type": "string", "minLength": 1},
+        "status": {"type": "string", "minLength": 1},
+        "updated_at_before": {"$ref": "#/$defs/timestamp"},
+        "updated_at_after": {"$ref": "#/$defs/timestamp"},
+        "history_exhausted": {"type": "boolean"},
+        "next_cursor": {"type": "string"},
+        "read_error": {"type": "string"},
+        "body_source": {"enum": ["official", "local_history", "local_rollout"]},
+        "turns": {"type": "array", "maxItems": 4000, "items": {"$ref": "#/$defs/turn"}}
+      },
+      "additionalProperties": false
+    },
+    "fact": {
+      "type": "object",
+      "required": [
+        "task_id",
+        "turn_id",
+        "user_message_id",
+        "fact_type",
+        "subject",
+        "text",
+        "confirmation",
+        "user_confirmed",
+        "explicit_reference"
+      ],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "turn_id": {"type": "string", "minLength": 1},
+        "user_message_id": {"type": "string", "minLength": 1},
+        "fact_type": {"enum": ["progress", "stop_position", "learning_gap", "accepted_understanding", "duration", "course"]},
+        "subject": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "confirmation": {"enum": ["explicit", "accepted_explanation"]},
+        "user_confirmed": {"const": true},
+        "explicit_reference": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

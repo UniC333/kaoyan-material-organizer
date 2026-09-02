@@ -113,6 +113,9 @@ def test_skill_contract_delegates_cross_task_closure_to_vault_authority() -> Non
     assert "唯一权威" in skill
     assert "主控规则缺失、不可读或无法从本次 `vault_root` 唯一定位时" in skill
     assert "会话水位线必须最后更新" in skill
+    assert "learner closure validate" in skill
+    assert "本地 Codex 已核验至" in skill
+    assert "全局会话已核验至" in skill
     assert "不得读取、汇总或写入其他会话" not in skill
     assert "Asia/Shanghai 当天全部考研学习任务" not in skill
     assert "工作目录位于配置 `vault_root`" not in skill
