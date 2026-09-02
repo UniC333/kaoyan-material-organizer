@@ -63,6 +63,22 @@ def add_learner_commands(subparsers: argparse._SubParsersAction, *, formatter_cl
     queue = distill_commands.add_parser("queue")
     queue.add_argument("--format", choices=("json", "quiet"), default="json")
 
+    closure = commands.add_parser("closure")
+    closure_commands = closure.add_subparsers(dest="closure_command", required=True)
+    closure_validate = closure_commands.add_parser("validate")
+    closure_validate.add_argument("--manifest-json", required=True)
+    closure_validate.add_argument("--vault-root")
+    closure_validate.add_argument("--codex-home")
+    closure_validate.add_argument("--format", choices=("json", "quiet"), default="json")
+    closure_probe = closure_commands.add_parser("probe-local-indexes")
+    closure_probe.add_argument("--codex-home")
+    closure_probe.add_argument("--format", choices=("json", "quiet"), default="json")
+    closure_discover = closure_commands.add_parser("discover-local")
+    closure_discover.add_argument("--after", required=True)
+    closure_discover.add_argument("--through", required=True)
+    closure_discover.add_argument("--codex-home")
+    closure_discover.add_argument("--format", choices=("json", "quiet"), default="json")
+
     exercise = commands.add_parser("exercise")
     exercise.add_argument("--subject")
     exercise.add_argument("--chapter")
@@ -100,6 +116,22 @@ def dispatch_learner(args: argparse.Namespace, run_script: Callable[..., str], e
     command = args.learner_command
     if command == "exercise":
         return exercise_handler(args)
+    if command == "closure":
+        forwarded = [args.closure_command, "--format", args.format]
+        if args.closure_command == "validate":
+            forwarded.extend(["--manifest-json", args.manifest_json])
+            if args.vault_root:
+                forwarded.extend(["--vault-root", args.vault_root])
+            if args.codex_home:
+                forwarded.extend(["--codex-home", args.codex_home])
+        elif args.closure_command == "probe-local-indexes":
+            if args.codex_home:
+                forwarded.extend(["--codex-home", args.codex_home])
+        else:
+            forwarded.extend(["--after", args.after, "--through", args.through])
+            if args.codex_home:
+                forwarded.extend(["--codex-home", args.codex_home])
+        return run_script("conversation_closure.py", *forwarded)
     if command == "distill":
         forwarded = [args.distill_command, "--format", args.format]
         if args.distill_command in {"inspect", "propose"}:

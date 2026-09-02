@@ -1,0 +1,34 @@
+{
+  "title": "conversation_closure_decision",
+  "type": "object",
+  "required": ["schema_version", "manifest_schema_version", "mode", "watermarks", "coverage", "eligible_turns", "facts", "actions", "report"],
+  "properties": {
+    "schema_version": {"const": "conversation-closure-decision.v1"},
+    "manifest_schema_version": {"const": "conversation-scan-manifest.v1"},
+    "mode": {"enum": ["lightweight", "detailed_audit"]},
+    "watermarks": {
+      "type": "object",
+      "required": ["old_local", "old_global", "scan_upper"],
+      "properties": {
+        "old_local": {"type": "string"},
+        "old_global": {"type": "string"},
+        "scan_upper": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "coverage": {"type": "object"},
+    "eligible_turns": {"type": "array"},
+    "facts": {"type": "array"},
+    "actions": {
+      "type": "object",
+      "required": [
+        "write_authorized",
+        "any_fact_write_eligible",
+        "local_watermark_advance_eligible_after_successful_writes",
+        "global_watermark_advance_eligible_after_successful_writes"
+      ]
+    },
+    "report": {"type": "object"}
+  },
+  "additionalProperties": false
+}

@@ -43,6 +43,7 @@ Common examples:
   kb.py query --subject 408 --query "栈和队列的区别" --format json
   kb.py review evidence queue --subject 数学 --format json
   kb.py learner daily-card --plan-date 2026-07-07 --format json
+  kb.py learner closure validate --manifest-json <path> --vault-root <path> --format json
   kb.py book inspect --book-root <book-root> --format json
 """
 
