@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import allocate_kb_id, build_provenance_record, build_source_span, ensure_kb_layout, load_all_json, load_json_or_default, now_iso, save_json, stable_fingerprint, validate_entity_contract
+from common import allocate_kb_id, build_provenance_record, build_source_span, ensure_kb_layout, load_all_json, load_json_or_default, now_iso, sanitize_name, save_json, stable_fingerprint, validate_entity_contract
 from config import load_runtime_config
 from ocr.cache import cache_paths_for_request
 
@@ -60,11 +60,14 @@ def _reviewed_page_text(normalized: dict[str, Any], overlay: dict[str, dict[str,
 
 
 def _resolved_printed_page(chapter: dict[str, Any], handoff_item: dict[str, Any], pdf_page: int) -> int:
-    value = handoff_item.get("printed_page", chapter.get("printed_page", pdf_page))
+    value = handoff_item.get("printed_page")
     try:
-        return int(value)
+        printed_page = int(value)
+        if printed_page < 1:
+            raise ValueError
+        return printed_page
     except (TypeError, ValueError):
-        return pdf_page
+        raise SystemExit(f"[ERROR] PDF page {pdf_page} has no formally reviewed printed-page mapping")
 
 
 def publish(*, subject: str, book_title: str, pdf_source_id: str, report_path: Path, review_artifact_path: Path, chapter_number: int | None = None) -> dict[str, Any]:
@@ -86,7 +89,6 @@ def publish(*, subject: str, book_title: str, pdf_source_id: str, report_path: P
         if chapter_number is not None and item_chapter_number != chapter_number:
             continue
         pdf_page = int(chapter.get("pdf_page", chapter.get("page_start", 0)) or 0)
-        printed_page = pdf_page
         page_id = f"PDFPAGE-{pdf_source_id}-{pdf_page:04d}"
         handoff_item = handoff.get(page_id, {})
         if handoff_item.get("review_status") not in {"accepted", "not-required"}:
@@ -103,8 +105,8 @@ def publish(*, subject: str, book_title: str, pdf_source_id: str, report_path: P
         text = _reviewed_page_text(normalized, overlay)
         if not text:
             continue
-        chunk_id = f"PDFOCR-{item_chapter_number:04d}-{pdf_page:04d}"
-        chapter_id = f"PDFCH-{pdf_source_id}-{item_chapter_number:04d}"
+        chapter_id = str(handoff_item.get("chapter_id") or f"PDFCH-{pdf_source_id}-{item_chapter_number:04d}")
+        chunk_id = f"PDFOCR-{sanitize_name(chapter_id)}-{pdf_page:04d}"
         evidence_key = stable_fingerprint({"source_id": pdf_source_id, "chapter_id": chapter_id, "chunk_id": chunk_id, "source_sha256": normalized.get("source_file_sha256", "")})
         current = existing.get(evidence_key, {})
         span = build_source_span(
@@ -126,12 +128,13 @@ def publish(*, subject: str, book_title: str, pdf_source_id: str, report_path: P
             "evidence_id": current.get("evidence_id") or allocate_kb_id("evidence", subject),
             "evidence_key": evidence_key,
             "subject": subject,
+            "book_id": f"PDFOCR-{pdf_source_id}",
             "book_title": book_title,
             "source_id": pdf_source_id,
             "chapter_id": chapter_id,
-            "chapter_title": str(chapter.get("chapter_title", "")).strip(),
+            "chapter_title": str(handoff_item.get("chapter_title") or chapter.get("chapter_title") or "").strip(),
             "chunk_id": chunk_id,
-            "title": str(chapter.get("chapter_title", "")).strip() or f"第{chapter_number}章",
+            "title": str(handoff_item.get("section_title") or handoff_item.get("chapter_title") or chapter.get("chapter_title") or f"PDF第{pdf_page}页").strip(),
             "content": text,
             "pdf_page": pdf_page,
             "printed_page": printed_page,
@@ -145,14 +148,26 @@ def publish(*, subject: str, book_title: str, pdf_source_id: str, report_path: P
             "confidence": 0.85,
             "source_grounded": True,
             "source_spans": [span],
+            "page_classification_refs": [{
+                "book_id": f"PDFOCR-{pdf_source_id}",
+                "book_title": book_title,
+                "source_id": pdf_source_id,
+                "source_file_sha256": str(source_file.get("sha256", "")),
+                "chapter_id": chapter_id,
+                "chapter_title": str(handoff_item.get("chapter_title") or chapter.get("chapter_title") or "").strip(),
+                "section_title": str(handoff_item.get("section_title") or "").strip(),
+                "printed_page": printed_page,
+                "pdf_page": pdf_page,
+                "source_image_path": str(chapter.get("rendered_image_path") or ""),
+            }],
             "locator": dict(span["locator"]),
             "provenance": build_provenance_record(origin_type="pdf_page_ocr", verification_status="reviewed", source_spans=[span], source_grounded=True),
             "syllabus_candidates": current.get("syllabus_candidates", []),
             "accepted_syllabus_nodes": current.get("accepted_syllabus_nodes", []),
-            "mapping_status": current.get("mapping_status", "unmapped"),
+            "mapping_status": "mapped",
             "pdf_ocr_request_key": normalized.get("request_key", ""),
             "pdf_ocr_normalized_path": str(chapter.get("normalized_path", "")),
-            "coverage_note": "One explicitly reviewed rendered PDF page; no neighboring-page inference.",
+            "coverage_note": "One formally mapped and reviewed rendered PDF page; no neighboring-page inference.",
             "updated_at": now_iso(),
         }
         validate_entity_contract("evidence", evidence)

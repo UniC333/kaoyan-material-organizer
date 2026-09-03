@@ -115,7 +115,7 @@ def build_pdf_ocr_review_status(
     book_id = f"PDFOCR-{resolved_source_id}"
     status_items: list[dict[str, Any]] = []
     classification_items: list[dict[str, Any]] = []
-    chapter_definitions: list[dict[str, Any]] = []
+    chapter_definitions_by_id: dict[str, dict[str, Any]] = {}
     chapter_view_paths: list[str] = []
 
     for chapter in report_payload.get("pages", report_payload.get("chapters", [])):
@@ -137,7 +137,7 @@ def build_pdf_ocr_review_status(
                 "page_id": page_id,
                 "book_id": book_id,
                 "scan_index": chapter_number,
-                "printed_page": pdf_page,
+                "printed_page": None,
                 "printed_page_label": f"PDF 第{pdf_page}页（待人工确认印刷页）",
                 "pdf_page": pdf_page,
                 "current_version_id": f"{page_id}-v1",
@@ -161,7 +161,7 @@ def build_pdf_ocr_review_status(
         )
         classification_items.append(
             {
-                "page_classification_id": f"PCLASS-{resolved_source_id}-{chapter_number:04d}",
+                "page_classification_id": f"PCLASS-{resolved_source_id}-{pdf_page:04d}",
                 "page_id": page_id,
                 "book_id": book_id,
                 "chapter_id": chapter_id,
@@ -175,12 +175,13 @@ def build_pdf_ocr_review_status(
                 "confirmed_by": "",
                 "confirmed_at": updated_at,
                 "updated_at": updated_at,
-                "printed_page": pdf_page,
+                "printed_page": None,
                 "pdf_page": pdf_page,
             }
         )
-        chapter_definitions.append(
-            {
+        definition = chapter_definitions_by_id.get(chapter_id)
+        if definition is None:
+            chapter_definitions_by_id[chapter_id] = {
                 "chapter_id": chapter_id,
                 "book_id": book_id,
                 "chapter_title": str(chapter.get("chapter_title", "")).strip(),
@@ -191,7 +192,14 @@ def build_pdf_ocr_review_status(
                 "created_at": updated_at,
                 "updated_at": updated_at,
             }
-        )
+        else:
+            definition["page_start"] = min(int(definition["page_start"]), pdf_page)
+            definition["page_end"] = max(int(definition["page_end"]), pdf_page)
+            definition["updated_at"] = updated_at
+
+    chapter_definitions = sorted(
+        chapter_definitions_by_id.values(), key=lambda item: (int(item["page_start"]), item["chapter_id"])
+    )
 
     by_chapter_id = {item["chapter_id"]: [] for item in classification_items if item.get("chapter_id")}
     for item in classification_items:
@@ -225,8 +233,8 @@ def build_pdf_ocr_review_status(
         "updated_at": now_iso(),
         "items": classification_items,
         "summary": {
-            "confirmed_count": len(classification_items),
-            "candidate_count": 0,
+            "confirmed_count": 0,
+            "candidate_count": len(classification_items),
             "conflict_count": 0,
             "unassigned_count": 0,
         },

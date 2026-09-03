@@ -179,7 +179,7 @@ def ocr_pdf_book_source(
         if requested and chapter_number not in requested:
             continue
         chapters.append(anchor)
-    if not chapters:
+    if page_start is None and not chapters:
         raise SystemExit("no chapter anchors selected for OCR")
 
     pages: list[dict[str, Any]] = []
@@ -187,8 +187,17 @@ def ocr_pdf_book_source(
         ordered = sorted(anchors_payload.get("chapter_anchors", []), key=lambda item: int(item.get("page_start", 0) or 0))
         for pdf_page in range(page_start, page_end + 1):
             containing = [item for item in ordered if int(item.get("page_start", 0) or 0) <= pdf_page <= int(item.get("page_end", pdf_page) or pdf_page)]
+            # Some scanned books expose only per-image bookmarks.  An explicit
+            # PDF range is still a valid OCR request, but must remain visibly
+            # unclassified until a human review assigns the real book units.
             anchor = containing[-1] if containing else {}
-            pages.append({"pdf_page": pdf_page, "chapter_number": int(anchor.get("chapter_index", 0) or 0), "chapter_title": str(anchor.get("title", "")).strip()})
+            pages.append(
+                {
+                    "pdf_page": pdf_page,
+                    "chapter_number": int(anchor.get("chapter_index", 0) or 0),
+                    "chapter_title": str(anchor.get("title", "")).strip() or "全书待分类",
+                }
+            )
     else:
         for anchor in chapters:
             pages.append({"pdf_page": int(anchor["page_start"]), "chapter_number": int(anchor["chapter_index"]), "chapter_title": str(anchor.get("title", "")).strip()})
@@ -196,6 +205,34 @@ def ocr_pdf_book_source(
     render_root = runtime.workspace_root / "tmp" / "pdfs" / sanitize_name(book_title)
     report_pages: list[dict[str, Any]] = []
     remote_requests = 0
+    report_path = layout["indexes"] / "pdf_ocr_runs" / f"{subject.lower()}-{sanitize_name(book_title)}.json"
+    previous = load_json_or_default(report_path, {})
+    merged_pages = {
+        int(item.get("pdf_page", item.get("page_start", 0)) or 0): item
+        for item in previous.get("pages", previous.get("chapters", []))
+        if isinstance(item, dict) and int(item.get("pdf_page", item.get("page_start", 0)) or 0)
+    }
+
+    def save_report() -> dict[str, Any]:
+        all_pages = [merged_pages[key] for key in sorted(merged_pages)]
+        report_payload = {
+            "subject": subject,
+            "book_title": book_title,
+            "pdf_source_id": resolved_source_id,
+            "pdf_path": str(pdf_path),
+            "anchors_path": str(anchors_path),
+            "updated_at": now_iso(),
+            "chapters": all_pages,
+            "pages": all_pages,
+            "summary": {
+                "chapter_count": len({item["chapter_number"] for item in all_pages}),
+                "processed_count": len(all_pages),
+                "remote_requests": remote_requests,
+            },
+        }
+        save_json(report_path, report_payload, ignored_compare_keys=())
+        return report_payload
+
     for page in pages:
         chapter_number = int(page["chapter_number"])
         page_number = int(page["pdf_page"])
@@ -230,8 +267,7 @@ def ocr_pdf_book_source(
             except Exception:
                 raise exc
         remote_requests += int(result.get("remote_calls", 0) or 0)
-        report_pages.append(
-            {
+        report_item = {
                 "chapter_number": chapter_number,
                 "chapter_title": str(page["chapter_title"]),
                 "pdf_page": page_number,
@@ -245,34 +281,12 @@ def ocr_pdf_book_source(
                 "remote_calls": int(result.get("remote_calls", 0) or 0),
                 "normalized_path": str(result["normalized_path"]),
                 "raw_path": str(result["raw_path"]),
-            }
-        )
+        }
+        report_pages.append(report_item)
+        merged_pages[int(report_item["pdf_page"])] = report_item
+        report_payload = save_report()
 
-    report_path = layout["indexes"] / "pdf_ocr_runs" / f"{subject.lower()}-{sanitize_name(book_title)}.json"
-    previous = load_json_or_default(report_path, {})
-    merged_pages = {
-        int(item.get("pdf_page", item.get("page_start", 0)) or 0): item
-        for item in previous.get("pages", previous.get("chapters", []))
-        if isinstance(item, dict) and int(item.get("pdf_page", item.get("page_start", 0)) or 0)
-    }
-    merged_pages.update({int(item["pdf_page"]): item for item in report_pages})
-    all_pages = [merged_pages[key] for key in sorted(merged_pages)]
-    report_payload = {
-        "subject": subject,
-        "book_title": book_title,
-        "pdf_source_id": resolved_source_id,
-        "pdf_path": str(pdf_path),
-        "anchors_path": str(anchors_path),
-        "updated_at": now_iso(),
-        "chapters": all_pages,
-        "pages": all_pages,
-        "summary": {
-            "chapter_count": len({item["chapter_number"] for item in all_pages}),
-            "processed_count": len(all_pages),
-            "remote_requests": remote_requests,
-        },
-    }
-    save_json(report_path, report_payload, ignored_compare_keys=())
+    report_payload = save_report()
     return {**report_payload, "report_path": str(report_path)}
 
 

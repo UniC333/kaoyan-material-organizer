@@ -78,6 +78,8 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 BROAD_SCOPE_KEYWORDS = {"\\u5168\\u90e8", "\\u5168\\u91cf", "\\u6574\\u672c", "\\u6574\\u95e8", "\\u6574\\u79d1", "\\u6574\\u5957", "\\u5168\\u4e66", "\\u6240\\u6709\\u7ae0\\u8282", "\\u5b8c\\u6574\\u6559\\u6750"}
 BROAD_SCOPE_KEYWORDS = {item.encode("utf-8").decode("unicode_escape") for item in BROAD_SCOPE_KEYWORDS}
 PLACEHOLDERS = {"", "\\u5f85\\u8865\\u5145", "\\u5f85\\u5224\\u5b9a", "\\u5f85\\u6574\\u7406", "\\u5f85\\u786e\\u8ba4", "\\u5f85\\u8865\\u9875", "\\u5f85\\u4eba\\u5de5\\u590d\\u6838", "-", "\\u672a\\u77e5"}
+PUBLISHABLE_EVIDENCE_VERIFICATION_STATUSES = {"source_grounded", "reviewed"}
+ACCEPTED_EVIDENCE_REVIEW_STATUSES = {"accepted", "approved", "not-required"}
 PLACEHOLDERS = {item.encode("utf-8").decode("unicode_escape") if "\\u" in item else item for item in PLACEHOLDERS}
 PROFILE_DIR = Path(__file__).resolve().parent.parent / "profiles"
 SCHEMA_VERSION = "0.4.0"
@@ -911,6 +913,18 @@ def merge_manual_resolution(existing: dict[str, Any] | None, incoming: dict[str,
             if current.get(key) and not payload.get(key):
                 payload[key] = current[key]
     return payload
+
+
+def is_publishable_source_evidence(evidence: dict[str, Any]) -> bool:
+    """Return whether evidence may be exposed as reviewed source text."""
+    if not bool(evidence.get("source_grounded")):
+        return False
+    if str(evidence.get("verification_status") or "") not in PUBLISHABLE_EVIDENCE_VERIFICATION_STATUSES:
+        return False
+    if str(evidence.get("mapping_status") or "") == "stale":
+        return False
+    review_status = str(evidence.get("review_status") or "").strip()
+    return not review_status or review_status in ACCEPTED_EVIDENCE_REVIEW_STATUSES
 
 
 def load_all_json(dir_path: Path) -> list[dict[str, Any]]:

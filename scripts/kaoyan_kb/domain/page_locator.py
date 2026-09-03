@@ -178,17 +178,22 @@ def _pdf_source_records(source: dict[str, Any], layout: dict[str, Path], approve
             continue
         evidence_by_pdf_page.setdefault(pdf_page, []).append(evidence)
 
+    files = [item for item in source.get("files", []) or [] if isinstance(item, dict)]
+    registered_source_sha = str((files[0] if files else {}).get("sha256") or "").strip()
     records: list[dict[str, Any]] = []
     review_items: list[dict[str, Any]] = []
-    for pdf_page, evidences in sorted(evidence_by_pdf_page.items()):
-        if len(evidences) != 1:
+    # Mapped pages are assets even before their OCR text becomes evidence.
+    # This preserves a question-page locator while keeping it answer-blocked.
+    for pdf_page, review in sorted(approved_overrides.items()):
+        evidences = evidence_by_pdf_page.get(pdf_page, [])
+        if len(evidences) > 1:
             review_items.append({"kind": "duplicate-pdf-page-evidence", "pdf_page": pdf_page, "evidence_ids": sorted(str(item.get("evidence_id") or "") for item in evidences)})
             continue
-        evidence = evidences[0]
+        evidence = evidences[0] if evidences else {}
         source_spans = [item for item in evidence.get("source_spans", []) or [] if isinstance(item, dict)]
-        source_sha = str((source_spans[0] if source_spans else {}).get("source_file_sha256") or "").strip()
-        review = approved_overrides.get(pdf_page, {})
-        if not review.get("page_header_verified") or not review.get("printed_page") or review.get("source_file_sha256") != source_sha:
+        evidence_source_sha = str((source_spans[0] if source_spans else {}).get("source_file_sha256") or "").strip()
+        source_sha = evidence_source_sha or registered_source_sha
+        if not review.get("page_header_verified") or not review.get("printed_page") or not source_sha or review.get("source_file_sha256") != source_sha:
             review_items.append({"kind": "page-header-unverified", "pdf_page": pdf_page, "evidence_id": evidence.get("evidence_id", ""), "source_file_sha256": source_sha})
             continue
         printed_page = int(review["printed_page"])
@@ -202,7 +207,8 @@ def _pdf_source_records(source: dict[str, Any], layout: dict[str, Path], approve
             "source_asset_kind": "pdf",
             "source_asset_path": str(((source.get("files") or [{}])[0] or {}).get("absolute_path") or source.get("source_path") or "").strip(),
             "source_file_sha256": source_sha,
-            "evidence_ids": [str(evidence.get("evidence_id") or "")],
+            "evidence_ids": [str(evidence.get("evidence_id") or "")] if evidence else [],
+            "mapping_interval": review.get("mapping_interval"),
         })
 
     seen_printed: dict[int, list[dict[str, Any]]] = {}
@@ -215,6 +221,15 @@ def _pdf_source_records(source: dict[str, Any], layout: dict[str, Path], approve
             review_items.append({"kind": "duplicate-printed-page", "printed_page": printed_page, "pdf_pages": sorted(int(item["pdf_page"]) for item in items)})
     ordered = sorted(records, key=lambda item: int(item["pdf_page"]))
     for previous, current in zip(ordered, ordered[1:]):
+        previous_interval = previous.get("mapping_interval")
+        current_interval = current.get("mapping_interval")
+        # A formally approved endpoint-bounded interval may be separated from
+        # the next interval by a deliberately unmapped cover/part-title page.
+        # Continuity is mandatory inside an interval; it is not guessed across
+        # an audited break.
+        if previous_interval or current_interval:
+            if previous_interval != current_interval:
+                continue
         if int(current["printed_page"]) - int(previous["printed_page"]) != int(current["pdf_page"]) - int(previous["pdf_page"]):
             invalid_pdf_pages.update({int(previous["pdf_page"]), int(current["pdf_page"])})
             review_items.append({"kind": "printed-page-discontinuity", "previous_pdf_page": previous["pdf_page"], "previous_printed_page": previous["printed_page"], "pdf_page": current["pdf_page"], "printed_page": current["printed_page"]})

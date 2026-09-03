@@ -15,9 +15,29 @@ import answer_local_question as answer_module
 import ask_local_knowledge as ask_module
 import build_pdf_ocr_review_artifact as pdf_review_artifact_module
 import kb as kb_module
+import lint_kb_entities as lint_module
 import publish_pdf_ocr_evidence as pdf_publish_module
 import query_local_knowledge as query_module
 from save_local_answer import save_answer_contract, save_eligibility
+
+
+def test_lint_never_treats_retained_stale_evidence_as_publishable(monkeypatch, tmp_path: Path, capsys) -> None:
+    layout = {name: tmp_path / name for name in ("evidence", "claims", "conflicts")}
+    stale = {"evidence_id": "EV-STALE", "verification_status": "stale", "mapping_status": "stale"}
+    claim = {
+        "claim_id": "CL-STALE",
+        "syllabus_node_id": "NODE-1",
+        "canonical_text": "旧结论",
+        "evidence_ids": ["EV-STALE"],
+    }
+    payloads = {layout["evidence"]: [stale], layout["claims"]: [claim], layout["conflicts"]: []}
+    monkeypatch.setattr(lint_module, "parse_args", lambda: type("Args", (), {"format": "json"})())
+    monkeypatch.setattr(lint_module, "ensure_kb_layout", lambda: layout)
+    monkeypatch.setattr(lint_module, "load_all_json", lambda path: payloads[path])
+
+    assert lint_module.main() == 1
+    result = json.loads(capsys.readouterr().out)
+    assert any(item["message"] == "claim references non-publishable evidence: EV-STALE" for item in result["errors"])
 
 
 def test_ask_query_alias_is_normalized_by_direct_and_wrapper_parsers(monkeypatch) -> None:
@@ -70,6 +90,12 @@ def test_pdf_review_artifact_uses_confirmed_printed_page() -> None:
     decision = {"printed_page": 109, "page_header_verified": True}
 
     assert pdf_review_artifact_module._reviewed_printed_page(page, decision, 121) == 109
+
+
+def test_pdf_mapping_approval_cannot_close_a_pending_sensitive_block() -> None:
+    decision = {"review_status": "accepted"}
+    assert pdf_review_artifact_module._resolved_page_review_status(decision, 1) == "pending"
+    assert pdf_review_artifact_module._resolved_page_review_status(decision, 0) == "accepted"
 
 
 def _result(*, intent: str = "define", answer_mode: str = "chapter_fallback", page_anchor: dict | None = None) -> dict:

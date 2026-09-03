@@ -6,13 +6,10 @@ import json
 import sys
 from typing import Any
 
-from common import ensure_kb_layout, load_all_json
+from common import PUBLISHABLE_EVIDENCE_VERIFICATION_STATUSES, ensure_kb_layout, is_publishable_source_evidence, load_all_json
 
 
 FORBIDDEN_ORIGIN_TYPES = {"profile_hint", "title_inference", "placeholder"}
-PUBLISHABLE_VERIFICATION_STATUSES = {"source_grounded", "reviewed"}
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
@@ -55,7 +52,7 @@ def evidence_publishability_errors(evidence: dict[str, Any]) -> list[str]:
 
     if not verification_status:
         issues.append("missing verification_status")
-    elif verification_status not in PUBLISHABLE_VERIFICATION_STATUSES and source_grounded:
+    elif verification_status not in PUBLISHABLE_EVIDENCE_VERIFICATION_STATUSES and source_grounded:
         issues.append(f"unexpected verification_status for grounded evidence: {verification_status}")
 
     if not isinstance(source_spans, list) or not source_spans:
@@ -115,7 +112,7 @@ def main() -> int:
         issues = evidence_publishability_errors(evidence)
         for issue in issues:
             add_error(errors, entity="evidence", entity_id=evidence_id, message=issue)
-        if not issues:
+        if not issues and is_publishable_source_evidence(evidence):
             publishable_evidence_ids.add(evidence_id)
 
     claim_index: dict[str, dict[str, Any]] = {}

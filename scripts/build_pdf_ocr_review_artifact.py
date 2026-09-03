@@ -50,12 +50,20 @@ def _page_key(item: dict[str, Any]) -> str:
     return str(item.get("page_id", "")).strip()
 
 
-def _reviewed_printed_page(page: dict[str, Any], decision: dict[str, Any], pdf_page: int) -> int:
-    value = decision.get("printed_page", page.get("printed_page", pdf_page))
+def _reviewed_printed_page(page: dict[str, Any], decision: dict[str, Any], pdf_page: int) -> int | None:
+    value = decision.get("printed_page")
     try:
-        return int(value)
+        candidate = int(value)
+        return candidate if candidate > 0 else None
     except (TypeError, ValueError):
-        return pdf_page
+        return None
+
+
+def _resolved_page_review_status(decision: dict[str, Any], block_open: int) -> str:
+    decision_status = str(decision.get("review_status") or "pending")
+    if decision_status != "accepted":
+        return decision_status
+    return "pending" if block_open else "accepted"
 
 
 def _page_summary(page_id: str, items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -117,6 +125,9 @@ def _classify_handoff_ledger(page_summaries: list[dict[str, Any]]) -> list[dict[
                 "printed_page": item.get("printed_page"),
                 "chapter_id": item.get("chapter_id"),
                 "chapter_title": item.get("chapter_title"),
+                "section_id": item.get("section_id"),
+                "section_title": item.get("section_title"),
+                "part_title": item.get("part_title"),
                 "review_status": item.get("review_status", ""),
                 "handoff_status": "classify-candidate-only",
                 "evidence_gate_status": "not-started",
@@ -168,24 +179,28 @@ def build_pdf_ocr_review_artifact(
             summary = _page_summary(page_id, grouped[page_id])
         else:
             summary = _no_review_required_page_summary(page, classifications_by_page_id.get(page_id, {}))
+        classification = classifications_by_page_id.get(page_id, {})
+        for field in ("chapter_id", "chapter_title", "section_id", "section_title", "part_title"):
+            if field in classification:
+                summary[field] = classification[field]
         pdf_page = int(page.get("pdf_page", page.get("printed_page", 0)) or 0)
         decision = page_decisions.get(pdf_page, {})
         printed_page = _reviewed_printed_page(page, decision, pdf_page)
         summary["printed_page"] = printed_page
-        summary["printed_page_label"] = f"印刷第{printed_page}页（PDF第{pdf_page}页）"
+        summary["printed_page_label"] = f"印刷第{printed_page}页（PDF第{pdf_page}页）" if printed_page else f"PDF第{pdf_page}页（印刷页待确认）"
         summary["pdf_page"] = pdf_page
         summary["page_header_verified"] = bool(decision.get("page_header_verified", False))
         summary["page_review_note"] = decision.get("note", "")
         summary["page_reviewed_at"] = decision.get("reviewed_at", "")
         # A page decision is mandatory.  Flagged blocks must also be closed.
         block_open = int(summary.get("pending_count", 0) or 0) + int(summary.get("rejected_count", 0) or 0)
-        summary["review_status"] = (
-            "accepted"
-            if decision.get("review_status") == "accepted" and not block_open
-            else (decision.get("review_status") or "pending")
-        )
+        summary["review_status"] = _resolved_page_review_status(decision, block_open)
+        if decision.get("review_status") == "accepted" and block_open:
+            # A page mapping only identifies the page.  It cannot close a
+            # table/equation/low-confidence text review on that page.
+            summary["mapping_acceptance_blocked_by_ocr"] = True
         page_summaries.append(summary)
-    page_summaries.sort(key=lambda item: (int(item.get("printed_page") or 0), str(item.get("page_id", ""))))
+    page_summaries.sort(key=lambda item: (int(item.get("printed_page") or 10**9), int(item.get("pdf_page") or 0)))
 
     review_ready_pages = [item for item in page_summaries if item["review_status"] == "accepted"]
     candidate_review_pages = [

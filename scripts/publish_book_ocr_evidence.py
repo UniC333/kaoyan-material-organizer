@@ -48,7 +48,16 @@ def select_evidence_id(*, old: dict, subject: str) -> str:
     return old.get("evidence_id") or allocate_kb_id("evidence", subject)
 
 
-def collect_publication_items(*, runtime, root: Path, assets: dict, status: dict, classes: dict, locator_by_page: dict) -> tuple[list[dict], list[dict]]:
+def collect_publication_items(
+    *,
+    runtime,
+    root: Path,
+    assets: dict,
+    status: dict,
+    classes: dict,
+    locator_by_page: dict,
+    chapter_ids: set[str] | None = None,
+) -> tuple[list[dict], list[dict]]:
     """Preflight every registered page without allocating IDs or writing evidence."""
     status_by_page = {item.get("page_id"): item for item in status.get("items", []) if item.get("page_id")}
     asset_items = assets.get("items", [])
@@ -59,11 +68,14 @@ def collect_publication_items(*, runtime, root: Path, assets: dict, status: dict
 
     for page_id in page_ids:
         item = status_by_page.get(page_id)
+        cls = classes.get(page_id, {})
+        # 显式章节范围只消费已归类到该章节的页面，避免本次发布扩散到全书。
+        if chapter_ids and str(cls.get("chapter_id") or "") not in chapter_ids:
+            continue
         if not item or item.get("status") != "completed":
             blocked.append({"page_id": page_id, "reason": "ocr-not-completed"})
             continue
         page = locator_by_page.get(page_id, {})
-        cls = classes.get(page_id, {})
         if not page or cls.get("classification_status") != "confirmed":
             blocked.append({"page_id": page_id, "reason": "page-not-confirmed"})
             continue
@@ -102,6 +114,7 @@ def collect_publication_items(*, runtime, root: Path, assets: dict, status: dict
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--book-root", required=True)
+    parser.add_argument("--chapter-id", action="append", default=[])
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--no-refresh-indexes", action="store_true")
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
@@ -127,6 +140,7 @@ def main() -> int:
         text = (root / "book.yaml").read_text(encoding="utf-8")
         book = {key: value.strip() for key, value in (line.split(":", 1) for line in text.splitlines() if ":" in line)}
 
+    selected_chapter_ids = {str(item).strip() for item in args.chapter_id if str(item).strip()}
     publication_items, blocked = collect_publication_items(
         runtime=runtime,
         root=root,
@@ -134,10 +148,12 @@ def main() -> int:
         status=status,
         classes=classes,
         locator_by_page=locator_by_page,
+        chapter_ids=selected_chapter_ids or None,
     )
     if not publication_is_allowed(require_complete=args.require_complete, blocked=blocked):
         payload = {
             "book_id": assets.get("book_id"),
+            "chapter_ids": sorted(selected_chapter_ids),
             "publish_status": "blocked",
             "published_evidence_ids": [],
             "blocked": blocked,
@@ -172,6 +188,7 @@ def main() -> int:
             "chunk_id": page_id,
             "origin_type": "reviewed_ocr",
             "verification_status": "source_grounded",
+            "review_status": "accepted",
             "locator": {
                 "page_start": f"第{printed}页",
                 "page_end": f"第{printed}页",
@@ -195,7 +212,9 @@ def main() -> int:
             "content": publication["content"],
             "origin_type": "reviewed_ocr",
             "verification_status": "source_grounded",
+            "review_status": "accepted",
             "source_grounded": True,
+            "locator": span["locator"],
             "source_spans": [span],
             "page_classification_refs": [
                 {
@@ -238,6 +257,7 @@ def main() -> int:
 
     payload = {
         "book_id": assets.get("book_id"),
+        "chapter_ids": sorted(selected_chapter_ids),
         "publish_status": "completed" if return_code == 0 else "index-refresh-failed",
         "published_evidence_ids": published,
         "blocked": blocked,

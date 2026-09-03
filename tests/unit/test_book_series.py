@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import build_exercise_coverage_report as coverage_module
 from kaoyan_kb.domain import book_series
 from ocr_book_pages import _selected_pages
+import publish_book_ocr_evidence
+from publish_book_ocr_evidence import collect_publication_items
 from publish_book_exercises import _effective_text
 
 
@@ -285,6 +288,45 @@ def test_ocr_chapter_filter_handles_question_and_solution_ids(tmp_path: Path) ->
     solution = _selected_pages(items=items, paths={"chapters": chapters_path, "page_mappings": mappings_path}, stage="basic", chapter_ids=["CH-JL1800-SB-CALC-01"])
     assert len(question) == 7
     assert len(solution) == 12
+
+
+def test_ocr_publish_chapter_scope_excludes_out_of_scope_incomplete_page(monkeypatch, tmp_path: Path) -> None:
+    def fake_load(path: Path, default: object) -> dict:
+        if str(path).endswith("normalized.json"):
+            return {"chunk_candidates": [{"block_id": "TEXT-1", "block_type": "text", "text": "正文"}]}
+        return {"items": []}
+
+    monkeypatch.setattr(publish_book_ocr_evidence, "load_json_or_default", fake_load)
+    monkeypatch.setattr(
+        publish_book_ocr_evidence,
+        "cache_paths_for_request",
+        lambda *_: {"overlay": tmp_path / "overlay.json"},
+    )
+    status = {
+        "items": [
+            {"page_id": "PAGE-CH3", "status": "completed", "normalized_path": tmp_path / "normalized.json", "request_key": "ch3"},
+            {"page_id": "PAGE-CH4", "status": "pending", "normalized_path": tmp_path / "normalized.json", "request_key": "ch4"},
+        ]
+    }
+    assets = {"items": [{"page_id": "PAGE-CH3"}, {"page_id": "PAGE-CH4"}]}
+    classes = {
+        "PAGE-CH3": {"chapter_id": "CH-3", "classification_status": "confirmed"},
+        "PAGE-CH4": {"chapter_id": "CH-4", "classification_status": "confirmed"},
+    }
+    locator = {"PAGE-CH3": {"printed_page": 42}, "PAGE-CH4": {"printed_page": 73}}
+
+    items, blocked = collect_publication_items(
+        runtime=SimpleNamespace(ocr_cache_root=tmp_path),
+        root=tmp_path,
+        assets=assets,
+        status=status,
+        classes=classes,
+        locator_by_page=locator,
+        chapter_ids={"CH-3"},
+    )
+
+    assert [item["page_id"] for item in items] == ["PAGE-CH3"]
+    assert blocked == []
 
 
 def test_effective_text_requires_review_for_formula() -> None:
