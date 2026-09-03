@@ -14,7 +14,7 @@ WORKED_EXAMPLE_PATTERN = re.compile(
     r"(?m)^\s*(?:#{1,6}\s*)?(?:【\s*|\[\s*)?例\s*([0-9]+(?:\.[0-9]+)*)?(?:\s*】|\s*\]|(?=\s|[：:、.．▶►]|$))"
 )
 WORKED_SOLUTION_PATTERN = re.compile(
-    r"(?m)^\s*(?:#{1,6}\s*)?(?:【\s*)?(?:解|解答|证明|分析与求解)(?:\s*】|(?=\s|[：:、.．]|$))"
+    r"(?m)^\s*(?:#{1,6}\s*)?(?:【\s*)?(?:解|解答|证明|分析与求解|译)(?:\s*】|(?=\s|[：:、.．]|$))"
 )
 MARKDOWN_HEADING_PATTERN = re.compile(r"(?m)^\s*#{1,6}\s+")
 WORKED_ANSWER_BOUNDARY_PATTERN = re.compile(
@@ -125,7 +125,7 @@ def normalize_exercise_category(value: Any) -> str:
     return ""
 
 
-def extract_exercise_block(content: Any, exercise_label: Any, *, category: str = "") -> str:
+def extract_exercise_block(content: Any, exercise_label: Any, *, category: str = "", phase: str = "") -> str:
     """Return one numbered exercise block, or an empty string when it is not unique."""
     label = normalize_exercise_label(exercise_label)
     if not label:
@@ -134,6 +134,7 @@ def extract_exercise_block(content: Any, exercise_label: Any, *, category: str =
     lines = str(content or "").splitlines()
     starts: list[int] = []
     labels: list[tuple[int, int]] = []
+    section_boundaries: list[int] = []
     marker = re.compile(r"^\s*#{0,6}\s*(\d{1,3})[.．、]\s*")
     requested_category = normalize_exercise_category(category)
     has_requested_category_heading = bool(requested_category) and any(
@@ -142,19 +143,42 @@ def extract_exercise_block(content: Any, exercise_label: Any, *, category: str =
         for line in lines
     )
     active_category = ""
+    category_closed = False
+    in_answer_section = False
     for index, line in enumerate(lines):
-        heading_category = normalize_exercise_category(line) if re.match(r"^\s*#{1,6}\s*", line) else ""
+        is_heading = bool(re.match(r"^\s*#{1,6}\s*", line))
+        is_answer_section_heading = is_heading and "答案与解析" in line
+        heading_category = normalize_exercise_category(line) if is_heading else ""
         if heading_category:
             active_category = heading_category
+            category_closed = False
+        elif re.match(r"^\s*#{1,6}\s*\d+(?:\.\d+)+(?:\s|$)", line):
+            # A numbered textbook section can follow an answer set on the
+            # same OCR page (for example, ``# 5.2 二叉树的概念``).  It is
+            # not another exercise label, so it must end the preceding
+            # category before its nested headings are considered.
+            active_category = ""
+            category_closed = True
+            in_answer_section = False
+            section_boundaries.append(index)
+        if is_answer_section_heading:
+            in_answer_section = True
         match = marker.match(line)
         if not match:
             continue
         number = int(match.group(1))
         labels.append((index, number))
-        category_matches = (
-            not requested_category
-            or (active_category == requested_category if has_requested_category_heading else active_category in {"", requested_category})
-        )
+        if phase == "question" and (is_heading or in_answer_section):
+            continue
+        if phase == "answer":
+            category_matches = not requested_category or active_category == requested_category or (not has_requested_category_heading and not active_category and not category_closed)
+        elif phase == "question":
+            category_matches = not requested_category or active_category == requested_category or (not active_category and not category_closed)
+        else:
+            category_matches = (
+                not requested_category
+                or (active_category == requested_category if has_requested_category_heading else active_category in {"", requested_category})
+            )
         if number == target and category_matches:
             starts.append(index)
     if len(starts) != 1:
@@ -164,6 +188,10 @@ def extract_exercise_block(content: Any, exercise_label: Any, *, category: str =
     for index, _number in labels:
         if index > start:
             end = index
+            break
+    for index in section_boundaries:
+        if index > start:
+            end = min(end, index)
             break
     return "\n".join(lines[start:end]).strip()
 
@@ -287,6 +315,59 @@ def _unique_occurrences(items: list[dict[str, Any]], *, page_key: str) -> list[d
         pages = tuple(int(value) for value in item.get(page_key, []) or [])
         unique[(evidence_key, pages)] = item
     return list(unique.values())
+
+
+def _relation_printed_pages(
+    relation: dict[str, Any],
+    evidence_by_id: dict[str, dict[str, Any]],
+    *,
+    side: str,
+) -> list[int]:
+    """Map one relation side to reviewed printed pages without assuming a PDF offset."""
+    source_id = str(relation.get("source_id") or "")
+    pdf_pages = [int(value) for value in relation.get(f"{side}_pdf_pages", []) or [] if int(value or 0)]
+    evidence_ids = [str(value) for value in relation.get(f"{side}_evidence_ids", []) or [] if str(value)]
+    printed_pages: list[int] = []
+    for pdf_page in pdf_pages:
+        matches = {
+            int(evidence.get("printed_page", 0) or 0)
+            for evidence_id in evidence_ids
+            for evidence in [evidence_by_id.get(evidence_id, {})]
+            if str(evidence.get("source_id") or "") == source_id
+            and int(evidence.get("pdf_page", 0) or (evidence.get("locator") or {}).get("page_start", 0) or 0) == pdf_page
+            and int(evidence.get("printed_page", 0) or 0) > 0
+        }
+        if len(matches) != 1:
+            return []
+        printed_page = matches.pop()
+        if printed_page not in printed_pages:
+            printed_pages.append(printed_page)
+    return printed_pages
+
+
+def _with_relation_printed_pages(
+    relation: dict[str, Any], evidence_by_id: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Persist both page coordinate systems on an exact PDF exercise relation."""
+    enriched = dict(relation)
+    question_pdf_pages = [int(value) for value in enriched.get("question_pdf_pages", []) or [] if int(value or 0)]
+    answer_pdf_pages = [int(value) for value in enriched.get("answer_pdf_pages", []) or [] if int(value or 0)]
+    question_printed_pages = _relation_printed_pages(enriched, evidence_by_id, side="question")
+    answer_printed_pages = _relation_printed_pages(enriched, evidence_by_id, side="answer")
+    enriched["question_printed_pages"] = question_printed_pages
+    enriched["answer_printed_pages"] = answer_printed_pages
+    if (
+        enriched.get("relation_status") == "exact"
+        and (
+            not question_pdf_pages
+            or not answer_pdf_pages
+            or len(question_pdf_pages) != len(question_printed_pages)
+            or len(answer_pdf_pages) != len(answer_printed_pages)
+        )
+    ):
+        enriched["relation_status"] = "needs_review"
+        enriched["mapping_failure_reason"] = "formal-question-or-answer-page-mapping-missing"
+    return enriched
 
 
 def _grounded_printed_page_records(evidences: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -502,6 +583,11 @@ def exercise_locator_input_fingerprint(layout: dict[str, Any]) -> str:
 def build_exercise_locator_index() -> dict[str, Any]:
     layout = ensure_kb_layout()
     all_evidences = [load_json_or_default(path, {}) for path in sorted(layout["evidence"].glob("*.json"))]
+    evidence_by_id = {
+        str(item.get("evidence_id") or ""): item
+        for item in all_evidences
+        if str(item.get("evidence_id") or "")
+    }
     sources = {
         str(item.get("source_id") or ""): item
         for path in layout["manifests"].joinpath("sources").glob("*.json")
@@ -601,9 +687,28 @@ def build_exercise_locator_index() -> dict[str, Any]:
         queue_path = layout["review_queues"] / QUEUE_NAME / f"{source_id}.json"
         existing_queue = load_json_or_default(queue_path, {})
         save_json(queue_path, {"queue_type": QUEUE_NAME, "source_id": source_id, "approved_relations": list(existing_queue.get("approved_relations", []) or []), "items": items, "summary": {"open_count": len(items)}})
+    relations = [_with_relation_printed_pages(item, evidence_by_id) for item in relations]
+    content_validated_relations: list[dict[str, Any]] = []
+    for relation in relations:
+        if relation.get("relation_status") != "exact":
+            content_validated_relations.append(relation)
+            continue
+        evidence_ids = list(relation.get("question_evidence_ids", []) or []) + list(relation.get("answer_evidence_ids", []) or [])
+        anchor, _ = assemble_exact_relation(
+            relation,
+            evidences=[evidence_by_id[evidence_id] for evidence_id in evidence_ids if evidence_id in evidence_by_id],
+        )
+        if anchor.get("status") != "exact_answer_evidence":
+            relation = {
+                **relation,
+                "relation_status": "needs_review",
+                "mapping_failure_reason": str(anchor.get("reason") or "exercise-content-not-uniquely-sliced"),
+            }
+        content_validated_relations.append(relation)
+    relations = content_validated_relations
     relations.extend(build_worked_example_relations(all_evidences))
     payload = {
-        "schema_version": "exercise-locator.v2",
+        "schema_version": "exercise-locator.v3",
         "generated_at": now_iso(),
         "input_fingerprint": exercise_locator_input_fingerprint(layout),
         "relations": sorted(relations, key=lambda item: item["relation_id"]),
@@ -640,6 +745,12 @@ def load_exercise_locator_index() -> dict[str, Any]:
             detail="Formal exercise locator inputs changed after the index was built; run kb.py sync --indexes-only.",
         )
         return unavailable
+    if str(payload.get("schema_version") or "") != "exercise-locator.v3":
+        unavailable["_availability"].update(
+            reason="exercise_locator_index_version_mismatch",
+            detail="The formal exercise locator must be rebuilt as exercise-locator.v3.",
+        )
+        return unavailable
     result = dict(payload)
     result["_availability"] = {"available": True, "path": str(index_path), "reason": "", "detail": ""}
     return result
@@ -655,6 +766,94 @@ def _unavailable_relation(index: dict[str, Any]) -> dict[str, Any]:
         "unavailable_detail": str(availability.get("detail") or ""),
         "_availability": availability,
     }
+
+
+def assemble_exact_relation(
+    relation: dict[str, Any],
+    *,
+    evidences: list[dict[str, Any]] | None = None,
+    exercise_label: str = "",
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Load and slice one exact relation into the shared query/ask anchor shape."""
+    label = normalize_exercise_label(exercise_label or relation.get("exercise_label"))
+    base = {
+        "relation_id": str(relation.get("relation_id") or ""),
+        "exercise_label": label,
+        "exercise_category": str(relation.get("category") or ""),
+        "question_pdf_pages": [int(value) for value in relation.get("question_pdf_pages", []) or []],
+        "question_printed_pages": [int(value) for value in relation.get("question_printed_pages", []) or []],
+        "answer_pdf_pages": [int(value) for value in relation.get("answer_pdf_pages", []) or []],
+        "answer_printed_pages": [int(value) for value in relation.get("answer_printed_pages", []) or []],
+        "question_evidence_ids": [str(value) for value in relation.get("question_evidence_ids", []) or [] if str(value)],
+        "answer_evidence_ids": [str(value) for value in relation.get("answer_evidence_ids", []) or [] if str(value)],
+    }
+    if relation.get("relation_status") != "exact":
+        return {
+            "status": "needs_review",
+            "reason": str(relation.get("mapping_failure_reason") or "exercise-relation-not-exact"),
+            **base,
+            "question_content": "",
+            "answer_content": "",
+            "content_scope": "needs_review",
+        }, list(evidences or [])
+    if (
+        not base["question_pdf_pages"]
+        or not base["answer_pdf_pages"]
+        or len(base["question_pdf_pages"]) != len(base["question_printed_pages"])
+        or len(base["answer_pdf_pages"]) != len(base["answer_printed_pages"])
+    ):
+        return {
+            "status": "needs_review",
+            "reason": "formal-question-or-answer-page-mapping-missing",
+            **base,
+            "question_content": "",
+            "answer_content": "",
+            "content_scope": "needs_review",
+        }, list(evidences or [])
+
+    loaded = list(evidences or [])
+    existing_ids = {str(item.get("evidence_id") or "") for item in loaded}
+    layout = ensure_kb_layout()
+    for evidence_id in base["question_evidence_ids"] + base["answer_evidence_ids"]:
+        path = layout["evidence"] / f"{evidence_id}.json"
+        if evidence_id not in existing_ids and path.is_file():
+            loaded.append(load_json_or_default(path, {}))
+            existing_ids.add(evidence_id)
+    evidence_by_id = {str(item.get("evidence_id") or ""): item for item in loaded}
+    question_text = "\n".join(
+        str(evidence_by_id[item].get("content") or "")
+        for item in base["question_evidence_ids"]
+        if item in evidence_by_id
+    )
+    answer_text = "\n".join(
+        str(evidence_by_id[item].get("content") or "")
+        for item in base["answer_evidence_ids"]
+        if item in evidence_by_id
+    )
+    category = str(relation.get("category") or "")
+    question_content = extract_exercise_block(question_text, label, category=category, phase="question")
+    answer_content = extract_exercise_block(answer_text, label, category=category, phase="answer")
+    question_paths = [
+        str(evidence_by_id[item].get("source_image_path") or "")
+        for item in base["question_evidence_ids"]
+        if item in evidence_by_id and evidence_by_id[item].get("source_image_path")
+    ]
+    answer_paths = [
+        str(evidence_by_id[item].get("source_image_path") or "")
+        for item in base["answer_evidence_ids"]
+        if item in evidence_by_id and evidence_by_id[item].get("source_image_path")
+    ]
+    payload = {
+        **base,
+        "question_source_image_paths": list(dict.fromkeys(question_paths)),
+        "answer_source_image_paths": list(dict.fromkeys(answer_paths)),
+        "question_content": question_content,
+        "answer_content": answer_content,
+        "content_scope": "exercise_exact" if question_content and answer_content else "needs_review",
+    }
+    if not question_content or not answer_content:
+        return {"status": "needs_review", "reason": "exercise-content-not-uniquely-sliced", **payload}, loaded
+    return {"status": "exact_answer_evidence", **payload}, loaded
 
 
 def find_exact_relation(*, source_id: str, question_pdf_page: int, exercise_label: str) -> dict[str, Any]:
@@ -697,7 +896,7 @@ def list_exact_relations_for_question_page(*, source_id: str, question_pdf_page:
             for evidence_id in evidence_ids
         )
         label = normalize_exercise_label(item.get("exercise_label"))
-        question_content = extract_exercise_block(question_text, label, category=str(item.get("category") or ""))
+        question_content = extract_exercise_block(question_text, label, category=str(item.get("category") or ""), phase="question")
         if not label or not question_content:
             continue
         candidates.append({**item, "exercise_label": label, "question_content": question_content})

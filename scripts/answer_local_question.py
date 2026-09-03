@@ -12,8 +12,8 @@ from common import default_vault_root_arg, ensure_kb_layout, load_json, resolve_
 from query_local_knowledge import build_page_content_bundle, build_teaching_bundle, preferred_page_ref, query_knowledge, should_prefer_evidence_chapter
 
 
-ANSWER_CONTRACT_VERSION = "m6.answer.v3"
-TEACHING_VIEW_VERSION = "m6.teaching.v2"
+ANSWER_CONTRACT_VERSION = "m6.answer.v4"
+TEACHING_VIEW_VERSION = "m6.teaching.v3"
 STRUCTURED_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "exercise_pair"}
 CONTENT_SOURCE_LABELS = {
     "textbook_structured_evidence": "教材结构化证据",
@@ -100,11 +100,46 @@ def validate_teaching_contract_invariants(contract: dict[str, Any]) -> None:
     elif page_content_status != "not_applicable" or page_content_text:
         raise ValueError("non-page requests must expose a content-free not_applicable page bundle")
 
+    verification = dict(contract.get("page_verification") or {})
+    explanation_allowed = bool(verification.get("textbook_explanation_allowed"))
+    if request_kind == "page_content":
+        expected_allowed = page_content_status == "exact"
+        if explanation_allowed != expected_allowed:
+            raise ValueError("page-content explanation permission contradicts page content bundle")
+    elif request_kind == "exercise":
+        expected_allowed = bool(exact and can_conclude and teaching_status == "exact")
+        if explanation_allowed != expected_allowed:
+            raise ValueError("exercise explanation permission contradicts exact-answer teaching gate")
+    elif explanation_allowed:
+        raise ValueError("generic requests cannot permit textbook explanation")
+
+    concept_routes = list(contract.get("concept_routes") or [])
+    if concept_routes and not (request_kind == "exercise" and exact and can_conclude and teaching_status == "exact"):
+        raise ValueError("concept routes require an exact primary textbook answer")
+    for route in concept_routes:
+        primary = dict(route.get("primary") or {})
+        supplement = dict(route.get("supplement") or {})
+        if primary.get("status") == "exact":
+            if not str(primary.get("content") or "").strip() or not list(primary.get("evidence_ids") or []):
+                raise ValueError("exact primary concept evidence must retain reviewed text and evidence ids")
+            if supplement.get("attempted") or supplement.get("status") != "not_needed":
+                raise ValueError("an exact primary concept cannot trigger cross-book supplementation")
+        elif str(primary.get("content") or "").strip():
+            raise ValueError("unconfirmed primary concept evidence must remain content-free")
+        if supplement.get("status") == "exact":
+            if not supplement.get("attempted") or primary.get("status") == "exact":
+                raise ValueError("exact supplemental concept evidence requires a failed primary concept lookup")
+            if not str(supplement.get("content") or "").strip() or not list(supplement.get("evidence_ids") or []):
+                raise ValueError("exact supplemental concept evidence must retain reviewed text and evidence ids")
+        elif str(supplement.get("content") or "").strip():
+            raise ValueError("unconfirmed supplemental concept evidence must remain content-free")
+        if supplement.get("status") == "not_needed" and supplement.get("attempted"):
+            raise ValueError("a not-needed supplement cannot be marked attempted")
+
     crosscheck = dict(contract.get("page_crosscheck") or {})
     if crosscheck.get("required") and str(crosscheck.get("status") or "") != "confirmed":
         if (required and (can_conclude or teaching_status == "exact")) or page_content_status == "exact":
             raise ValueError("unconfirmed page crosscheck cannot permit an exact teaching answer")
-        verification = dict(contract.get("page_verification") or {})
         if verification.get("textbook_explanation_allowed"):
             raise ValueError("unconfirmed page crosscheck cannot permit textbook explanation")
 
@@ -175,6 +210,7 @@ def build_teaching_answer_view(
         "citation_coverage_ok": bool(contract.get("citation_coverage_ok")),
         "teaching_bundle": dict(contract.get("teaching_bundle") or {}),
         "page_content_bundle": dict(contract.get("page_content_bundle") or {}),
+        "concept_routes": list(contract.get("concept_routes") or []),
     }
     validate_entity_contract("teaching_answer_view", view)
     return view
@@ -731,11 +767,13 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         for item in result.get("supplementary_content", []) or []
         if isinstance(item, dict) and str(item.get("explanation") or item.get("title") or "").strip()
     ] if grounding["can_conclude"] else []
+    concept_routes = list(result.get("concept_routes") or []) if grounding["can_conclude"] else []
     sections = {
         "answer_grounding_status": str(grounding["status"]),
         "source_answer": str(solution.get("content") or "").strip() if grounding["can_conclude"] else "",
         "first_incorrect_equality": "原书答案已锚定后，逐行核对用户过程并只指出第一个错误等号。" if grounding["can_conclude"] else "",
         "supplementary_derivation": supplemental,
+        "concept_routes": concept_routes,
         "syllabus_position": [
             {"node_id": item.get("node_id", ""), "title": item.get("title", ""), "score": item.get("score", 0)}
             for item in result.get("syllabus_route", [])
@@ -784,6 +822,7 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "page_crosscheck": dict(result.get("page_crosscheck") or {}),
         "teaching_bundle": teaching,
         "page_content_bundle": page_content,
+        "concept_routes": concept_routes,
         # Compatibility fields for older callers that consumed raw query output.
         "syllabus_route": result.get("syllabus_route", []),
         "references": result.get("references", []),
@@ -827,6 +866,47 @@ def render_text(contract: dict) -> str:
                 "## 原书答案",
                 "",
                 sections.get("source_answer") or "- 原书答案未确认，本次不输出解题结论。",
+            ]
+        )
+        concept_routes = list(sections.get("concept_routes") or [])
+        if concept_routes:
+            lines.extend(["", "## 主书定理依据", ""])
+            for route in concept_routes:
+                concept = str(route.get("concept") or "")
+                primary = dict(route.get("primary") or {})
+                if primary.get("status") == "exact":
+                    pages = "、".join(str(item) for item in primary.get("printed_pages", []) or []) or "未标注"
+                    evidence_ids = "、".join(str(item) for item in primary.get("evidence_ids", []) or [])
+                    lines.extend(
+                        [
+                            f"### {concept}",
+                            "",
+                            str(primary.get("content") or ""),
+                            "",
+                            f"- 来源：{primary.get('book_title', '')}；印刷页：{pages}；证据：{evidence_ids}",
+                        ]
+                    )
+                else:
+                    lines.append(f"- {concept}：本书未单独定位到已审核的定理或定义正文。")
+            exact_supplements = [route for route in concept_routes if (route.get("supplement") or {}).get("status") == "exact"]
+            if exact_supplements:
+                lines.extend(["", "## 李正元补充（非当前主线）", ""])
+                for route in exact_supplements:
+                    supplement = dict(route.get("supplement") or {})
+                    pages = "、".join(str(item) for item in supplement.get("printed_pages", []) or []) or "未标注"
+                    evidence_ids = "、".join(str(item) for item in supplement.get("evidence_ids", []) or [])
+                    lines.extend(
+                        [
+                            f"### {route.get('concept', '')}",
+                            "",
+                            str(supplement.get("content") or ""),
+                            "",
+                            f"- 来源：{supplement.get('book_title', '')}；印刷页：{pages}；证据：{evidence_ids}",
+                            "- 边界：仅作跨书补充，不改变本题原书答案或当前学习主线。",
+                        ]
+                    )
+        lines.extend(
+            [
                 "",
                 "## 过程核对",
                 "",

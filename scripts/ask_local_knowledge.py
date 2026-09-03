@@ -8,7 +8,8 @@ from pathlib import Path
 
 from answer_local_question import build_answer_contract, build_teaching_answer_view, render_text
 from common import default_vault_root_arg, resolve_subject
-from query_local_knowledge import explicit_page_subject_error, query_knowledge
+from kaoyan_kb.domain.exercise_batch import parse_exercise_batch_request
+from query_local_knowledge import explicit_page_subject_error, query_exercise_batch, query_knowledge, render_exercise_batch_text
 from save_local_answer import save_answer_contract, saved_at_label
 
 
@@ -39,8 +40,26 @@ def main() -> int:
         raise SystemExit(page_error)
     if not args.subject:
         raise SystemExit("[ERROR] --subject is required")
+    if args.save and parse_exercise_batch_request(args.question).get("is_batch"):
+        raise SystemExit("[ERROR] batch exercise answers cannot be saved; no saved-QA write was made")
     vault_root = Path(args.vault_root or default_vault_root_arg())
     subject, _ = resolve_subject(args.subject)
+    batch = query_exercise_batch(
+        vault_root,
+        subject,
+        args.chapter,
+        args.question,
+        args.topk,
+        args.book_title,
+        args.printed_page,
+        view="teaching" if args.format == "teaching-json" else "answer",
+    )
+    if batch is not None:
+        if args.format in {"json", "teaching-json"}:
+            print(json.dumps(batch, ensure_ascii=False, indent=2))
+        else:
+            print(render_exercise_batch_text(batch), end="")
+        return 0
     result = query_knowledge(vault_root, subject, args.chapter, args.question, args.topk, args.printed_page, args.book_title, args.exercise_label)
     contract = build_answer_contract(result)
 

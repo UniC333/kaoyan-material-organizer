@@ -127,6 +127,24 @@ def test_explicitly_self_authored_problem_skips_source_answer_gate() -> None:
     assert grounding["status"] == "not_applicable"
     assert grounding["can_conclude"] is True
 
+    request_resolution = query_module.resolve_request(
+        query="这是我自拟的 P94 题，帮我推导",
+        book_title="王道数据结构",
+        chapter=None,
+        printed_page=94,
+        exercise_label=None,
+    )
+    verification = query_module.build_page_verification_summary(
+        {"requested_page": 94, "match_status": "exact_evidence", "exercise_match_status": "not_requested"},
+        "accepted_evidence",
+        request_resolution=request_resolution,
+        answer_grounding=grounding,
+        teaching_bundle={"status": "not_applicable"},
+        page_content_bundle={"status": "not_applicable"},
+    )
+    assert request_resolution["source_request_kind"] == "generic"
+    assert verification["textbook_explanation_allowed"] is False
+
 
 def test_exact_exercise_anchor_builds_source_answer_grounding() -> None:
     grounding = query_module.build_answer_grounding(
@@ -177,6 +195,7 @@ def test_scoped_exercise_relation_keeps_all_teaching_gates_consistent(
     allowed: bool,
 ) -> None:
     request_resolution = {
+        "source_request_kind": "exercise",
         "page": {"number": page_number, "semantics": semantics, "explicit_cli": False},
         "exercise_label": "04",
         "exercise_category": "single-choice",

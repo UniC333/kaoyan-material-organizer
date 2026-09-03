@@ -481,6 +481,17 @@ def test_extract_exercise_block_accepts_continued_category_until_next_heading() 
     assert exercise_locator.extract_exercise_block(content, "35", category="single-choice") == "35. C\n解析"
 
 
+def test_extract_exercise_block_stops_at_following_numbered_textbook_section() -> None:
+    content = "# 二、综合应用题\n# 01.【解答】\n综合题答案\n# 5.2 二叉树的概念\n# 1. 二叉树的定义"
+    assert exercise_locator.extract_exercise_block(content, "01", category="comprehensive") == "# 01.【解答】\n综合题答案"
+
+
+def test_extract_exercise_block_distinguishes_question_continuation_from_answer_heading() -> None:
+    content = "04. 第四题题干\n# 5.1.5 答案与解析\n# 一、单项选择题\n04. A\n第四题答案"
+    assert exercise_locator.extract_exercise_block(content, "04", category="single-choice", phase="question") == "04. 第四题题干"
+    assert exercise_locator.extract_exercise_block(content, "04", category="single-choice", phase="answer") == "04. A\n第四题答案"
+
+
 def test_resolver_uses_book_title_and_reports_ambiguity(monkeypatch) -> None:
     entries = [_entry("a", "李正元数一", 49), _entry("b", "另一教材", 49)]
     monkeypatch.setattr(page_locator, "load_page_locator_index", lambda: {"entries": entries, "sources": []})
@@ -760,6 +771,23 @@ def test_worked_example_relation_links_p64_question_to_p65_solution() -> None:
     assert "\\frac{\\pi}{3}+2-\\sqrt3" in relation["answer"]["content"]
 
 
+def test_english_example_translation_is_an_exact_worked_example_relation() -> None:
+    evidences = [{
+        "evidence_id": "EV-ENG-44",
+        "verification_status": "reviewed",
+        "source_grounded": True,
+        "content": "例：A long sentence.\n译：一个长句。\n语法说明：本句含一个谓语。",
+        "page_classification_refs": [{"book_id": "PDFOCR-SRC-ENG-0001", "book_title": "句句真研", "chapter_id": "ENG-1", "printed_page": 44, "source_image_path": "P44.png"}],
+    }]
+
+    relations = exercise_locator.build_worked_example_relations(evidences)
+
+    assert len(relations) == 1
+    assert relations[0]["relation_status"] == "exact"
+    assert relations[0]["question"]["content"] == "例：A long sentence."
+    assert "译：一个长句。" in relations[0]["answer"]["content"]
+
+
 def test_plain_worked_example_relations_accept_integer_labels_and_restart_by_page() -> None:
     evidences = [
         {
@@ -952,7 +980,7 @@ def test_worked_example_container_path_resolves_same_page_restarted_label(monkey
     relations = exercise_locator.build_worked_example_relations(evidences)
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
     monkeypatch.setattr(exercise_locator, "exercise_locator_input_fingerprint", lambda _layout: "fresh")
-    _write_json(layout["indexes"] / exercise_locator.EXERCISE_LOCATOR_INDEX_NAME, {"input_fingerprint": "fresh", "relations": relations})
+    _write_json(layout["indexes"] / exercise_locator.EXERCISE_LOCATOR_INDEX_NAME, {"schema_version": "exercise-locator.v3", "input_fingerprint": "fresh", "relations": relations})
 
     ambiguous = exercise_locator.find_exact_worked_example_relation(book_id="tang-math1", printed_page=18, exercise_label="例1")
     exact = exercise_locator.find_exact_worked_example_relation(book_id="tang-math1", printed_page=18, exercise_label="例1", container_path=["题型四"])
@@ -977,7 +1005,7 @@ def test_exercise_locator_does_not_treat_summary_number_as_answer(monkeypatch, t
         14: "# 1.2.4 答案与解析\n# 二、综合应用题\n# 01.【解答】\n答案开始\n# 归纳总结\n# 2. 循环主体中的变量与循环条件无关",
     }
     for page, content in fixtures.items():
-        (layout["evidence"] / f"EV-{page}.json").write_text(__import__("json").dumps({"evidence_id": f"EV-{page}", "source_id": "SRC-PDF", "origin_type": "pdf_page_ocr", "verification_status": "reviewed", "source_grounded": True, "locator": {"page_start": page}, "content": content}), encoding="utf-8")
+        (layout["evidence"] / f"EV-{page}.json").write_text(__import__("json").dumps({"evidence_id": f"EV-{page}", "source_id": "SRC-PDF", "origin_type": "pdf_page_ocr", "verification_status": "reviewed", "source_grounded": True, "pdf_page": page, "printed_page": page - 2, "locator": {"page_start": page}, "content": content}), encoding="utf-8")
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
     payload = exercise_locator.build_exercise_locator_index()
     assert payload["summary"]["relation_count"] == 1

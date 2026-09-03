@@ -261,7 +261,7 @@ def test_sourced_problem_without_source_answer_blocks_conclusion_and_save(monkey
 
     contract = answer_module.build_answer_contract(result)
 
-    assert contract["answer_contract_version"] == "m6.answer.v3"
+    assert contract["answer_contract_version"] == "m6.answer.v4"
     assert contract["sections"]["direct_conclusion"] == "原书答案未确认。"
     assert contract["sections"]["supplementary_derivation"] == []
     assert "错误的 AI 独立推导" not in answer_module.render_text(contract)
@@ -319,6 +319,147 @@ def test_sourced_answer_render_order_is_fixed(monkeypatch) -> None:
     rendered = answer_module.render_text(answer_module.build_answer_contract(result))
     headings = [rendered.index(title) for title in ("## 答案定位状态", "## 原书答案", "## 过程核对", "## AI 辅助推导")]
     assert headings == sorted(headings)
+
+
+def _exact_calculus_result(query: str, *, book_title: str = "考研数学高等数学辅导讲义 基础篇") -> dict:
+    return {
+        "subject": "数学",
+        "book_title": book_title,
+        "book_resolution": {"status": "explicit", "source": "explicit", "book_title": book_title},
+        "query": query,
+        "request_resolution": {"source_request_kind": "exercise"},
+        "answer_grounding": {
+            "required": True,
+            "status": "exact_answer",
+            "can_conclude": True,
+            "problem": {"evidence_ids": ["EV-Q"]},
+            "solution": {"evidence_ids": ["EV-A"], "content": "原书答案"},
+            "failure_reason": "",
+            "next_action": "",
+        },
+    }
+
+
+def _concept_evidence(status: str, book_title: str, *, content: str = "") -> dict:
+    return {
+        "status": status,
+        "book_title": book_title,
+        "source_id": "SRC-1" if status == "exact" else "",
+        "evidence_ids": ["EV-C"] if status == "exact" else [],
+        "printed_pages": [42] if status == "exact" else [],
+        "pdf_pages": [48] if status == "exact" else [],
+        "content": content if status == "exact" else "",
+        "failure_reason": "" if status == "exact" else "未命中独立正文。",
+    }
+
+
+def test_explicit_concept_extraction_does_not_expand_implicit_dependencies() -> None:
+    assert query_module.extract_explicit_concepts("讲一下高数63页例5第一问和最值定理结合的应用方式") == ["最值定理"]
+    assert query_module.extract_explicit_concepts("比较罗尔定理与拉格朗日中值定理") == ["罗尔定理", "拉格朗日中值定理"]
+    assert query_module.extract_explicit_concepts("讲一下高数63页例5第一问") == []
+
+
+def test_exact_primary_concept_evidence_skips_li_zhengyuan(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def find(**kwargs):
+        calls.append(kwargs["book_title"])
+        return _concept_evidence("exact", kwargs["book_title"], content="最值定理的正式正文。")
+
+    monkeypatch.setattr(query_module, "_find_formal_concept_evidence", find)
+    routes = query_module.build_concept_routes(_exact_calculus_result("P63例5与最值定理怎么结合"), topk=3)
+
+    assert calls == ["考研数学高等数学辅导讲义 基础篇"]
+    assert routes[0]["primary"]["status"] == "exact"
+    assert routes[0]["supplement"]["status"] == "not_needed"
+    assert routes[0]["supplement"]["attempted"] is False
+
+
+def test_primary_concept_gap_can_add_exact_li_zhengyuan_supplement(monkeypatch) -> None:
+    calls: list[tuple[str, set[str]]] = []
+
+    def find(**kwargs):
+        calls.append((kwargs["book_title"], kwargs["excluded_evidence_ids"]))
+        if kwargs["book_title"] == query_module.SUPPLEMENTAL_CALCULUS_BOOK_TITLE:
+            return _concept_evidence("exact", kwargs["book_title"], content="李正元中的最值定理正文。")
+        return _concept_evidence("not_found", kwargs["book_title"])
+
+    monkeypatch.setattr(query_module, "_find_formal_concept_evidence", find)
+    routes = query_module.build_concept_routes(_exact_calculus_result("P63例5与最值定理怎么结合"), topk=3)
+
+    assert calls[0][1] == {"EV-Q", "EV-A"}
+    assert calls[1][0] == "李正元数一"
+    assert routes[0]["supplement"]["status"] == "exact"
+    assert routes[0]["supplement"]["attempted"] is True
+    assert routes[0]["supplement"]["trigger"] == "primary_concept_evidence_not_found"
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {**_exact_calculus_result("P63例5与最值定理怎么结合"), "answer_grounding": {"status": "answer_not_found", "can_conclude": False}},
+        _exact_calculus_result("例题与最值定理怎么结合", book_title="李正元数一"),
+    ],
+)
+def test_concept_supplement_never_bypasses_primary_answer_or_explicit_li_route(monkeypatch, result: dict) -> None:
+    monkeypatch.setattr(query_module, "_find_formal_concept_evidence", lambda **kwargs: pytest.fail("concept lookup must not run"))
+    assert query_module.build_concept_routes(result, topk=3) == []
+
+
+def test_render_and_teaching_view_keep_cross_book_supplement_separate(monkeypatch) -> None:
+    citation = lambda evidence_id: {"evidence_id": evidence_id, "title": evidence_id, "page_span": "", "image_span": "", "chunk_id": "", "section_title": "", "section_view_path": ""}
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [citation("EV-Q"), citation("EV-A")])
+    result = _result(answer_mode="accepted_evidence")
+    result.update(_exact_calculus_result("P63例5与最值定理怎么结合"))
+    result.update(
+        teaching_bundle={"status": "exact", "problem_text": "原题", "source_answer_text": "原书答案", "requested_option": "", "exercise_label": "例5", "citations": {"problem_evidence_ids": ["EV-Q"], "solution_evidence_ids": ["EV-A"]}, "failure_reason": ""},
+        page_content_bundle={"status": "not_applicable", "source_id": "", "book_title": "", "evidence_ids": [], "printed_pages": [], "pdf_pages": [], "content": "", "failure_reason": "", "next_action": ""},
+        page_verification={"textbook_explanation_allowed": True},
+        concept_routes=[
+            {
+                "concept": "最值定理",
+                "requested_by": "user_explicit",
+                "primary": _concept_evidence("not_found", "考研数学高等数学辅导讲义 基础篇"),
+                "supplement": {**_concept_evidence("exact", "李正元数一", content="李正元中的最值定理正文。"), "attempted": True, "trigger": "primary_concept_evidence_not_found"},
+            }
+        ],
+    )
+
+    contract = answer_module.build_answer_contract(result)
+    rendered = answer_module.render_text(contract)
+    view = answer_module.build_teaching_answer_view(contract)
+
+    headings = [rendered.index(title) for title in ("## 原书答案", "## 主书定理依据", "## 李正元补充（非当前主线）", "## 过程核对")]
+    assert headings == sorted(headings)
+    assert "仅作跨书补充，不改变本题原书答案或当前学习主线" in rendered
+    assert view["teaching_view_version"] == "m6.teaching.v3"
+    assert view["concept_routes"][0]["supplement"]["status"] == "exact"
+
+
+def test_unconfirmed_li_zhengyuan_result_is_not_rendered(monkeypatch) -> None:
+    citation = lambda evidence_id: {"evidence_id": evidence_id, "title": evidence_id, "page_span": "", "image_span": "", "chunk_id": "", "section_title": "", "section_view_path": ""}
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [citation("EV-Q"), citation("EV-A")])
+    result = _result(answer_mode="accepted_evidence")
+    result.update(_exact_calculus_result("P63例5与最值定理怎么结合"))
+    result.update(
+        teaching_bundle={"status": "exact", "problem_text": "原题", "source_answer_text": "原书答案", "requested_option": "", "exercise_label": "例5", "citations": {"problem_evidence_ids": ["EV-Q"], "solution_evidence_ids": ["EV-A"]}, "failure_reason": ""},
+        page_content_bundle={"status": "not_applicable", "source_id": "", "book_title": "", "evidence_ids": [], "printed_pages": [], "pdf_pages": [], "content": "", "failure_reason": "", "next_action": ""},
+        page_verification={"textbook_explanation_allowed": True},
+        concept_routes=[
+            {
+                "concept": "最值定理",
+                "requested_by": "user_explicit",
+                "primary": _concept_evidence("not_found", "考研数学高等数学辅导讲义 基础篇"),
+                "supplement": {**_concept_evidence("not_found", "李正元数一"), "attempted": True, "trigger": "primary_concept_evidence_not_found"},
+            }
+        ],
+    )
+
+    rendered = answer_module.render_text(answer_module.build_answer_contract(result))
+
+    assert "## 主书定理依据" in rendered
+    assert "本书未单独定位到" in rendered
+    assert "## 李正元补充（非当前主线）" not in rendered
 
 
 def test_teaching_view_excludes_diagnostic_and_save_only_fields(monkeypatch) -> None:
@@ -388,6 +529,62 @@ def test_teaching_contract_rejects_conflicting_exact_gate() -> None:
         )
 
 
+def test_teaching_contract_rejects_blocked_page_content_with_explanation_permission() -> None:
+    with pytest.raises(ValueError, match="page-content explanation permission"):
+        answer_module.validate_teaching_contract_invariants(
+            {
+                "answer_grounding": {"required": False, "status": "not_applicable", "can_conclude": True},
+                "teaching_bundle": {"status": "not_applicable", "problem_text": "", "source_answer_text": ""},
+                "request_resolution": {"source_request_kind": "page_content"},
+                "page_anchor": {"match_status": "exact_evidence"},
+                "page_content_bundle": {
+                    "status": "blocked",
+                    "content": "",
+                    "failure_reason": "正文未通过审核。",
+                    "next_action": "请先审核正文。",
+                },
+                "page_verification": {"textbook_explanation_allowed": True},
+            }
+        )
+
+
+def test_teaching_contract_rejects_blocked_exercise_with_explanation_permission() -> None:
+    with pytest.raises(ValueError, match="exercise explanation permission"):
+        answer_module.validate_teaching_contract_invariants(
+            {
+                "answer_grounding": {
+                    "required": True,
+                    "status": "answer_not_found",
+                    "can_conclude": False,
+                    "failure_reason": "原书答案未确认。",
+                    "next_action": "请先定位原书答案。",
+                },
+                "teaching_bundle": {
+                    "status": "blocked",
+                    "problem_text": "",
+                    "source_answer_text": "",
+                    "citations": {},
+                },
+                "request_resolution": {"source_request_kind": "exercise"},
+                "page_content_bundle": {"status": "not_applicable", "content": ""},
+                "page_verification": {"textbook_explanation_allowed": True},
+            }
+        )
+
+
+def test_teaching_contract_rejects_generic_textbook_explanation_permission() -> None:
+    with pytest.raises(ValueError, match="generic requests cannot permit"):
+        answer_module.validate_teaching_contract_invariants(
+            {
+                "answer_grounding": {"required": False, "status": "not_applicable", "can_conclude": True},
+                "teaching_bundle": {"status": "not_applicable", "problem_text": "", "source_answer_text": ""},
+                "request_resolution": {"source_request_kind": "generic"},
+                "page_content_bundle": {"status": "not_applicable", "content": ""},
+                "page_verification": {"textbook_explanation_allowed": True},
+            }
+        )
+
+
 def _page_content_request(kind: str = "page_content") -> dict:
     return {
         "original_query": "解释 P117 的 nextval 代码",
@@ -449,6 +646,20 @@ def test_exact_page_content_bundle_keeps_reviewed_source_and_both_page_numbers()
     assert "nextval[i]" in bundle["content"]
 
 
+def test_page_content_bundle_accepts_formal_source_grounded_evidence_without_review_overlay() -> None:
+    evidence = _reviewed_page_content_evidence(verification_status="source_grounded")
+    evidence.pop("review_status")
+
+    bundle = query_module.build_page_content_bundle(
+        request_resolution=_page_content_request(),
+        page_anchor=_page_content_anchor(),
+        evidences=[evidence],
+    )
+
+    assert bundle["status"] == "exact"
+    assert bundle["evidence_ids"] == ["EV-408-000068"]
+
+
 @pytest.mark.parametrize(
     ("page_status", "bundle_status"),
     [
@@ -476,6 +687,10 @@ def test_unconfirmed_page_content_states_never_expose_text(page_status: str, bun
     "overrides",
     [
         {"review_status": "pending", "verification_status": "candidate"},
+        {"review_status": "pending", "verification_status": "source_grounded"},
+        {"review_status": "rejected", "verification_status": "source_grounded"},
+        {"review_status": "", "verification_status": "needs_review"},
+        {"mapping_status": "stale"},
         {"source_grounded": False},
         {"source_id": "SRC-OTHER"},
         {"printed_page": 118},
@@ -506,7 +721,7 @@ def test_unconfirmed_page_crosscheck_blocks_reviewed_page_content() -> None:
     assert "冲突" in bundle["failure_reason"]
 
 
-def test_teaching_v2_exposes_compact_page_anchor_and_reviewed_page_text(monkeypatch) -> None:
+def test_teaching_v3_exposes_compact_page_anchor_and_reviewed_page_text(monkeypatch) -> None:
     evidence = _reviewed_page_content_evidence()
     monkeypatch.setattr(answer_module, "build_citations", lambda result: [{"evidence_id": "EV-408-000068"}])
     result = _result(answer_mode="accepted_evidence", page_anchor=_page_content_anchor())
@@ -525,7 +740,7 @@ def test_teaching_v2_exposes_compact_page_anchor_and_reviewed_page_text(monkeypa
 
     view = answer_module.build_teaching_answer_view(answer_module.build_answer_contract(result))
 
-    assert view["teaching_view_version"] == "m6.teaching.v2"
+    assert view["teaching_view_version"] == "m6.teaching.v3"
     assert view["page_anchor"]["printed_page"] == 117
     assert view["page_anchor"]["pdf_page"] == 129
     assert view["page_content_bundle"]["status"] == "exact"

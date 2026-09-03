@@ -1,0 +1,72 @@
+{
+  "title": "exercise_batch_view",
+  "type": "object",
+  "required": [
+    "batch_contract_version",
+    "view",
+    "subject",
+    "book_resolution",
+    "runtime_context",
+    "request_resolution",
+    "batch_status",
+    "summary",
+    "items"
+  ],
+  "properties": {
+    "batch_contract_version": {"const": "m6.exercise-batch.v1"},
+    "view": {"enum": ["query", "answer", "teaching"]},
+    "subject": {"type": "string"},
+    "book_resolution": {"type": "object"},
+    "runtime_context": {"type": "object"},
+    "request_resolution": {
+      "type": "object",
+      "required": ["original_query", "source_request_kind", "book_title", "section_root", "exercise_category", "page_range", "source_id", "exercise_resolution"],
+      "properties": {
+        "original_query": {"type": "string"},
+        "source_request_kind": {"const": "exercise_batch"},
+        "book_title": {"type": "string"},
+        "chapter_input": {"type": "string"},
+        "section_root": {"type": "string"},
+        "exercise_category": {"enum": ["", "single-choice", "comprehensive"]},
+        "page_range": {"type": "object"},
+        "source_id": {"type": "string"},
+        "exercise_resolution": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "batch_status": {"enum": ["exact", "partial", "blocked"]},
+    "summary": {
+      "type": "object",
+      "required": ["requested_count", "exact_count", "blocked_count"],
+      "properties": {
+        "requested_count": {"type": "integer", "minimum": 2},
+        "exact_count": {"type": "integer", "minimum": 0},
+        "blocked_count": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "items": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["exercise_label", "requested_option", "emphasis", "status", "relation_id", "textbook_location", "answer_grounding", "citation_coverage_ok", "teaching_bundle"],
+        "properties": {
+          "exercise_label": {"type": "string"},
+          "requested_option": {"enum": ["", "A", "B", "C", "D"]},
+          "emphasis": {"type": "boolean"},
+          "status": {"enum": ["exact", "blocked"]},
+          "relation_id": {"type": "string"},
+          "textbook_location": {"type": "object"},
+          "page_verification": {"type": "object"},
+          "answer_grounding": {"type": "object"},
+          "citation_coverage_ok": {"type": "boolean"},
+          "teaching_bundle": {"type": "object"},
+          "book_title": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

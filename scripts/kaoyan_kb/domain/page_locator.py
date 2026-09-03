@@ -80,7 +80,10 @@ def parse_exercise_label(query: str) -> str:
         flags=re.IGNORECASE,
     )
     if not match:
-        return ""
+        # English teaching pages often print an unnumbered “例：… / 译：…”.
+        # Keep the original label, and let the exact relation gate reject a
+        # page containing more than one such example.
+        return "例" if "例句" in text else ""
     return "例" + re.sub(r"[．-]", ".", match.group(1) or match.group(2))
 
 

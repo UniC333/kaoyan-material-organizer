@@ -52,6 +52,7 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 
 - 教材页码、章节、题号、选项或“按书讲解”请求的第一项实质动作必须是调用本地 `query` 或 `ask`。不得先生成通用讲解再补定位。常规调用只传使用者原话和已知的学科、教材名，让确定性链路解析“第 94 页”“94 页起”“3.3.6”“第 4 题 C 项”等信号；只有使用者明确指定严格页码时才额外传 `--printed-page`。
 - 该门禁适用于首轮和后续追问。后续追问必须把本会话已经确认的教材、页码、章节和题号继续显式传给 `query` 或 `ask`，不得因为使用者只说“第 13 题”“这个 C 项”就丢失来源上下文；没有本轮结构化结果时不得凭记忆复述教材答案。当前对话已有教材截图或照片时先检查现有附件，不得在附件仍可用时重复索取。
+- 后续追问若明确改指另一印刷页、定义、定理或原文位置，新指向立即取代前一道例题的页码和题号，成为本轮教材事实的证据目标；不得继续用旧例题的 `teaching_bundle` 回答新页的概念条件。比较两个定理或判断解法关系时，必须分别核验支撑该关系所需的教材正文；只能说证据已经支持的“可用于本题”“可由某定理推出”或“是专门情形”，不得把同题可用误写为两个定理的条件、结论或陈述等价。
 - 精确页码已定位但使用者未给题号时，只接受 `request_resolution.exercise_resolution.status=inferred_unique` 的正式题目关系消歧；`ambiguous`、`not_found` 或 `unavailable` 时停止解题，只询问一个必要信息。不得用普通语义检索、选项字母或模型知识猜题。
 - Windows 诊断模板：`SKILL_ROOT\.venv\Scripts\python.exe SKILL_ROOT\scripts\kb.py --config SKILL_ROOT\kaoyan.config.json query --subject <学科> --book-title <教材名> --query <使用者原话> --format json`。给教学模型消费时优先用同参数的 `ask --format teaching-json`；完整 `json` 保留为诊断和保存契约。返回后必须先检查 `request_resolution.source_request_kind`、`page_crosscheck`、`answer_grounding`、`teaching_bundle` 与 `page_content_bundle`。`exercise` 请求只有 `teaching_bundle.status=exact` 才能输出原书答案；`page_content` 请求只有 `page_content_bundle.status=exact` 才能按审核正文讲解。需要页码交叉核验但状态不是 `confirmed` 时，只报告状态并提出一个必要澄清问题。
 - 普通教材检索与讲解优先使用 Terra `medium`。链路失败、歧义或缺证据时不得自动升级 Sol，也不得用更强模型猜答案；Sol 只在使用者明确选择后用于复杂推导或链路开发。
@@ -61,7 +62,7 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 - `query`、`ask` 返回后先检查 `runtime_context`，确认 `config_path`、`vault_root` 与 `kb_root` 来自本次选择的配置，再检查教材证据状态。
 - 稳定入口启动失败、配置无效，或 `page_anchor.match_status` 为 `unavailable` 时，只能报告“本地证据链当前不可用”并询问下一步。不得搜索其他同名 `.kaoyan-kb`、自动阅图、启动 OCR，或以通用知识补写教材结论。
 - `page_locator_index_stale` 或 `exercise_locator_index_stale` 表示正式输入的内容指纹已变化；先运行 `kb.py sync --indexes-only`，不得把旧索引结果继续当成可用证据。
-- `ask` 的规范参数是 `--question`，同时兼容历史误用的 `--query`；两者互斥并归一到同一问题字段。比较多个例题时先拆成每道题各自的精确 `ask`，所有题都通过来源和答案门禁后再比较。
+- `ask` 的规范参数是 `--question`，同时兼容历史误用的 `--query`；两者互斥并归一到同一问题字段。多个王道 408 练习题使用一次批量 `ask`，由批量契约在内部逐题执行来源和答案门禁；不得在对话层手写循环，也不得把页码范围压成单页后强加给全部题目。批量中的页码范围只约束题目所在页，答案页可以位于范围之外；每个 `items[]` 只有 `teaching_bundle.status=exact` 才能讲解，个别阻塞项不得阻塞其余已确认题目。比较多个非批量例题时仍须逐题精确核验后再比较。
 - 若一次学习问题触发了 OCR、证据或索引修复，发布后的最终验收必须重放使用者最初的自然语言请求，并检查其结构化结果；索引数量、覆盖率或通用测试通过不能单独代表该学习问题已经闭环。
 
 - `doctor`：检查路径、Python、OCR 和终端编码。

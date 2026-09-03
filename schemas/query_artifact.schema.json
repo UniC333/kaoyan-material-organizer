@@ -12,6 +12,7 @@
     "answer_grounding",
     "citation_coverage_ok",
     "teaching_bundle",
+    "concept_routes",
     "sections",
     "citations",
     "runtime_context"
@@ -89,6 +90,50 @@
         "next_action": {"type": "string"}
       },
       "additionalProperties": false
+    },
+    "concept_routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["concept", "requested_by", "primary", "supplement"],
+        "properties": {
+          "concept": {"type": "string", "minLength": 1},
+          "requested_by": {"const": "user_explicit"},
+          "primary": {
+            "type": "object",
+            "required": ["status", "book_title", "source_id", "evidence_ids", "printed_pages", "pdf_pages", "content", "failure_reason"],
+            "properties": {
+              "status": {"enum": ["exact", "not_found"]},
+              "book_title": {"type": "string"},
+              "source_id": {"type": "string"},
+              "evidence_ids": {"type": "array", "items": {"type": "string"}},
+              "printed_pages": {"type": "array", "items": {"type": "integer"}},
+              "pdf_pages": {"type": "array", "items": {"type": "integer"}},
+              "content": {"type": "string"},
+              "failure_reason": {"type": "string"}
+            },
+            "additionalProperties": false
+          },
+          "supplement": {
+            "type": "object",
+            "required": ["status", "book_title", "source_id", "evidence_ids", "printed_pages", "pdf_pages", "content", "failure_reason", "attempted", "trigger"],
+            "properties": {
+              "status": {"enum": ["exact", "not_found", "not_needed"]},
+              "book_title": {"type": "string"},
+              "source_id": {"type": "string"},
+              "evidence_ids": {"type": "array", "items": {"type": "string"}},
+              "printed_pages": {"type": "array", "items": {"type": "integer"}},
+              "pdf_pages": {"type": "array", "items": {"type": "integer"}},
+              "content": {"type": "string"},
+              "failure_reason": {"type": "string"},
+              "attempted": {"type": "boolean"},
+              "trigger": {"enum": ["", "primary_concept_evidence_not_found"]}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
     },
     "sections": {"type": "object"},
     "citations": {"type": "array"},

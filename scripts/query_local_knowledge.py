@@ -9,13 +9,19 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, learner_file_map, load_all_json, load_json, resolve_subject, runtime_context_payload
+from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, is_publishable_source_evidence, learner_file_map, load_all_json, load_json, resolve_subject, runtime_context_payload, validate_entity_contract
 from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator
-from kaoyan_kb.domain.exercise_locator import container_path_from_query, extract_exercise_block, find_exact_relation, find_exact_worked_example_relation, find_unique_relation_for_scope, list_exact_relations_for_question_page, list_exact_worked_example_relations, normalize_exercise_category, normalize_exercise_label, resolve_section_anchor
+from kaoyan_kb.domain.exercise_locator import assemble_exact_relation, container_path_from_query, find_exact_relation, find_exact_worked_example_relation, find_unique_relation_for_scope, list_exact_relations_for_question_page, list_exact_worked_example_relations, normalize_exercise_category, normalize_exercise_label, resolve_section_anchor
 from kaoyan_kb.domain.book_series import classify_source_request, has_exercise_request_signal, parse_exercise_request, resolve_answer_grounding, resolve_book_route, resolve_exercise_route
+from kaoyan_kb.domain.exercise_batch import BATCH_CONTRACT_VERSION, parse_exercise_batch_request, resolve_exercise_batch_targets
 from kaoyan_kb.domain.teaching_context import build_bounded_teaching_context
 from learner_events import load_events
 from retrieve_knowledge import retrieve as retrieve_index
+
+
+PRIMARY_CALCULUS_BOOK_TITLE = "高等数学辅导讲义基础篇"
+SUPPLEMENTAL_CALCULUS_BOOK_TITLE = "李正元数一"
+CONCEPT_SUFFIXES = ("定理", "法则", "公式", "定义")
 
 
 CURRENT_TASK_PATH = Path("01_任务") / "当前任务.md"
@@ -130,6 +136,37 @@ def detect_intent(query: str) -> str:
     if any(token in text for token in ("为什么错", "诊断", "卡住", "不会", "问题在哪")):
         return "diagnose"
     return "define"
+
+
+def extract_explicit_concepts(query: str) -> list[str]:
+    """Extract only theorem/definition-like concepts explicitly named by the learner."""
+    text = re.sub(r"(定理|法则|公式|定义)\s*[和与、/]\s*", r"\1|", str(query or ""))
+    segments = re.split(r"[|，。；：！？,;:!?\n]", text)
+    concepts: list[str] = []
+    prefix_markers = (
+        "讲一下", "讲解", "解释", "说明", "比较", "对比", "关于", "根据", "利用", "使用", "结合", "应用",
+        "问和", "问与", "题和", "题与", "由",
+    )
+    suffix_pattern = "|".join(CONCEPT_SUFFIXES)
+    for segment in segments:
+        for match in re.finditer(rf"[A-Za-z\u4e00-\u9fff]{{2,24}}(?:{suffix_pattern})", segment):
+            candidate = match.group(0)
+            last_boundary = -1
+            boundary_length = 0
+            for marker in prefix_markers:
+                index = candidate.rfind(marker)
+                if index >= last_boundary:
+                    last_boundary = index
+                    boundary_length = len(marker)
+            if last_boundary >= 0:
+                candidate = candidate[last_boundary + boundary_length :]
+            candidate = re.sub(r"^(?:和|与|及|的)+", "", candidate).strip()
+            suffix = next((item for item in CONCEPT_SUFFIXES if candidate.endswith(item)), "")
+            if not suffix or len(candidate) - len(suffix) < 2:
+                continue
+            if candidate not in concepts:
+                concepts.append(candidate)
+    return concepts[:3]
 
 
 def parse_page_anchor(query: str) -> dict[str, Any]:
@@ -394,7 +431,16 @@ def explicit_page_subject_error(*, subject: str | None, query: str, printed_page
     )
 
 
-def build_page_verification_summary(page_anchor: dict[str, Any], answer_mode: str, page_crosscheck: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_page_verification_summary(
+    page_anchor: dict[str, Any],
+    answer_mode: str,
+    page_crosscheck: dict[str, Any] | None = None,
+    *,
+    request_resolution: dict[str, Any] | None = None,
+    answer_grounding: dict[str, Any] | None = None,
+    teaching_bundle: dict[str, Any] | None = None,
+    page_content_bundle: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Expose page location, exercise verification, and teaching permission separately."""
     status = str(page_anchor.get("match_status") or "not_requested")
     exercise_status = str(page_anchor.get("exercise_match_status") or "not_requested")
@@ -403,19 +449,42 @@ def build_page_verification_summary(page_anchor: dict[str, Any], answer_mode: st
     crosscheck_status = str(crosscheck.get("status") or "not_requested")
     crosscheck_ok = not crosscheck_required or crosscheck_status == "confirmed"
     requested_page = page_anchor.get("requested_page")
-    if requested_page is None:
-        # A scoped exercise relation can prove the exact problem/answer pair
-        # without requiring the learner to repeat a page number.  Ordinary
-        # page-less queries remain unverified because they are not "matched".
-        textbook_explanation_allowed = status == "not_requested" and exercise_status == "matched" and crosscheck_ok
+    request_kind = str((request_resolution or {}).get("source_request_kind") or "generic")
+    grounding = dict(answer_grounding or {})
+    teaching = dict(teaching_bundle or {})
+    page_content = dict(page_content_bundle or {})
+    if request_kind == "page_content":
+        textbook_explanation_allowed = (
+            status == "exact_evidence"
+            and crosscheck_ok
+            and str(page_content.get("status") or "") == "exact"
+        )
+    elif request_kind == "exercise":
+        page_ok = requested_page is None or status == "exact_evidence"
+        textbook_explanation_allowed = (
+            page_ok
+            and exercise_status == "matched"
+            and crosscheck_ok
+            and str(grounding.get("status") or "") == "exact_answer"
+            and bool(grounding.get("can_conclude"))
+            and str(teaching.get("status") or "") == "exact"
+        )
     else:
-        textbook_explanation_allowed = status == "exact_evidence" and exercise_status in {"not_requested", "matched"} and crosscheck_ok
+        textbook_explanation_allowed = False
     if crosscheck_required and not crosscheck_ok:
         summary = str(crosscheck.get("reason") or "页码线索与小节标题锚点尚未完成一致性核验。")
     elif status == "exact_asset":
         summary = "教材原页已定位；教材正文未确认，不能按书上原题讲解。"
+    elif request_kind == "page_content" and not textbook_explanation_allowed:
+        summary = str(page_content.get("failure_reason") or "教材页面正文尚未完成审核发布。")
+    elif request_kind == "exercise" and not textbook_explanation_allowed:
+        summary = str(grounding.get("failure_reason") or teaching.get("failure_reason") or "原题与原书答案尚未完成精确核验。")
+    elif request_kind not in {"page_content", "exercise"}:
+        summary = "本次请求不属于教材正文或原书习题讲解；不会仅凭页码定位开放教材讲解。"
     elif status == "exact_evidence" and not textbook_explanation_allowed:
         summary = "教材页正文已有证据，但请求的题号尚未在正文中核验。"
+    elif request_kind == "page_content" and textbook_explanation_allowed:
+        summary = "教材原页与同源、同页的审核正文证据已核验，可在证据范围内按教材讲解。"
     elif textbook_explanation_allowed and requested_page is None:
         summary = "原题与原书答案的唯一关系已核验，可在证据范围内按教材讲解。"
     elif textbook_explanation_allowed:
@@ -700,43 +769,15 @@ def apply_exercise_relation(locator: dict[str, Any], evidences: list[dict[str, A
     locator["exercise_match_status"] = "matched"
     existing_ids = {item.get("evidence_id") for item in evidences}
     combined = evidences + [item for item in linked if item.get("evidence_id") not in existing_ids]
-    page_entries = [
-        item for item in load_page_locator_index().get("entries", [])
-        if str(item.get("source_id") or "") == str(locator.get("source_id") or "")
-    ]
-    printed_by_pdf = {int(item.get("pdf_page", 0) or 0): int(item.get("printed_page", 0) or 0) for item in page_entries}
-    anchor = _exact_relation_anchor(relation, combined, label)
-    anchor["question_printed_pages"] = [printed_by_pdf.get(int(page), 0) for page in relation.get("question_pdf_pages", []) if printed_by_pdf.get(int(page), 0)]
-    anchor["answer_printed_pages"] = [printed_by_pdf.get(int(page), 0) for page in relation.get("answer_pdf_pages", []) if printed_by_pdf.get(int(page), 0)]
+    anchor, combined = assemble_exact_relation(relation, evidences=combined, exercise_label=label)
     if anchor.get("status") != "exact_answer_evidence":
         locator["exercise_match_status"] = "unverified"
     return anchor, combined
 
 
 def _exact_relation_anchor(relation: dict[str, Any], evidences: list[dict[str, Any]], label: str) -> dict[str, Any]:
-    evidence_by_id = {str(item.get("evidence_id") or ""): item for item in evidences}
-    question_ids = [str(item) for item in relation.get("question_evidence_ids", []) or [] if str(item)]
-    answer_ids = [str(item) for item in relation.get("answer_evidence_ids", []) or [] if str(item)]
-    question_text = "\n".join(str(evidence_by_id[item].get("content") or "") for item in question_ids if item in evidence_by_id)
-    answer_text = "\n".join(str(evidence_by_id[item].get("content") or "") for item in answer_ids if item in evidence_by_id)
-    category = str(relation.get("category") or "")
-    question_content = extract_exercise_block(question_text, label, category=category)
-    answer_content = extract_exercise_block(answer_text, label, category=category)
-    base = {
-        "relation_id": relation.get("relation_id", ""),
-        "exercise_label": label,
-        "exercise_category": relation.get("category", ""),
-        "question_pdf_pages": relation.get("question_pdf_pages", []),
-        "answer_pdf_pages": relation.get("answer_pdf_pages", []),
-        "question_evidence_ids": question_ids,
-        "answer_evidence_ids": answer_ids,
-        "question_content": question_content,
-        "answer_content": answer_content,
-        "content_scope": "exercise_exact" if question_content and answer_content else "needs_review",
-    }
-    if not question_content or not answer_content:
-        return {"status": "needs_review", "reason": "exercise-content-not-uniquely-sliced", **base}
-    return {"status": "exact_answer_evidence", **base}
+    anchor, _ = assemble_exact_relation(relation, evidences=evidences, exercise_label=label)
+    return anchor
 
 
 def apply_scoped_exercise_relation(*, book_title: str | None, chapter: str | None, exercise_label: str, category: str = "", query: str = "") -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -755,7 +796,7 @@ def apply_scoped_exercise_relation(*, book_title: str | None, chapter: str | Non
     layout = ensure_kb_layout()
     ids = list(relation.get("question_evidence_ids", []) or []) + list(relation.get("answer_evidence_ids", []) or [])
     evidence = [load_json(layout["evidence"] / f"{item}.json") for item in ids if (layout["evidence"] / f"{item}.json").is_file()]
-    return _exact_relation_anchor(relation, evidence, label), evidence
+    return assemble_exact_relation(relation, evidences=evidence, exercise_label=label)
 
 
 def build_answer_grounding(
@@ -930,10 +971,7 @@ def _empty_page_content_bundle(
 
 
 def _reviewed_page_evidence(evidence: dict[str, Any]) -> bool:
-    return bool(evidence.get("source_grounded")) and (
-        str(evidence.get("review_status") or "") in {"accepted", "approved"}
-        or str(evidence.get("verification_status") or "") == "reviewed"
-    )
+    return is_publishable_source_evidence(evidence)
 
 
 def build_page_content_bundle(
@@ -1623,6 +1661,159 @@ def _resolve_answer_fallback(
     return answer_mode, fallback_note, fallback
 
 
+def _normalized_book_title(value: Any) -> str:
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", unicodedata.normalize("NFKC", str(value or "")).lower())
+
+
+def _book_title_matches(actual: Any, requested: Any) -> bool:
+    left = _normalized_book_title(actual)
+    right = _normalized_book_title(requested)
+    return bool(left and right and (left == right or left in right or right in left))
+
+
+def _formal_concept_excerpt(evidence: dict[str, Any], concept: str) -> str:
+    """Return reviewed theorem/definition text, rejecting mere worked-example mentions."""
+    lines = [str(line).strip() for line in str(evidence.get("content") or "").splitlines()]
+    statement_signals = ("设", "若", "如果", "当", "则", "存在", "取得", "达到", "连续", "可导", "满足")
+    rejected_prefixes = ("例", "解", "证明", "由", "利用", "根据", "应用", "本题", "问题", "练习")
+    for index, line in enumerate(lines):
+        if concept not in line:
+            continue
+        cleaned = re.sub(r"^[#\s>*\-0-9.、（）()]+", "", line).strip()
+        if not cleaned or cleaned.startswith(rejected_prefixes) or len(cleaned) > 100:
+            continue
+        window_lines = [item for item in lines[index : index + 8] if item]
+        window = "\n".join(window_lines)
+        if ("？" in cleaned or "?" in cleaned) and not any(signal in "\n".join(window_lines[1:]) for signal in statement_signals):
+            continue
+        if not any(signal in window for signal in statement_signals):
+            continue
+        return window[:1600].strip()
+    return ""
+
+
+def _concept_evidence_pages(evidence: dict[str, Any]) -> tuple[list[int], list[int]]:
+    references = build_reference_items([evidence], None)
+    printed_pages = sorted({int(item.get("printed_page", 0) or 0) for item in references if int(item.get("printed_page", 0) or 0)})
+    pdf_pages = sorted({int(item.get("pdf_page", 0) or 0) for item in references if int(item.get("pdf_page", 0) or 0)})
+    return printed_pages, pdf_pages
+
+
+def _empty_concept_evidence(*, book_title: str, reason: str) -> dict[str, Any]:
+    return {
+        "status": "not_found",
+        "book_title": book_title,
+        "source_id": "",
+        "evidence_ids": [],
+        "printed_pages": [],
+        "pdf_pages": [],
+        "content": "",
+        "failure_reason": reason,
+    }
+
+
+def _find_formal_concept_evidence(
+    *,
+    subject: str,
+    concept: str,
+    book_title: str,
+    excluded_evidence_ids: set[str],
+    topk: int,
+) -> dict[str, Any]:
+    tokens = tokenize(concept)
+    full_query = normalize_text(concept)
+    retrieval_hits = retrieve_hits(subject, concept, max(topk, 12), None)
+    if retrieval_hits:
+        evidences = evidence_hits_from_retrieval(subject, None, [], [], retrieval_hits, tokens, full_query, {})
+    else:
+        evidences = fallback_evidence_hits(subject, None, [], [], tokens, full_query, {})
+    for evidence in evidences:
+        evidence_id = str(evidence.get("evidence_id") or "")
+        if not evidence_id or evidence_id in excluded_evidence_ids:
+            continue
+        if not _book_title_matches(evidence.get("book_title"), book_title):
+            continue
+        if not is_publishable_source_evidence(evidence):
+            continue
+        excerpt = _formal_concept_excerpt(evidence, concept)
+        if not excerpt:
+            continue
+        printed_pages, pdf_pages = _concept_evidence_pages(evidence)
+        return {
+            "status": "exact",
+            "book_title": str(evidence.get("book_title") or book_title),
+            "source_id": str(evidence.get("source_id") or ""),
+            "evidence_ids": [evidence_id],
+            "printed_pages": printed_pages,
+            "pdf_pages": pdf_pages,
+            "content": excerpt,
+            "failure_reason": "",
+        }
+    return _empty_concept_evidence(
+        book_title=book_title,
+        reason="未检索到与该概念同名、已审核且独立成文的定理或定义证据。",
+    )
+
+
+def build_concept_routes(result: dict[str, Any], *, topk: int) -> list[dict[str, Any]]:
+    """Add a fail-closed, secondary-book concept route after an exact primary answer."""
+    request_resolution = dict(result.get("request_resolution") or {})
+    grounding = dict(result.get("answer_grounding") or {})
+    primary_book = str(result.get("book_title") or (result.get("book_resolution") or {}).get("book_title") or "")
+    if (
+        result.get("subject") != "数学"
+        or request_resolution.get("source_request_kind") != "exercise"
+        or grounding.get("status") != "exact_answer"
+        or not grounding.get("can_conclude")
+        or not _book_title_matches(primary_book, PRIMARY_CALCULUS_BOOK_TITLE)
+        or _book_title_matches(primary_book, SUPPLEMENTAL_CALCULUS_BOOK_TITLE)
+    ):
+        return []
+    concepts = extract_explicit_concepts(str(result.get("query") or ""))
+    if not concepts:
+        return []
+    primary_ids = {
+        str(evidence_id)
+        for side_name in ("problem", "solution")
+        for evidence_id in (grounding.get(side_name) or {}).get("evidence_ids", [])
+        if str(evidence_id)
+    }
+    routes: list[dict[str, Any]] = []
+    for concept in concepts:
+        primary = _find_formal_concept_evidence(
+            subject="数学",
+            concept=concept,
+            book_title=primary_book,
+            excluded_evidence_ids=primary_ids,
+            topk=topk,
+        )
+        if primary.get("status") == "exact":
+            supplement = {
+                **_empty_concept_evidence(book_title=SUPPLEMENTAL_CALCULUS_BOOK_TITLE, reason="主书已定位独立正文，无需跨书补充。"),
+                "status": "not_needed",
+                "attempted": False,
+                "trigger": "",
+            }
+        else:
+            supplement = {
+                **_find_formal_concept_evidence(
+                    subject="数学",
+                    concept=concept,
+                    book_title=SUPPLEMENTAL_CALCULUS_BOOK_TITLE,
+                    excluded_evidence_ids=set(),
+                    topk=topk,
+                ),
+                "attempted": True,
+                "trigger": "primary_concept_evidence_not_found",
+            }
+        routes.append({"concept": concept, "requested_by": "user_explicit", "primary": primary, "supplement": supplement})
+    return routes
+
+
+def attach_concept_routes(result: dict[str, Any], *, topk: int) -> None:
+    result["concept_routes"] = build_concept_routes(result, topk=topk)
+
+
 def build_textbook_location(request_resolution: dict[str, Any], exercise_anchor: dict[str, Any]) -> dict[str, Any]:
     """Expose a human-readable example anchor without weakening answer gating."""
     status = str(exercise_anchor.get("status") or "not_requested")
@@ -1696,7 +1887,16 @@ def query_knowledge(
                 evidences=evidences,
                 page_crosscheck=page_crosscheck,
             )
-            result["page_verification"] = build_page_verification_summary(page_anchor, result["answer_mode"], page_crosscheck)
+            result["page_verification"] = build_page_verification_summary(
+                page_anchor,
+                result["answer_mode"],
+                page_crosscheck,
+                request_resolution=request_resolution,
+                answer_grounding=result["answer_grounding"],
+                teaching_bundle=result["teaching_bundle"],
+                page_content_bundle=result["page_content_bundle"],
+            )
+            attach_concept_routes(result, topk=topk)
             attach_exercise_index_runtime(result)
             return result
         result = {"subject": subject, "chapter": effective_chapter, "book_title": effective_book_title, "book_resolution": book_resolution, "query": query, "intent": intent, "answer_mode": "exercise_unconfirmed", "fallback_note": "题号问答需要在当前教材和当前章节中唯一匹配并裁剪出原题和答案；当前关系未覆盖、存在歧义或需要复核。", "syllabus_route": [], "retrieval_hits": [], "claim_hits": [], "evidence_hits": [], "fallback_hits": [], "references": [], "page_anchor": page_anchor, "page_crosscheck": page_crosscheck, "exercise_anchor": exercise_anchor, "query_path": {"exercise_relation_first": True, "retrieval_candidate_set_used": False, "retrieval_hit_count": 0, "hard_page_filter_applied": False}, "teaching_context": build_bounded_teaching_context(load_events(), subject=subject, chapter=effective_chapter, query=query), "request_resolution": request_resolution, "runtime_context": runtime_context_payload(vault_root_override=vault_root)}
@@ -1709,7 +1909,16 @@ def query_knowledge(
             evidences=[],
             page_crosscheck=page_crosscheck,
         )
-        result["page_verification"] = build_page_verification_summary(page_anchor, result["answer_mode"], page_crosscheck)
+        result["page_verification"] = build_page_verification_summary(
+            page_anchor,
+            result["answer_mode"],
+            page_crosscheck,
+            request_resolution=request_resolution,
+            answer_grounding=result["answer_grounding"],
+            teaching_bundle=result["teaching_bundle"],
+            page_content_bundle=result["page_content_bundle"],
+        )
+        attach_concept_routes(result, topk=topk)
         attach_exercise_index_runtime(result)
         return result
     tokens = tokenize(query)
@@ -1890,7 +2099,22 @@ def query_knowledge(
     if answer_grounding.get("required") and not answer_grounding.get("can_conclude") and page_crosscheck.get("required"):
         answer_mode = "exercise_unconfirmed"
         fallback_note = str(answer_grounding.get("failure_reason") or fallback_note)
-    page_verification = build_page_verification_summary(page_anchor, answer_mode, page_crosscheck)
+    teaching_bundle = build_teaching_bundle(answer_grounding, request_resolution)
+    page_content_bundle = build_page_content_bundle(
+        request_resolution=request_resolution,
+        page_anchor=page_anchor,
+        evidences=evidences,
+        page_crosscheck=page_crosscheck,
+    )
+    page_verification = build_page_verification_summary(
+        page_anchor,
+        answer_mode,
+        page_crosscheck,
+        request_resolution=request_resolution,
+        answer_grounding=answer_grounding,
+        teaching_bundle=teaching_bundle,
+        page_content_bundle=page_content_bundle,
+    )
     result = {
         "subject": subject,
         "chapter": effective_chapter,
@@ -1921,16 +2145,220 @@ def query_knowledge(
         "page_verification": page_verification,
         "runtime_context": runtime_context,
         "request_resolution": request_resolution,
+        "teaching_bundle": teaching_bundle,
+        "page_content_bundle": page_content_bundle,
     }
-    result["teaching_bundle"] = build_teaching_bundle(answer_grounding, request_resolution)
-    result["page_content_bundle"] = build_page_content_bundle(
-        request_resolution=request_resolution,
-        page_anchor=page_anchor,
-        evidences=evidences,
-        page_crosscheck=page_crosscheck,
-    )
+    attach_concept_routes(result, topk=topk)
     attach_exercise_index_runtime(result)
     return result
+
+
+def _batch_failure_text(reason: str) -> tuple[str, str]:
+    messages = {
+        "invalid-requested-option": ("用户选项不是 A、B、C、D。", "请更正该题所选选项后重试。"),
+        "book-title-missing": ("未能唯一确定王道教材。", "请补充教材名称。"),
+        "active-book-pdf-source-not-found": ("当前教材没有已启用的正式 PDF 来源。", "请先完成该教材资料接入与发布。"),
+        "printed-page-range-not-uniquely-mapped": ("题目页范围没有形成唯一正式页码映射。", "请先核对教材版本及页码映射。"),
+        "printed-page-range-not-contiguous": ("题目页范围的正式 PDF 映射不连续。", "请先复核该页码区间的正式映射。"),
+        "printed-page-range-crosses-sources": ("题目页范围跨越了多个教材来源。", "请缩小范围或明确教材版本。"),
+        "section-anchor-ambiguous": ("小节定位存在多个正式候选。", "请补充准确小节编号。"),
+        "exercise_locator_index_missing": ("正式习题关系索引不存在。", "请先运行 kb.py sync --indexes-only。"),
+        "exercise_locator_index_stale": ("正式习题关系索引已过期。", "请先运行 kb.py sync --indexes-only。"),
+        "exercise_locator_index_version_mismatch": ("正式习题关系索引版本过旧。", "请先运行 kb.py sync --indexes-only。"),
+        "exercise-relation-ambiguous": ("该题存在多个正式题目—答案关系。", "请补充小节、题型或页码范围。"),
+        "exercise-relation-needs-review": ("该题的题目—答案关系仍需人工复核。", "请先复核并发布该题关系。"),
+        "exercise-relation-not-found": ("未找到该题的正式题目—答案关系。", "请先确认题号或发布对应关系。"),
+        "book-source-ambiguous": ("同名教材命中了多个来源或版本。", "请明确教材版本或页码范围。"),
+    }
+    return messages.get(reason, ("该题当前无法唯一定位原题和原书答案。", "请补充教材、小节、题型或页码信息。"))
+
+
+def _blocked_batch_item(target: dict[str, Any], *, book_title: str) -> dict[str, Any]:
+    reason = str(target.get("reason") or "exercise-relation-not-found")
+    failure_reason, next_action = _batch_failure_text(reason)
+    label = str(target.get("exercise_label") or "")
+    grounding = {
+        "required": True,
+        "status": "answer_unavailable" if "index" in reason or "page" in reason else "answer_ambiguous" if "ambiguous" in reason else "answer_not_found",
+        "can_conclude": False,
+        "problem": {},
+        "solution": {},
+        "failure_reason": failure_reason,
+        "next_action": next_action,
+    }
+    return {
+        "exercise_label": label,
+        "requested_option": str(target.get("requested_option") or ""),
+        "emphasis": bool(target.get("emphasis")),
+        "status": "blocked",
+        "relation_id": str((target.get("relation") or {}).get("relation_id") or ""),
+        "textbook_location": {
+            "status": "blocked",
+            "exercise_label": label,
+            "printed_pages": [],
+            "question_printed_pages": [],
+            "question_pdf_pages": [],
+            "answer_printed_pages": [],
+            "answer_pdf_pages": [],
+        },
+        "page_verification": {},
+        "answer_grounding": grounding,
+        "citation_coverage_ok": False,
+        "teaching_bundle": {
+            "status": "blocked",
+            "problem_text": "",
+            "source_answer_text": "",
+            "requested_option": str(target.get("requested_option") or ""),
+            "exercise_label": label,
+            "citations": {
+                "problem_evidence_ids": [],
+                "solution_evidence_ids": [],
+                "problem_pdf_pages": [],
+                "solution_pdf_pages": [],
+            },
+            "failure_reason": failure_reason,
+        },
+        "book_title": book_title,
+    }
+
+
+def _project_batch_item(target: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    grounding = dict(result.get("answer_grounding") or {})
+    teaching = dict(result.get("teaching_bundle") or {})
+    exact = bool(
+        grounding.get("status") == "exact_answer"
+        and grounding.get("can_conclude")
+        and teaching.get("status") == "exact"
+    )
+    problem_ids = set((grounding.get("problem") or {}).get("evidence_ids", []) or [])
+    solution_ids = set((grounding.get("solution") or {}).get("evidence_ids", []) or [])
+    cited_ids = {str(item.get("evidence_id") or "") for item in result.get("references", []) or []}
+    relation = dict(target.get("relation") or {})
+    textbook_location = dict(result.get("textbook_location") or {})
+    textbook_location.update(
+        {
+            "question_printed_pages": list(relation.get("question_printed_pages") or []),
+            "question_pdf_pages": list(relation.get("question_pdf_pages") or []),
+            "answer_printed_pages": list(relation.get("answer_printed_pages") or []),
+            "answer_pdf_pages": list(relation.get("answer_pdf_pages") or []),
+        }
+    )
+    return {
+        "exercise_label": str(target.get("exercise_label") or ""),
+        "requested_option": str(target.get("requested_option") or ""),
+        "emphasis": bool(target.get("emphasis")),
+        "status": "exact" if exact else "blocked",
+        "relation_id": str(relation.get("relation_id") or (result.get("exercise_anchor") or {}).get("relation_id") or ""),
+        "textbook_location": textbook_location,
+        "page_verification": dict(result.get("page_verification") or {}),
+        "answer_grounding": grounding,
+        "citation_coverage_ok": bool(exact and problem_ids and solution_ids and problem_ids <= cited_ids and solution_ids <= cited_ids),
+        "teaching_bundle": teaching,
+        "book_title": str(result.get("book_title") or ""),
+    }
+
+
+def query_exercise_batch(
+    vault_root: Path,
+    subject: str,
+    chapter: str | None,
+    query: str,
+    topk: int,
+    book_title: str | None = None,
+    printed_page: int | None = None,
+    *,
+    view: str = "query",
+) -> dict[str, Any] | None:
+    parsed = parse_exercise_batch_request(query)
+    if not parsed.get("is_batch"):
+        return None
+    if printed_page is not None and not parsed.get("page_range"):
+        parsed["page_range"] = {"start": int(printed_page), "end": int(printed_page), "semantics": "question_scope"}
+    book_resolution = resolve_current_task_book(vault_root=vault_root, subject=subject, explicit_book_title=book_title)
+    effective_book_title = str(book_resolution.get("book_title") or "")
+    resolved = resolve_exercise_batch_targets(
+        subject=subject,
+        book_title=effective_book_title,
+        chapter=chapter,
+        query=query,
+        parsed=parsed,
+    )
+    section_root = str(resolved.get("section_root") or chapter or "")
+    category = str(parsed.get("exercise_category") or "")
+    category_label = "单项选择题" if category == "single-choice" else "综合应用题" if category == "comprehensive" else "练习题"
+    items: list[dict[str, Any]] = []
+    for target in resolved.get("targets", []) or []:
+        if target.get("status") != "exact":
+            items.append(_blocked_batch_item(target, book_title=effective_book_title))
+            continue
+        label = str(target.get("exercise_label") or "")
+        requested_option = str(target.get("requested_option") or "")
+        item_question = f"{effective_book_title} {section_root} {category_label} 第{int(label)}题"
+        if requested_option:
+            item_question += f" {requested_option}项"
+        item_result = query_knowledge(
+            vault_root,
+            subject,
+            section_root or chapter,
+            item_question,
+            topk,
+            int(target.get("printed_page")) if parsed.get("page_range") else None,
+            effective_book_title,
+            label,
+        )
+        items.append(_project_batch_item(target, item_result))
+    exact_count = sum(item.get("status") == "exact" for item in items)
+    blocked_count = len(items) - exact_count
+    batch_status = "exact" if items and blocked_count == 0 else "partial" if exact_count else "blocked"
+    payload = {
+        "batch_contract_version": BATCH_CONTRACT_VERSION,
+        "view": view,
+        "subject": subject,
+        "book_resolution": book_resolution,
+        "runtime_context": runtime_context_payload(vault_root_override=vault_root),
+        "request_resolution": {
+            "original_query": query,
+            "source_request_kind": "exercise_batch",
+            "book_title": effective_book_title,
+            "chapter_input": str(chapter or ""),
+            "section_root": section_root,
+            "exercise_category": category,
+            "page_range": dict(parsed.get("page_range") or {}),
+            "source_id": str(resolved.get("source_id") or ""),
+            "exercise_resolution": {
+                "status": "explicit",
+                "source": "query",
+                "exercise_labels": [str(item.get("exercise_label") or "") for item in parsed.get("items", []) or []],
+            },
+        },
+        "batch_status": batch_status,
+        "summary": {"requested_count": len(items), "exact_count": exact_count, "blocked_count": blocked_count},
+        "items": items,
+    }
+    validate_entity_contract("exercise_batch_view", payload)
+    return payload
+
+
+def render_exercise_batch_text(payload: dict[str, Any]) -> str:
+    summary = dict(payload.get("summary") or {})
+    lines = [
+        "# 王道 408 多题查询结果",
+        "",
+        f"- 批次状态：{payload.get('batch_status', 'blocked')}",
+        f"- 请求：{summary.get('requested_count', 0)} 题；精确：{summary.get('exact_count', 0)} 题；阻塞：{summary.get('blocked_count', 0)} 题",
+        "",
+    ]
+    for item in payload.get("items", []) or []:
+        focus = "（重点）" if item.get("emphasis") else ""
+        lines.extend([f"## 第 {int(item.get('exercise_label') or 0)} 题{focus}", ""])
+        grounding = dict(item.get("answer_grounding") or {})
+        lines.append(f"- 状态：{grounding.get('status', 'answer_not_found')}")
+        teaching = dict(item.get("teaching_bundle") or {})
+        if item.get("status") == "exact":
+            lines.extend(["", teaching.get("problem_text", ""), "", teaching.get("source_answer_text", ""), ""])
+        else:
+            lines.extend([f"- 原因：{grounding.get('failure_reason', '')}", f"- 下一步：{grounding.get('next_action', '')}", ""])
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def render_text(result: dict) -> str:
@@ -1967,7 +2395,18 @@ def render_text(result: dict) -> str:
     page_anchor = dict(result.get("page_anchor") or {})
     if page_anchor.get("requested_page") is not None:
         page_crosscheck = dict(result.get("page_crosscheck") or {})
-        verification = dict(result.get("page_verification") or build_page_verification_summary(page_anchor, result["answer_mode"], page_crosscheck))
+        verification = dict(
+            result.get("page_verification")
+            or build_page_verification_summary(
+                page_anchor,
+                result["answer_mode"],
+                page_crosscheck,
+                request_resolution=dict(result.get("request_resolution") or {}),
+                answer_grounding=dict(result.get("answer_grounding") or {}),
+                teaching_bundle=dict(result.get("teaching_bundle") or {}),
+                page_content_bundle=dict(result.get("page_content_bundle") or {}),
+            )
+        )
         lines.extend(
             [
                 "## 页码核验摘要",
@@ -2052,6 +2491,22 @@ def main() -> int:
     if not args.subject:
         raise SystemExit("[ERROR] --subject is required")
     subject, _ = resolve_subject(args.subject)
+    batch = query_exercise_batch(
+        Path(args.vault_root),
+        subject,
+        args.chapter,
+        args.query or "",
+        args.topk,
+        args.book_title,
+        args.printed_page,
+        view="query",
+    )
+    if batch is not None:
+        if args.format == "json":
+            print(json.dumps(batch, ensure_ascii=False, indent=2))
+        else:
+            print(render_exercise_batch_text(batch), end="")
+        return 0
     result = query_knowledge(Path(args.vault_root), subject, args.chapter, args.query or "", args.topk, args.printed_page, args.book_title, args.exercise_label)
     if args.format == "json":
         print(json.dumps(result, ensure_ascii=False, indent=2))
