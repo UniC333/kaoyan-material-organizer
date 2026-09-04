@@ -160,7 +160,13 @@ def test_explicit_zero_ocr_budget_overrides_environment(monkeypatch, tmp_path: P
     assert runtime.ocr_monthly_page_budget == 0
 
 
-def test_remote_ocr_defaults_to_disabled_when_config_and_environment_are_absent(tmp_path: Path) -> None:
+def test_remote_ocr_defaults_to_disabled_when_config_and_environment_are_absent(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "_discover_config_path", lambda: (None, "default"))
+    config.reset_runtime_config_cache()
+
     runtime = config.load_runtime_config(default_workspace=str(tmp_path))
 
     assert runtime.ocr_allow_remote is False
