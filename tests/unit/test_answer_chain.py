@@ -18,6 +18,7 @@ import kb as kb_module
 import lint_kb_entities as lint_module
 import publish_pdf_ocr_evidence as pdf_publish_module
 import query_local_knowledge as query_module
+import save_local_answer as save_module
 from save_local_answer import save_answer_contract, save_eligibility
 
 
@@ -819,3 +820,169 @@ def test_blocked_generic_answer_is_content_free_and_unsaveable(monkeypatch) -> N
     allowed, reason = save_eligibility(contract)
     assert not allowed
     assert "门禁" in reason
+
+
+def _transaction_contract(question: str = "事务测试") -> dict:
+    result = _result(answer_mode="accepted_evidence")
+    result.update(
+        query=question,
+        references=[
+            {
+                "evidence_id": "EV-FIXTURE",
+                "title": "fixture evidence",
+                "page_span": "P1",
+                "image_span": "1",
+                "chunk_id": "CHUNK-FIXTURE",
+            }
+        ],
+        evidence_hits=[],
+    )
+    return {
+        "answer_contract_version": "test.answer.v1",
+        "answer_mode": "accepted_evidence",
+        "citation_coverage_ok": True,
+        "evidence_assessment": {
+            "level": "structured_evidence",
+            "can_confirm": "fixture confirms",
+            "cannot_confirm": "",
+            "next_action": "",
+        },
+        "query_result": result,
+        "intent": "define",
+        "syllabus_route": [],
+        "references": result["references"],
+        "content_provenance": [{"source_label": "fixture evidence"}],
+    }
+
+
+def _transaction_fixture(tmp_path: Path) -> tuple[Path, Path, tuple[Path, ...]]:
+    vault_root = tmp_path / "vault"
+    context_path = vault_root / "fixture" / "00_批次上下文.json"
+    context_path.parent.mkdir(parents=True)
+    context_path.write_text(
+        json.dumps({"subject": "数学", "chapter_title": "第三章"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    learner_root = tmp_path / "kb" / "learner"
+    feedback_paths = tuple(learner_root / name for name in save_module.LEARNER_FEEDBACK_FILENAMES)
+    return vault_root, context_path, feedback_paths
+
+
+def _transaction_paths(vault_root: Path, question: str, feedback_paths: tuple[Path, ...]) -> tuple[Path, ...]:
+    chapter_dir = vault_root / "10_数学" / "00_课程入口" / "10_问答沉淀" / "第三章"
+    note_path = chapter_dir / f"2026-09-05_{question}.md"
+    return save_module.transaction_paths(
+        note_path,
+        chapter_dir / "00_本章问答入口.md",
+        chapter_dir.parent / "00_知识问答入口.md",
+        *feedback_paths,
+    )
+
+
+def _stub_feedback_scripts(monkeypatch, feedback_paths: tuple[Path, ...], *, fail_second: bool = False) -> list[str]:
+    calls: list[str] = []
+
+    def fake_run_script(name: str, *args: str) -> None:
+        calls.append(name)
+        if name == "apply_saved_qa_feedback.py":
+            for path in feedback_paths:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(f"new:{path.name}".encode("utf-8"))
+        elif name == "review_refinement_candidates.py":
+            refinement_path = next(path for path in feedback_paths if path.name == "refinement_queue.json")
+            refinement_path.write_bytes(b"new:second-feedback")
+            if fail_second:
+                raise RuntimeError("第二个反馈步骤失败")
+
+    monkeypatch.setattr(save_module, "learner_feedback_paths", lambda: feedback_paths)
+    monkeypatch.setattr(save_module, "run_script", fake_run_script)
+    return calls
+
+
+def test_save_transaction_success_keeps_note_indexes_and_feedback(tmp_path: Path, monkeypatch) -> None:
+    vault_root, _context_path, feedback_paths = _transaction_fixture(tmp_path)
+    calls = _stub_feedback_scripts(monkeypatch, feedback_paths)
+    contract = _transaction_contract()
+
+    subject_index = save_answer_contract(
+        contract=contract,
+        vault_root=vault_root,
+        subject="数学",
+        chapter="第三章",
+        question="事务测试",
+        saved_at="2026-09-05",
+    )
+
+    paths = _transaction_paths(vault_root, "事务测试", feedback_paths)
+    assert subject_index == paths[2]
+    assert calls == ["apply_saved_qa_feedback.py", "review_refinement_candidates.py"]
+    assert all(path.is_file() for path in paths)
+    assert paths[0].read_text(encoding="utf-8").startswith("# 事务测试")
+    assert paths[1].is_file()
+    assert paths[2].is_file()
+    assert paths[3].read_bytes() == b"new:learner_events.jsonl"
+    assert paths[-2].read_bytes() == b"new:second-feedback"
+
+
+def test_save_transaction_second_feedback_failure_removes_new_files(tmp_path: Path, monkeypatch) -> None:
+    vault_root, _context_path, feedback_paths = _transaction_fixture(tmp_path)
+    _stub_feedback_scripts(monkeypatch, feedback_paths, fail_second=True)
+
+    with pytest.raises(RuntimeError, match="第二个反馈步骤失败"):
+        save_answer_contract(
+            contract=_transaction_contract(),
+            vault_root=vault_root,
+            subject="数学",
+            chapter="第三章",
+            question="事务测试",
+            saved_at="2026-09-05",
+        )
+
+    paths = _transaction_paths(vault_root, "事务测试", feedback_paths)
+    assert all(not path.exists() for path in paths)
+    assert not (vault_root / "10_数学").exists()
+    assert not (tmp_path / "kb").exists()
+
+
+def test_save_transaction_failure_restores_overwritten_note_indexes_and_feedback(tmp_path: Path, monkeypatch) -> None:
+    vault_root, _context_path, feedback_paths = _transaction_fixture(tmp_path)
+    paths = _transaction_paths(vault_root, "事务测试", feedback_paths)
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"old:{path.name}".encode("utf-8"))
+    _stub_feedback_scripts(monkeypatch, feedback_paths, fail_second=True)
+
+    with pytest.raises(RuntimeError, match="第二个反馈步骤失败"):
+        save_answer_contract(
+            contract=_transaction_contract(),
+            vault_root=vault_root,
+            subject="数学",
+            chapter="第三章",
+            question="事务测试",
+            saved_at="2026-09-05",
+        )
+
+    assert [path.read_bytes() for path in paths] == [f"old:{path.name}".encode("utf-8") for path in paths]
+
+
+def test_rejected_save_does_not_enumerate_or_write_transaction_files(tmp_path: Path, monkeypatch) -> None:
+    contract = {
+        "answer_mode": "page_asset",
+        "citation_coverage_ok": False,
+        "evidence_assessment": {"level": "page_asset_only"},
+        "query_result": _result(answer_mode="page_asset", page_anchor={"match_status": "exact_asset"}),
+    }
+    monkeypatch.setattr(save_module, "learner_feedback_paths", lambda: pytest.fail("拒绝保存不应枚举反馈路径"))
+    monkeypatch.setattr(save_module, "run_script", lambda *args: pytest.fail("拒绝保存不应执行反馈脚本"))
+
+    with pytest.raises(ValueError, match="没有可保存的结构化证据"):
+        save_answer_contract(
+            contract=contract,
+            vault_root=tmp_path,
+            subject="数学",
+            chapter="第三章",
+            question="书上有吗",
+            saved_at="2026-09-05",
+        )
+
+    assert list(tmp_path.iterdir()) == []

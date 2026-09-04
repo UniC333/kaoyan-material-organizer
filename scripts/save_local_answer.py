@@ -4,15 +4,96 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 
 from answer_local_question import ANSWER_CONTRACT_VERSION, build_answer_contract, direct_conclusion, intuitive_explanation, next_steps, personalized_reminder
 from common import default_vault_root_arg, normalize_context, preferred_python_executable, resolve_subject, run_utf8_subprocess, runtime_subprocess_env, sanitize_name
+from config import load_runtime_config
 from query_local_knowledge import query_knowledge
 
 
 SAVEABLE_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "exercise_pair"}
+LEARNER_FEEDBACK_FILENAMES = (
+    "learner_events.jsonl",
+    "learner_model.json",
+    "question_history.json",
+    "error_log.json",
+    "review_history.json",
+    "review_schedule.json",
+    "refinement_queue.json",
+    "distillation_candidates.json",
+)
+
+
+@dataclass(frozen=True)
+class FileSnapshot:
+    path: Path
+    contents: bytes | None
+
+
+def learner_feedback_paths() -> tuple[Path, ...]:
+    """Return only the learner files written by the two save feedback steps."""
+    learner_root = Path(load_runtime_config().kb_root) / "learner"
+    return tuple(learner_root / filename for filename in LEARNER_FEEDBACK_FILENAMES)
+
+
+def transaction_paths(*paths: Path) -> tuple[Path, ...]:
+    """Deduplicate the exact files that this save operation is allowed to restore."""
+    return tuple(dict.fromkeys(Path(path) for path in paths))
+
+
+def snapshot_files(paths: tuple[Path, ...]) -> tuple[FileSnapshot, ...]:
+    """Read the enumerated files before any note, index, or feedback write."""
+    snapshots: list[FileSnapshot] = []
+    for path in paths:
+        if path.exists():
+            if not path.is_file():
+                raise OSError(f"保存目标不是文件，无法建立回滚点: {path}")
+            snapshots.append(FileSnapshot(path=path, contents=path.read_bytes()))
+        else:
+            snapshots.append(FileSnapshot(path=path, contents=None))
+    return tuple(snapshots)
+
+
+def missing_parent_dirs(paths: tuple[Path, ...]) -> tuple[Path, ...]:
+    """Remember only missing parents so a failed save can remove its empty directories."""
+    missing: list[Path] = []
+    for path in paths:
+        parent = path.parent
+        while not parent.exists():
+            if parent not in missing:
+                missing.append(parent)
+            parent = parent.parent
+    return tuple(missing)
+
+
+def rollback_files(snapshots: tuple[FileSnapshot, ...], created_dirs: tuple[Path, ...]) -> None:
+    """Restore exact bytes/existence and remove only directories created by this save."""
+    errors: list[str] = []
+    for snapshot in snapshots:
+        try:
+            if snapshot.contents is None:
+                if snapshot.path.exists():
+                    if not snapshot.path.is_file():
+                        raise OSError("当前路径不是可删除的文件")
+                    snapshot.path.unlink()
+            else:
+                snapshot.path.parent.mkdir(parents=True, exist_ok=True)
+                snapshot.path.write_bytes(snapshot.contents)
+        except OSError as exc:
+            errors.append(f"{snapshot.path}: {exc}")
+
+    for directory in sorted(created_dirs, key=lambda path: len(path.parts), reverse=True):
+        try:
+            if directory.exists() and directory.is_dir():
+                directory.rmdir()
+        except OSError as exc:
+            errors.append(f"{directory}: {exc}")
+
+    if errors:
+        raise OSError("；".join(errors))
 
 
 def parse_args() -> argparse.Namespace:
@@ -218,14 +299,8 @@ def save_answer_contract(
     chapter_dir = qa_root / chapter_slug
     note_path = chapter_dir / f"{saved_at_label(saved_at)}_{trim_question(question)}.md"
 
-    # All eligibility checks complete before this point; blocked answers leave no QA files behind.
-    chapter_dir.mkdir(parents=True, exist_ok=True)
-    note_path.write_text(render_note(contract), encoding="utf-8")
-
     chapter_index = chapter_dir / "00_本章问答入口.md"
-    write_index(chapter_index, f"{chapter or result['chapter'] or '本章'}问答入口", sorted(path for path in chapter_dir.glob("*.md") if path.name != chapter_index.name), vault_root)
     subject_index = qa_root / "00_知识问答入口.md"
-    write_index(subject_index, f"{subject}知识问答入口", sorted(qa_root.rglob("00_本章问答入口.md")), vault_root)
 
     context_path = None
     if result["references"]:
@@ -245,33 +320,62 @@ def save_answer_contract(
             ):
                 context_path = candidate
                 break
-    if context_path is not None:
-        metadata = json.dumps(
-            {
-                "source_kind": "learner_safe_query_answer",
-                "answer_contract_version": contract["answer_contract_version"],
-                "intent": contract["intent"],
-                "answer_mode": contract["answer_mode"],
-                "citation_coverage_ok": contract["citation_coverage_ok"],
-                "syllabus_route": contract["syllabus_route"],
-                "references": contract["references"],
-            },
-            ensure_ascii=False,
+
+    feedback_paths = learner_feedback_paths() if context_path is not None else ()
+    exact_paths = transaction_paths(note_path, chapter_index, subject_index, *feedback_paths)
+    snapshots = snapshot_files(exact_paths)
+    created_dirs = missing_parent_dirs(exact_paths)
+
+    try:
+        # All eligibility checks and the exact rollback manifest are complete before this point.
+        chapter_dir.mkdir(parents=True, exist_ok=True)
+        note_path.write_text(render_note(contract), encoding="utf-8")
+        write_index(
+            chapter_index,
+            f"{chapter or result['chapter'] or '本章'}问答入口",
+            sorted(path for path in chapter_dir.glob("*.md") if path.name != chapter_index.name),
+            vault_root,
         )
-        run_script(
-            "apply_saved_qa_feedback.py",
-            "--context-json",
-            str(context_path),
-            "--question",
-            question,
-            "--answer-metadata",
-            metadata,
-            "--saved-note",
-            str(note_path),
-            "--format",
-            "quiet",
+        write_index(
+            subject_index,
+            f"{subject}知识问答入口",
+            sorted(qa_root.rglob("00_本章问答入口.md")),
+            vault_root,
         )
-        run_script("review_refinement_candidates.py", "--format", "quiet")
+
+        if context_path is not None:
+            metadata = json.dumps(
+                {
+                    "source_kind": "learner_safe_query_answer",
+                    "answer_contract_version": contract["answer_contract_version"],
+                    "intent": contract["intent"],
+                    "answer_mode": contract["answer_mode"],
+                    "citation_coverage_ok": contract["citation_coverage_ok"],
+                    "syllabus_route": contract["syllabus_route"],
+                    "references": contract["references"],
+                },
+                ensure_ascii=False,
+            )
+            run_script(
+                "apply_saved_qa_feedback.py",
+                "--context-json",
+                str(context_path),
+                "--question",
+                question,
+                "--answer-metadata",
+                metadata,
+                "--saved-note",
+                str(note_path),
+                "--format",
+                "quiet",
+            )
+            run_script("review_refinement_candidates.py", "--format", "quiet")
+    except Exception:
+        try:
+            rollback_files(snapshots, created_dirs)
+        except Exception as rollback_error:
+            raise RuntimeError("问答保存失败且回滚未完成") from rollback_error
+        raise
     return subject_index
 
 
