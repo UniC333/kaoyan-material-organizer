@@ -122,6 +122,8 @@ $env:MISTRAL_API_KEY = "your-key"
 
 `request_resolution.source_request_kind` 把来源请求分为 `generic`、`page_content` 和 `exercise`。普通概念检索走 `generic`；解释教材某页的定义、代码或段落走 `page_content`，只有同来源、同印刷页且已复核的 `page_content_bundle.status=exact` 才能按原页讲解；有来源题目走 `exercise`，继续要求 `answer_grounding.status=exact_answer`。页内讲解和习题答案是两套独立门禁，不能互相替代。
 
+普通 `generic` 检索同样受 `effective_book_title` 约束：显式书名或当前任务默认教材不会跨书补证据；书名不存在、没有同书可发布证据或主题词未覆盖时，结果为 `answer_mode=unconfirmed`，不回退到其他教材或无关章节。`generic_answer_bundle` 只有在主题相关性、同书证据和引用覆盖同时通过时才为 `exact`；其余为无结论、无引用正文的 `blocked`，`ask --save` 不得写入。
+
 精确页码已定位但自然语言没有题号时，查询只从该页 `relation_status=exact` 且题干可唯一切片的正式习题关系中消歧。单题页直接采用；多题页必须命中唯一的区分性题干词组，答案正文、普通语义检索和选项字母均不参与题目身份判断。结果记录在 `request_resolution.exercise_resolution`：`explicit` 表示显式题号，`inferred_unique` 表示正式题干唯一命中；`ambiguous`、`not_found`、`unavailable` 均失败关闭，其中题目不唯一时只要求补充题号。
 
 纸质习题书可登记书系别名、分册与题解配对。照片书源先注册，再按阶段或章节预览 OCR 范围：
@@ -151,7 +153,7 @@ $env:MISTRAL_API_KEY = "your-key"
 
 `ask` 的规范参数是 `--question`；为兼容历史命令也接受 `--query`，二者互斥并归一到同一问题字段。比较多道例题时，先为每道题分别执行精确 `ask`，全部通过来源门禁后再比较。
 
-给教学模型或自动化消费时可改用 `--format teaching-json`。当前视图版本是 `m6.teaching.v3`，它输出请求解析、页码交叉核验、答案门控、引用覆盖、`teaching_bundle`、`page_content_bundle` 和只读的 `concept_routes`；`--format json` 继续保留完整诊断契约。即使同时使用 `--save`，程序也会先用完整契约完成保存，再把终端输出投影为紧凑视图。
+给教学模型或自动化消费时可改用 `--format teaching-json`。当前视图版本是 `m6.teaching.v3`，它输出请求解析、页码交叉核验、答案门控、引用覆盖、`generic_answer_bundle`、`teaching_bundle`、`page_content_bundle` 和只读的 `concept_routes`；`--format json` 继续保留完整诊断契约。即使同时使用 `--save`，程序也会先用完整契约完成保存，再把终端输出投影为紧凑视图。
 
 `answer_grounding.status` 可能为 `exact_answer`、`answer_asset_only`、`answer_ambiguous`、`answer_not_found`、`answer_unavailable` 或 `not_applicable`。除 `exact_answer` 外，有来源题目均失败关闭：不输出解题结论、不以 AI 独立推导补位；`ask --save` 还要求原题和原书答案的证据引用同时完整，否则保持零写入。明确说明是自拟题时不启用此门控。
 

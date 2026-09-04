@@ -16,6 +16,7 @@
     "page_anchor",
     "answer_grounding",
     "citation_coverage_ok",
+    "generic_answer_bundle",
     "teaching_bundle",
     "page_content_bundle",
     "concept_routes"
@@ -58,6 +59,25 @@
     "textbook_location": {"type": "object"},
     "answer_grounding": {"type": "object"},
     "citation_coverage_ok": {"type": "boolean"},
+    "generic_answer_bundle": {
+      "type": "object",
+      "required": ["status", "book_title", "topic_terms", "conclusion", "explanation", "evidence_ids", "citations", "relevance_ok", "same_book_ok", "citation_coverage_ok", "failure_reason", "next_action"],
+      "properties": {
+        "status": {"enum": ["exact", "blocked", "not_applicable"]},
+        "book_title": {"type": "string"},
+        "topic_terms": {"type": "array", "items": {"type": "string"}},
+        "conclusion": {"type": "string"},
+        "explanation": {"type": "string"},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}},
+        "citations": {"type": "array", "items": {"type": "object"}},
+        "relevance_ok": {"type": "boolean"},
+        "same_book_ok": {"type": "boolean"},
+        "citation_coverage_ok": {"type": "boolean"},
+        "failure_reason": {"type": "string"},
+        "next_action": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
     "teaching_bundle": {"type": "object"},
     "page_content_bundle": {
       "type": "object",

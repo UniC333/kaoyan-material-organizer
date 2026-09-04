@@ -22,6 +22,42 @@ from retrieve_knowledge import retrieve as retrieve_index
 PRIMARY_CALCULUS_BOOK_TITLE = "高等数学辅导讲义基础篇"
 SUPPLEMENTAL_CALCULUS_BOOK_TITLE = "李正元数一"
 CONCEPT_SUFFIXES = ("定理", "法则", "公式", "定义")
+GENERIC_ANSWER_MODES = {"canonical_claim", "accepted_evidence"}
+GENERIC_QUERY_NOISE = (
+    "请问",
+    "帮我",
+    "讲一下",
+    "讲解",
+    "解释一下",
+    "解释",
+    "说明一下",
+    "说明",
+    "告诉我",
+    "什么是",
+    "是什么",
+    "有什么区别",
+    "有什么不同",
+    "怎么区别",
+    "如何区别",
+    "怎么区分",
+    "如何区分",
+    "有什么联系",
+    "有什么关系",
+    "区别",
+    "联系",
+    "关系",
+    "比较",
+    "对比",
+    "怎么做",
+    "如何做",
+    "怎么理解",
+    "为什么",
+    "的定义",
+    "定义",
+    "概念",
+    "吗",
+    "呢",
+)
 
 
 CURRENT_TASK_PATH = Path("01_任务") / "当前任务.md"
@@ -1090,9 +1126,62 @@ def tokenize(query: str) -> list[str]:
 def compare_parts(query: str) -> list[str]:
     cleaned = re.sub(r"(怎么区分|如何区分|怎么区别|如何区别|区别|区分|比较|对比|有什么不同|有什么区别)", " ", query)
     parts = re.split(r"[和与跟及、/]|vs|VS", cleaned)
-    normalized = [normalize_text(part) for part in parts if normalize_text(part)]
+    normalized = [
+        re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", normalize_text(part))
+        for part in parts
+        if normalize_text(part)
+    ]
     compact = [part for part in normalized if len(part) <= 12]
     return compact[:3]
+
+
+def generic_topic_terms(query: str, intent: str = "define") -> list[str]:
+    """Extract topic terms while dropping question and routing boilerplate."""
+    text = unicodedata.normalize("NFKC", str(query or "")).lower()
+    for phrase in sorted(GENERIC_QUERY_NOISE, key=len, reverse=True):
+        text = text.replace(phrase, " ")
+    text = text.replace("的", " ")
+    text = re.sub(r"[？?。！!，,；;：:（）()\[\]{}]", " ", text)
+    parts = re.split(r"\s*(?:和|与|跟|及|、|/|vs)\s*", text, flags=re.IGNORECASE)
+    terms: list[str] = []
+    for part in parts:
+        term = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", part)
+        if not term or term in {"我", "想", "了解", "一下", "请", "帮"}:
+            continue
+        if len(term) == 1 and not re.search(r"[\u4e00-\u9fff]", term):
+            continue
+        if term not in terms:
+            terms.append(term)
+    if intent == "compare":
+        compare_terms: list[str] = []
+        for raw in compare_parts(query):
+            term = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", str(raw).lower())
+            if term and term not in {"什么", "不同"} and term not in compare_terms:
+                compare_terms.append(term)
+        return compare_terms
+    return terms[:5]
+
+
+def topic_coverage(candidate_text: Any, topic_terms: list[str] | None) -> dict[str, Any]:
+    """Return deterministic topic coverage for one candidate."""
+    terms = [str(term).strip() for term in (topic_terms or []) if str(term).strip()]
+    normalized = re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(candidate_text or "")).lower())
+    matched = [term for term in terms if term in normalized]
+    return {
+        "topic_terms": terms,
+        "matched_terms": list(dict.fromkeys(matched)),
+        "ok": bool(terms) and len(matched) == len(terms),
+    }
+
+
+def _claim_topic_text(claim: dict[str, Any]) -> str:
+    variants = claim.get("variants") or []
+    if isinstance(variants, str):
+        variants = [variants]
+    return "\n".join(
+        str(value or "")
+        for value in [claim.get("text"), claim.get("canonical_text"), *variants]
+    )
 
 
 def score_text(text: str, tokens: list[str], full_query: str) -> float:
@@ -1185,6 +1274,8 @@ def claim_hits_from_retrieval(
     node_ids: list[str],
     retrieval_hits: list[dict],
     intent: str,
+    book_title: str | None = None,
+    topic_terms: list[str] | None = None,
 ) -> list[dict]:
     layout = ensure_kb_layout()
     results: list[dict] = []
@@ -1211,6 +1302,10 @@ def claim_hits_from_retrieval(
             continue
         if claim.get("status") != "accepted":
             continue
+        if not _claim_support_evidence(claim, book_title):
+            continue
+        if topic_terms is not None and not topic_coverage(_claim_topic_text(claim), topic_terms).get("matched_terms"):
+            continue
         score = float(retrieval_hit.get("score", 0.0) or 0.0)
         score += type_weights.get(claim.get("claim_type", ""), 0.0)
         if claim.get("syllabus_node_id") in node_ids:
@@ -1232,6 +1327,8 @@ def evidence_hits_from_retrieval(
     tokens: list[str],
     full_query: str,
     page_anchor: dict[str, Any] | None = None,
+    book_title: str | None = None,
+    topic_terms: list[str] | None = None,
 ) -> list[dict]:
     layout = ensure_kb_layout()
     claim_evidence_ids = {eid for claim in claim_list for eid in claim.get("evidence_ids", [])}
@@ -1252,9 +1349,17 @@ def evidence_hits_from_retrieval(
             evidence = load_json(path)
             if is_stale_evidence(evidence):
                 continue
+            if not is_publishable_source_evidence(evidence):
+                continue
             if evidence.get("subject") != subject:
                 continue
+            if book_title is not None and not evidence_matches_book(evidence, book_title):
+                continue
             if chapter and not evidence_matches_chapter(evidence, chapter):
+                continue
+            if topic_terms is not None and not topic_coverage(
+                f"{evidence.get('title', '')}\n{evidence.get('content', '')}", topic_terms
+            ).get("matched_terms"):
                 continue
             accepted_nodes = [item.get("node_id") for item in evidence.get("accepted_syllabus_nodes", [])]
             if node_ids and accepted_nodes and not set(node_ids).intersection(accepted_nodes):
@@ -1274,7 +1379,14 @@ def evidence_hits_from_retrieval(
 
 
 def fallback_claim_hits(
-    subject: str, chapter: str | None, node_ids: list[str], tokens: list[str], full_query: str, intent: str
+    subject: str,
+    chapter: str | None,
+    node_ids: list[str],
+    tokens: list[str],
+    full_query: str,
+    intent: str,
+    book_title: str | None = None,
+    topic_terms: list[str] | None = None,
 ) -> list[dict]:
     layout = ensure_kb_layout()
     type_weights = {
@@ -1291,6 +1403,10 @@ def fallback_claim_hits(
             continue
         if node_ids and claim.get("syllabus_node_id") not in node_ids:
             continue
+        if not _claim_support_evidence(claim, book_title):
+            continue
+        if topic_terms is not None and not topic_coverage(_claim_topic_text(claim), topic_terms).get("matched_terms"):
+            continue
         score = score_text(claim.get("text", ""), tokens, full_query) + type_weights.get(claim.get("claim_type", ""), 0.0)
         if claim.get("syllabus_node_id") in node_ids:
             score += 0.8
@@ -1302,7 +1418,15 @@ def fallback_claim_hits(
 
 
 def fallback_evidence_hits(
-    subject: str, chapter: str | None, node_ids: list[str], claim_list: list[dict], tokens: list[str], full_query: str, page_anchor: dict[str, Any]
+    subject: str,
+    chapter: str | None,
+    node_ids: list[str],
+    claim_list: list[dict],
+    tokens: list[str],
+    full_query: str,
+    page_anchor: dict[str, Any],
+    book_title: str | None = None,
+    topic_terms: list[str] | None = None,
 ) -> list[dict]:
     layout = ensure_kb_layout()
     claim_evidence_ids = {eid for claim in claim_list for eid in claim.get("evidence_ids", [])}
@@ -1310,7 +1434,15 @@ def fallback_evidence_hits(
     for evidence in load_all_json(layout["evidence"]):
         if is_stale_evidence(evidence) or evidence.get("subject") != subject:
             continue
+        if not is_publishable_source_evidence(evidence):
+            continue
+        if book_title is not None and not evidence_matches_book(evidence, book_title):
+            continue
         if chapter and not evidence_matches_chapter(evidence, chapter):
+            continue
+        if topic_terms is not None and not topic_coverage(
+            f"{evidence.get('title', '')}\n{evidence.get('content', '')}", topic_terms
+        ).get("matched_terms"):
             continue
         accepted_nodes = [item.get("node_id") for item in evidence.get("accepted_syllabus_nodes", [])]
         if node_ids and accepted_nodes and not set(node_ids).intersection(accepted_nodes):
@@ -1369,7 +1501,25 @@ def retrieval_hit_matches_chapter(hit: dict[str, Any], chapter: str | None) -> b
     return False
 
 
-def fallback_chapter_hits(vault_root: Path, subject: str, chapter: str | None, tokens: list[str], full_query: str) -> list[dict]:
+def _chapter_registry_matches_book(item: dict[str, Any], book_title: str | None) -> bool:
+    if book_title is None:
+        return True
+    requested = str(book_title or "").strip()
+    if not requested:
+        return False
+    candidates = [item.get("book_title"), item.get("source_name"), item.get("book_id")]
+    return any(_book_title_matches(value, requested) for value in candidates if str(value or "").strip())
+
+
+def fallback_chapter_hits(
+    vault_root: Path,
+    subject: str,
+    chapter: str | None,
+    tokens: list[str],
+    full_query: str,
+    book_title: str | None = None,
+    topic_terms: list[str] | None = None,
+) -> list[dict]:
     path = vault_root / INDEX_DIRNAME / "chapter_knowledge_registry.json"
     if not path.exists():
         return []
@@ -1378,7 +1528,17 @@ def fallback_chapter_hits(vault_root: Path, subject: str, chapter: str | None, t
     for item in payload.get("chapters", []):
         if item.get("subject") != subject:
             continue
+        if not _chapter_registry_matches_book(item, book_title):
+            continue
         if chapter and chapter not in str(item.get("chapter_title", "")):
+            continue
+        if topic_terms is not None and not topic_coverage(
+            "\n".join(
+                str(item.get(key) or "")
+                for key in ("chapter_title", "chapter_overview", "question_entry")
+            ),
+            topic_terms,
+        ).get("matched_terms"):
             continue
         score = score_text(item.get("chapter_title", ""), tokens, full_query)
         score += score_text(item.get("chapter_overview", ""), tokens, full_query)
@@ -1495,12 +1655,22 @@ def retrieval_hit_matches_chapter(hit: dict[str, Any], chapter: str | None) -> b
     return False
 
 
-def retrieve_hits(subject: str, query: str, topk: int, chapter: str | None = None) -> list[dict]:
+def retrieve_hits(
+    subject: str,
+    query: str,
+    topk: int,
+    chapter: str | None = None,
+    book_title: str | None = None,
+) -> list[dict]:
     try:
         payload = retrieve_index(ensure_kb_layout(), subject=subject, query=query, topk=max(topk * 5, 20))
     except SystemExit:
         return []
-    hits = [hit for hit in payload.get("results", []) if retrieval_hit_matches_chapter(hit, chapter)]
+    hits = [
+        hit
+        for hit in payload.get("results", [])
+        if retrieval_hit_matches_chapter(hit, chapter) and _retrieval_hit_matches_book(hit, book_title)
+    ]
     return hits[: max(topk, 5)]
 
 
@@ -1590,6 +1760,10 @@ def build_compare_bundle(routed: list[dict], claims: list[dict], evidences: list
                         "left_claim": left_claim,
                         "right_claim": right_claim,
                     }
+        # A comparison question must not fall through to the top two routed
+        # nodes: that fallback can turn a generic phrase such as “有什么区别”
+        # into an unrelated comparison.
+        return None
     if len(routed) < 2:
         return None
     left = routed[0]
@@ -1617,21 +1791,59 @@ def _resolve_query_hits(
     tokens: list[str],
     full_query: str,
     page_anchor_request: dict[str, Any],
+    book_title: str | None = None,
+    topic_terms: list[str] | None = None,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict], bool]:
-    retrieval_hits = retrieve_hits(subject, query, topk, chapter)
+    retrieval_hits = retrieve_hits(subject, query, topk, chapter, book_title)
     routed = route_syllabus_nodes(subject, query, max(topk, 3), intent)
     if not routed:
         routed = route_from_retrieval_hits(subject, retrieval_hits, topk)
     node_ids = [item["node_id"] for item in routed]
     index_routed = bool(retrieval_hits)
     if index_routed:
-        claims = claim_hits_from_retrieval(subject, chapter, node_ids, retrieval_hits, intent)[:8]
+        claims = claim_hits_from_retrieval(
+            subject,
+            chapter,
+            node_ids,
+            retrieval_hits,
+            intent,
+            book_title,
+            topic_terms,
+        )[:8]
         evidences = evidence_hits_from_retrieval(
-            subject, chapter, node_ids, claims, retrieval_hits, tokens, full_query, page_anchor_request
+            subject,
+            chapter,
+            node_ids,
+            claims,
+            retrieval_hits,
+            tokens,
+            full_query,
+            page_anchor_request,
+            book_title,
+            topic_terms,
         )[:5]
     else:
-        claims = fallback_claim_hits(subject, chapter, node_ids, tokens, full_query, intent)[:8]
-        evidences = fallback_evidence_hits(subject, chapter, node_ids, claims, tokens, full_query, page_anchor_request)[:5]
+        claims = fallback_claim_hits(
+            subject,
+            chapter,
+            node_ids,
+            tokens,
+            full_query,
+            intent,
+            book_title,
+            topic_terms,
+        )[:8]
+        evidences = fallback_evidence_hits(
+            subject,
+            chapter,
+            node_ids,
+            claims,
+            tokens,
+            full_query,
+            page_anchor_request,
+            book_title,
+            topic_terms,
+        )[:5]
     if not routed and (claims or evidences):
         routed = infer_route_from_hits(subject, topk, claims, evidences)
     return retrieval_hits, routed, claims, evidences, index_routed
@@ -1648,14 +1860,28 @@ def _resolve_answer_fallback(
     claims: list[dict],
     evidences: list[dict],
     compare_bundle: dict | None,
+    book_title: str | None = None,
+    topic_terms: list[str] | None = None,
 ) -> tuple[str, str, list[dict]]:
     answer_mode = "canonical_claim" if claims else "accepted_evidence"
     fallback_note = ""
     fallback: list[dict] = []
     if not claims and not evidences:
-        fallback = fallback_chapter_hits(vault_root, subject, chapter, tokens, full_query)[: max(topk, 2)]
-        answer_mode = "chapter_fallback"
-        fallback_note = "当前未命中正式主张，仅基于章节层回退。"
+        fallback = fallback_chapter_hits(
+            vault_root,
+            subject,
+            chapter,
+            tokens,
+            full_query,
+            book_title,
+            topic_terms,
+        )[: max(topk, 2)]
+        if fallback:
+            answer_mode = "chapter_fallback"
+            fallback_note = "当前未命中正式主张，仅基于当前教材范围内的章节层回退。"
+        else:
+            answer_mode = "unconfirmed"
+            fallback_note = "当前教材范围内没有找到与问题主题匹配的可发布证据，已停止跨书或章节回退。"
     elif intent in {"compare", "diagnose"} and not compare_bundle and not any(item.get("claim_type") in {"comparison", "confusion"} for item in claims):
         fallback_note = "当前缺少专门的比较/诊断主张，回答会更多依赖定义类主张和证据拼装。"
     return answer_mode, fallback_note, fallback
@@ -1669,6 +1895,225 @@ def _book_title_matches(actual: Any, requested: Any) -> bool:
     left = _normalized_book_title(actual)
     right = _normalized_book_title(requested)
     return bool(left and right and (left == right or left in right or right in left))
+
+
+def evidence_matches_book(evidence: dict[str, Any], book_title: str | None) -> bool:
+    """Require an evidence record to identify the requested textbook."""
+    requested = str(book_title or "").strip()
+    if not requested:
+        return False
+    titles = [evidence.get("book_title"), evidence.get("source_name")]
+    titles.extend(
+        ref.get("book_title")
+        for ref in evidence.get("page_classification_refs", []) or []
+        if isinstance(ref, dict)
+    )
+    return any(_book_title_matches(title, requested) for title in titles if str(title or "").strip())
+
+
+def _claim_support_evidence(claim: dict[str, Any], book_title: str | None) -> list[dict[str, Any]]:
+    """Load every claim support and require publishable, same-book evidence."""
+    evidence_ids = [str(item).strip() for item in claim.get("evidence_ids", []) or [] if str(item).strip()]
+    if not evidence_ids:
+        return []
+    layout = ensure_kb_layout()
+    loaded: list[dict[str, Any]] = []
+    for evidence_id in evidence_ids:
+        path = layout["evidence"] / f"{evidence_id}.json"
+        if not path.is_file():
+            return []
+        evidence = load_json(path)
+        if not is_publishable_source_evidence(evidence):
+            return []
+        if book_title is not None and not evidence_matches_book(evidence, book_title):
+            return []
+        loaded.append(evidence)
+    return loaded
+
+
+def _retrieval_hit_matches_book(hit: dict[str, Any], book_title: str | None) -> bool:
+    """Validate indexed candidates against the requested book before exposing them."""
+    if book_title is None:
+        return True
+    requested = str(book_title or "").strip()
+    if not requested:
+        return False
+    layout = ensure_kb_layout()
+    entity_id = str(hit.get("entity_id") or "").strip()
+    if hit.get("doc_type") == "evidence" and entity_id:
+        path = layout["evidence"] / f"{entity_id}.json"
+        if not path.is_file():
+            return False
+        evidence = load_json(path)
+        return is_publishable_source_evidence(evidence) and evidence_matches_book(evidence, requested)
+    if hit.get("doc_type") == "claim" and entity_id:
+        path = layout["claims"] / f"{entity_id}.json"
+        if not path.is_file():
+            return False
+        claim = load_json(path)
+        return bool(_claim_support_evidence(claim, requested))
+    return False
+
+
+def _generic_candidate_records(
+    *,
+    claims: list[dict],
+    evidences: list[dict],
+    compare_bundle: dict | None,
+    book_title: str,
+    topic_terms: list[str],
+) -> tuple[list[dict[str, Any]], list[str], bool]:
+    """Return only publishable same-book candidates and their covered topics."""
+    records: list[dict[str, Any]] = []
+    covered_terms: list[str] = []
+    safe = True
+
+    def add_terms(text: Any) -> None:
+        coverage = topic_coverage(text, topic_terms)
+        for term in coverage.get("matched_terms", []):
+            if term not in covered_terms:
+                covered_terms.append(term)
+
+    for claim in claims:
+        support = _claim_support_evidence(claim, book_title)
+        if not support:
+            safe = False
+            continue
+        records.append(
+            {
+                "kind": "claim",
+                "claim_id": str(claim.get("claim_id") or ""),
+                "evidence_ids": [str(item.get("evidence_id") or "") for item in support if item.get("evidence_id")],
+                "text": _claim_topic_text(claim),
+            }
+        )
+        add_terms(_claim_topic_text(claim))
+
+    for evidence in evidences:
+        if not is_publishable_source_evidence(evidence) or not evidence_matches_book(evidence, book_title):
+            safe = False
+            continue
+        evidence_id = str(evidence.get("evidence_id") or "").strip()
+        if not evidence_id:
+            safe = False
+            continue
+        records.append(
+            {
+                "kind": "evidence",
+                "evidence_id": evidence_id,
+                "evidence_ids": [evidence_id],
+                "text": f"{evidence.get('title', '')}\n{evidence.get('content', '')}",
+            }
+        )
+        add_terms(records[-1]["text"])
+
+    # Keep the selected comparison components explicit.  They are the only
+    # candidates a comparison summary is allowed to depend on.
+    if compare_bundle:
+        selected = []
+        for key in ("primary_claim", "left_claim", "right_claim"):
+            value = compare_bundle.get(key)
+            if isinstance(value, dict):
+                selected.append(("claim", value))
+        for key in ("primary_evidence", "left_evidence", "right_evidence"):
+            value = compare_bundle.get(key)
+            if isinstance(value, dict):
+                selected.append(("evidence", value))
+        for kind, value in selected:
+            if kind == "claim":
+                add_terms(_claim_topic_text(value))
+            else:
+                add_terms(f"{value.get('title', '')}\n{value.get('content', '')}")
+
+    return records, covered_terms, safe
+
+
+def build_generic_gate(
+    *,
+    answer_mode: str,
+    book_title: str,
+    intent: str,
+    claims: list[dict],
+    evidences: list[dict],
+    compare_bundle: dict | None,
+    topic_terms: list[str],
+) -> dict[str, Any]:
+    """Build a fail-closed gate for ordinary, book-scoped answers."""
+    requested = str(book_title or "").strip()
+    terms = [str(item).strip() for item in topic_terms if str(item).strip()]
+    base = {
+        "status": "blocked",
+        "book_title": requested,
+        "topic_terms": terms,
+        "matched_terms": [],
+        "dependency_evidence_ids": [],
+        "candidate_count": 0,
+        "relevance_ok": False,
+        "same_book_ok": False,
+        "structured_answer_ok": answer_mode in GENERIC_ANSWER_MODES,
+        "failure_reason": "",
+        "next_action": "",
+    }
+    if not requested:
+        base.update(
+            failure_reason="未能确定当前教材，已停止通用检索。",
+            next_action="请明确教材名称，或先在当前任务中确认唯一主教材。",
+        )
+        return base
+    if not terms:
+        base.update(
+            failure_reason="问题中没有提取到稳定的主题词，已停止不确定回答。",
+            next_action="请补充具体概念、公式或两个要比较的对象。",
+        )
+        return base
+
+    records, covered_terms, safe = _generic_candidate_records(
+        claims=claims,
+        evidences=evidences,
+        compare_bundle=compare_bundle,
+        book_title=requested,
+        topic_terms=terms,
+    )
+    dependency_ids = list(
+        dict.fromkeys(
+            str(evidence_id).strip()
+            for record in records
+            for evidence_id in record.get("evidence_ids", [])
+            if str(evidence_id).strip()
+        )
+    )
+    relevance_ok = bool(records) and all(term in covered_terms for term in terms)
+    same_book_ok = bool(records) and safe and bool(dependency_ids)
+    base.update(
+        matched_terms=covered_terms,
+        dependency_evidence_ids=dependency_ids,
+        candidate_count=len(records),
+        relevance_ok=relevance_ok,
+        same_book_ok=same_book_ok,
+    )
+    if not records:
+        base.update(
+            failure_reason="当前教材范围内没有找到与问题主题匹配的可发布证据。",
+            next_action="请补充章节、页码或先发布该概念的同书审核证据。",
+        )
+    elif not same_book_ok:
+        base.update(
+            failure_reason="检索候选未能全部证明属于当前教材的可发布证据。",
+            next_action="请补充当前教材的正式证据；不会用其他教材内容填补。",
+        )
+    elif not relevance_ok:
+        base.update(
+            failure_reason="当前教材证据没有覆盖问题中的全部有效主题词。",
+            next_action="请拆分问题或补充覆盖全部主题词的同书证据。",
+        )
+    elif not base["structured_answer_ok"]:
+        base.update(
+            failure_reason="当前只有章节层回退，不能把章节概览当作通用知识结论。",
+            next_action="请先补充审核通过的主张或正文证据。",
+        )
+    else:
+        base["status"] = "exact"
+    return base
 
 
 def _formal_concept_excerpt(evidence: dict[str, Any], concept: str) -> str:
@@ -1722,16 +2167,37 @@ def _find_formal_concept_evidence(
 ) -> dict[str, Any]:
     tokens = tokenize(concept)
     full_query = normalize_text(concept)
-    retrieval_hits = retrieve_hits(subject, concept, max(topk, 12), None)
+    retrieval_hits = retrieve_hits(subject, concept, max(topk, 12), None, book_title)
     if retrieval_hits:
-        evidences = evidence_hits_from_retrieval(subject, None, [], [], retrieval_hits, tokens, full_query, {})
+        evidences = evidence_hits_from_retrieval(
+            subject,
+            None,
+            [],
+            [],
+            retrieval_hits,
+            tokens,
+            full_query,
+            {},
+            book_title,
+            [concept],
+        )
     else:
-        evidences = fallback_evidence_hits(subject, None, [], [], tokens, full_query, {})
+        evidences = fallback_evidence_hits(
+            subject,
+            None,
+            [],
+            [],
+            tokens,
+            full_query,
+            {},
+            book_title,
+            [concept],
+        )
     for evidence in evidences:
         evidence_id = str(evidence.get("evidence_id") or "")
         if not evidence_id or evidence_id in excluded_evidence_ids:
             continue
-        if not _book_title_matches(evidence.get("book_title"), book_title):
+        if not evidence_matches_book(evidence, book_title):
             continue
         if not is_publishable_source_evidence(evidence):
             continue
@@ -1852,6 +2318,8 @@ def query_knowledge(
     effective_chapter = str(chapter or request_resolution.get("section_root") or "")
     resolved_label = str(request_resolution.get("exercise_label") or "")
     page_semantics = str(request_resolution["page"]["semantics"])
+    generic_request = str(request_resolution.get("source_request_kind") or "generic") == "generic"
+    topic_terms = generic_topic_terms(query, intent) if generic_request else None
     scoped_exercise = bool(resolved_label and page_semantics != "exact_page" and not book_route.get("series_id"))
     if scoped_exercise:
         exercise_anchor, evidences = apply_scoped_exercise_relation(
@@ -1925,8 +2393,23 @@ def query_knowledge(
     full_query = normalize_text(query)
     parts = compare_parts(query) if intent == "compare" else []
     retrieval_hits, routed, claims, evidences, index_routed = _resolve_query_hits(
-        subject, effective_chapter or None, query, topk, intent, tokens, full_query, page_anchor_request
+        subject,
+        effective_chapter or None,
+        query,
+        topk,
+        intent,
+        tokens,
+        full_query,
+        page_anchor_request,
+        book_title=effective_book_title,
+        topic_terms=topic_terms,
     )
+    if topic_terms is not None:
+        routed = [
+            item
+            for item in routed
+            if topic_coverage(item.get("title", ""), topic_terms).get("matched_terms")
+        ]
     hard_page_route = page_semantics == "exact_page" and page_anchor_request.get("requested_page") is not None
     if hard_page_route:
         routed_book_title = effective_book_title
@@ -2000,7 +2483,18 @@ def query_knowledge(
     compare_bundle = build_compare_bundle(routed, claims, evidences, parts) if intent == "compare" else None
     refine_candidates = learner_compare_candidates(subject, effective_chapter or None)
     answer_mode, fallback_note, fallback = _resolve_answer_fallback(
-        vault_root, subject, effective_chapter or None, tokens, full_query, topk, intent, claims, evidences, compare_bundle
+        vault_root,
+        subject,
+        effective_chapter or None,
+        tokens,
+        full_query,
+        topk,
+        intent,
+        claims,
+        evidences,
+        compare_bundle,
+        effective_book_title,
+        topic_terms,
     )
     if hard_page_route:
         fallback = []
@@ -2049,6 +2543,48 @@ def query_knowledge(
         claims = []
         evidences = []
         fallback_note = "已识别接力题典1800习题条件，但相应习题证据尚未发布或条件仍不能唯一定位；不会回退到其他教材。"
+    generic_gate = {
+        "status": "not_applicable",
+        "book_title": "",
+        "topic_terms": [],
+        "matched_terms": [],
+        "dependency_evidence_ids": [],
+        "candidate_count": 0,
+        "relevance_ok": False,
+        "same_book_ok": False,
+        "structured_answer_ok": False,
+        "failure_reason": "",
+        "next_action": "",
+    }
+    if generic_request:
+        generic_gate = build_generic_gate(
+            answer_mode=answer_mode,
+            book_title=effective_book_title,
+            intent=intent,
+            claims=claims,
+            evidences=evidences,
+            compare_bundle=compare_bundle,
+            topic_terms=list(topic_terms or []),
+        )
+        if generic_gate.get("status") != "exact" and not str(answer_mode).startswith("exercise"):
+            answer_mode = "unconfirmed"
+            fallback = []
+            unsafe_book_scope = bool(effective_book_title) or bool(claims) or any(
+                str(item.get("book_title") or item.get("source_name") or "").strip()
+                for item in evidences
+            )
+            if unsafe_book_scope:
+                retrieval_hits = []
+                routed = []
+                claims = []
+                evidences = []
+                compare_bundle = None
+                if not hard_page_route:
+                    page_anchor = {"requested_page": None, "match_status": "not_requested"}
+            fallback_note = str(
+                generic_gate.get("failure_reason")
+                or "当前教材范围内没有足够稳定的可发布证据，已停止不确定回答。"
+            )
     query_path = {
         "retrieval_candidate_set_used": index_routed,
         "retrieval_hit_count": len(retrieval_hits),
@@ -2147,6 +2683,7 @@ def query_knowledge(
         "request_resolution": request_resolution,
         "teaching_bundle": teaching_bundle,
         "page_content_bundle": page_content_bundle,
+        "generic_gate": generic_gate,
     }
     attach_concept_routes(result, topk=topk)
     attach_exercise_index_runtime(result)

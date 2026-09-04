@@ -236,10 +236,12 @@ def classify_source_request(
     if any(token in text for token in SELF_AUTHORED_TOKENS):
         return "generic"
     explicit_source = bool(
-        book_title
-        or page_anchor.get("requested_page") is not None
+        page_anchor.get("requested_page") is not None
         or page_anchor.get("book_id")
         or (book_route or {}).get("series_id")
+        or str(exercise_label or "").strip()
+        or exercise_number is not None
+        or str(requested_option or "").strip()
         or any(token in text for token in SOURCE_REQUEST_TOKENS)
     )
     if not explicit_source:

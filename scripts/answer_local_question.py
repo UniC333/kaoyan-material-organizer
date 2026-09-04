@@ -8,8 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import default_vault_root_arg, ensure_kb_layout, load_json, resolve_subject, validate_entity_contract
-from query_local_knowledge import build_page_content_bundle, build_teaching_bundle, preferred_page_ref, query_knowledge, should_prefer_evidence_chapter
+from common import default_vault_root_arg, ensure_kb_layout, is_publishable_source_evidence, load_json, resolve_subject, validate_entity_contract
+from query_local_knowledge import build_page_content_bundle, build_teaching_bundle, detect_intent, evidence_matches_book, generic_topic_terms, preferred_page_ref, query_knowledge, should_prefer_evidence_chapter
 
 
 ANSWER_CONTRACT_VERSION = "m6.answer.v4"
@@ -47,6 +47,142 @@ def normalized_answer_grounding(result: dict) -> dict[str, Any]:
     return grounding
 
 
+def request_kind_for_payload(payload: dict[str, Any]) -> str:
+    request = dict(payload.get("request_resolution") or {})
+    kind = str(request.get("source_request_kind") or "").strip()
+    if kind in {"generic", "page_content", "exercise"}:
+        return kind
+    return "generic"
+
+
+def generic_book_title(payload: dict[str, Any]) -> str:
+    return str(
+        payload.get("book_title")
+        or dict(payload.get("book_resolution") or {}).get("book_title")
+        or ""
+    ).strip()
+
+
+def generic_dependency_ids(result: dict[str, Any]) -> list[str]:
+    """Collect every evidence ID used by an ordinary-answer conclusion."""
+    gate = dict(result.get("generic_gate") or {})
+    ordered: list[str] = []
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip()
+        if text and text not in ordered:
+            ordered.append(text)
+
+    for evidence_id in gate.get("dependency_evidence_ids", []) or []:
+        add(evidence_id)
+    bundle = dict(result.get("compare_bundle") or {})
+    for key in ("primary_claim", "left_claim", "right_claim"):
+        claim = bundle.get(key)
+        if isinstance(claim, dict):
+            for evidence_id in claim.get("evidence_ids", []) or []:
+                add(evidence_id)
+    for key in ("primary_evidence", "left_evidence", "right_evidence"):
+        evidence = bundle.get(key)
+        if isinstance(evidence, dict):
+            add(evidence.get("evidence_id"))
+    for claim in result.get("claim_hits", []) or []:
+        for evidence_id in claim.get("evidence_ids", []) or []:
+            add(evidence_id)
+    for evidence in result.get("evidence_hits", []) or []:
+        add(evidence.get("evidence_id"))
+    return ordered
+
+
+def _empty_generic_answer_bundle(status: str = "not_applicable", *, failure_reason: str = "", next_action: str = "") -> dict[str, Any]:
+    return {
+        "status": status,
+        "book_title": "",
+        "topic_terms": [],
+        "conclusion": "",
+        "explanation": "",
+        "evidence_ids": [],
+        "citations": [],
+        "relevance_ok": False,
+        "same_book_ok": False,
+        "citation_coverage_ok": False,
+        "failure_reason": failure_reason,
+        "next_action": next_action,
+    }
+
+
+def build_generic_answer_bundle(
+    result: dict[str, Any],
+    *,
+    direct: str,
+    explanation: list[str],
+    citations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Project the ordinary-answer gate into a compact teaching payload."""
+    if request_kind_for_payload(result) != "generic":
+        return _empty_generic_answer_bundle()
+    gate = dict(result.get("generic_gate") or {})
+    evidence_ids = generic_dependency_ids(result)
+    citation_ids = {str(item.get("evidence_id") or "").strip() for item in citations if str(item.get("evidence_id") or "").strip()}
+    coverage_ok = bool(evidence_ids) and set(evidence_ids).issubset(citation_ids)
+    relevance_ok = bool(gate.get("relevance_ok"))
+    same_book_ok = bool(gate.get("same_book_ok"))
+    topic_terms = [str(item) for item in gate.get("topic_terms", []) or [] if str(item).strip()]
+    book_title = str(gate.get("book_title") or generic_book_title(result)).strip()
+    exact = (
+        str(result.get("answer_mode") or "") in {"canonical_claim", "accepted_evidence"}
+        and str(gate.get("status") or "") == "exact"
+        and relevance_ok
+        and same_book_ok
+        and coverage_ok
+        and bool(str(direct).strip())
+        and bool(evidence_ids)
+    )
+    if exact:
+        compact_citations = [
+            {
+                "evidence_id": str(item.get("evidence_id") or ""),
+                "title": str(item.get("title") or ""),
+                "book_title": str(item.get("book_title") or ""),
+                "page_span": str(item.get("page_span") or ""),
+            }
+            for item in citations
+            if str(item.get("evidence_id") or "") in evidence_ids
+        ]
+        return {
+            "status": "exact",
+            "book_title": book_title,
+            "topic_terms": topic_terms,
+            "conclusion": str(direct).strip(),
+            "explanation": "；".join(line.strip() for line in explanation if line.strip()),
+            "evidence_ids": evidence_ids,
+            "citations": compact_citations,
+            "relevance_ok": True,
+            "same_book_ok": True,
+            "citation_coverage_ok": True,
+            "failure_reason": "",
+            "next_action": "",
+        }
+    failure_reason = str(gate.get("failure_reason") or "当前回答未通过主题、同书和引用覆盖门禁，已停止不确定回答。")
+    next_action = str(gate.get("next_action") or "请补充同书审核证据后重新查询。")
+    if not coverage_ok and evidence_ids:
+        failure_reason = "结论依赖的全部证据 ID 尚未进入 citations，不能形成可保存回答。"
+        next_action = "请补齐结论依赖证据的引用覆盖后重新查询。"
+    return {
+        "status": "blocked",
+        "book_title": book_title,
+        "topic_terms": topic_terms,
+        "conclusion": "",
+        "explanation": "",
+        "evidence_ids": [],
+        "citations": [],
+        "relevance_ok": relevance_ok,
+        "same_book_ok": same_book_ok,
+        "citation_coverage_ok": coverage_ok,
+        "failure_reason": failure_reason,
+        "next_action": next_action,
+    }
+
+
 def validate_teaching_contract_invariants(contract: dict[str, Any]) -> None:
     """Reject contradictory teaching gates before a contract reaches a caller."""
     grounding = dict(contract.get("answer_grounding") or {})
@@ -79,7 +215,35 @@ def validate_teaching_contract_invariants(contract: dict[str, Any]) -> None:
     elif teaching_status != "not_applicable" or problem_text or answer_text:
         raise ValueError("ordinary queries must expose a content-free not_applicable teaching bundle")
 
-    request_kind = str((contract.get("request_resolution") or {}).get("source_request_kind") or "generic")
+    request_kind = request_kind_for_payload(contract)
+    if "generic_answer_bundle" in contract:
+        generic = dict(contract.get("generic_answer_bundle") or {})
+        generic_status = str(generic.get("status") or "")
+        generic_conclusion = str(generic.get("conclusion") or "").strip()
+        generic_explanation = str(generic.get("explanation") or "").strip()
+        generic_evidence_ids = list(generic.get("evidence_ids") or [])
+        generic_citations = list(generic.get("citations") or [])
+        if request_kind == "generic":
+            if generic_status == "exact":
+                if (
+                    not generic_conclusion
+                    or not generic_explanation
+                    or not generic_evidence_ids
+                    or not generic_citations
+                    or not bool(generic.get("relevance_ok"))
+                    or not bool(generic.get("same_book_ok"))
+                    or not bool(generic.get("citation_coverage_ok"))
+                ):
+                    raise ValueError("exact generic answer must retain conclusion, explanation, same-book evidence and citations")
+            elif generic_status == "blocked":
+                if generic_conclusion or generic_explanation or generic_evidence_ids or generic_citations:
+                    raise ValueError("blocked generic answer must remain content-free")
+                if not str(generic.get("failure_reason") or "").strip() or not str(generic.get("next_action") or "").strip():
+                    raise ValueError("blocked generic answer must explain the failure and next action")
+            elif generic_status != "not_applicable":
+                raise ValueError("generic answer must expose exact, blocked, or not_applicable state")
+        elif generic_status != "not_applicable" or generic_conclusion or generic_explanation or generic_evidence_ids or generic_citations:
+            raise ValueError("non-generic requests must expose a content-free not_applicable generic bundle")
     page_content = dict(contract.get("page_content_bundle") or {})
     page_content_status = str(page_content.get("status") or "not_applicable")
     page_content_text = str(page_content.get("content") or "").strip()
@@ -208,6 +372,7 @@ def build_teaching_answer_view(
         "textbook_location": dict(contract.get("textbook_location") or {}),
         "answer_grounding": compact_grounding,
         "citation_coverage_ok": bool(contract.get("citation_coverage_ok")),
+        "generic_answer_bundle": dict(contract.get("generic_answer_bundle") or _empty_generic_answer_bundle()),
         "teaching_bundle": dict(contract.get("teaching_bundle") or {}),
         "page_content_bundle": dict(contract.get("page_content_bundle") or {}),
         "concept_routes": list(contract.get("concept_routes") or []),
@@ -254,12 +419,25 @@ def page_anchor_snippets(result: dict) -> list[str]:
 def evidence_excerpt(evidence: dict, question: str) -> tuple[int, str]:
     """Return a short, question-relevant textbook sentence from one page."""
     raw_lines = [re.sub(r"\s+", " ", str(line)).strip() for line in str(evidence.get("content", "")).splitlines()]
-    lines = [line for line in raw_lines if len(line) >= 12 and not line.startswith(("#", "!["))]
+    topic_terms = generic_topic_terms(question, detect_intent(question))
+    lines = [
+        line
+        for line in raw_lines
+        if not line.startswith(("#", "!["))
+        and len(line) >= 12
+    ]
     normalized_question = re.sub(r"[？?。！，、：:\s]", "", question)
     definition_topic = normalized_question.split("的定义", 1)[0] if "的定义" in normalized_question else ""
-    for index, heading in enumerate(raw_lines):
-        heading = heading.lstrip("#").strip()
-        if not definition_topic or f"{definition_topic}的定义" not in heading:
+    for index, raw_heading in enumerate(raw_lines):
+        heading = raw_heading.lstrip("#").strip()
+        normalized_heading = re.sub(r"\s+", "", heading).lower()
+        heading_matches_topic = any(
+            re.sub(r"\s+", "", term).lower() in normalized_heading for term in topic_terms
+        )
+        if not raw_heading.startswith("#") and not (len(raw_heading) < 12 and heading_matches_topic):
+            continue
+        definition_heading = bool(definition_topic and f"{definition_topic}的定义" in heading)
+        if not heading_matches_topic and not definition_heading:
             continue
         following = next(
             (
@@ -271,11 +449,18 @@ def evidence_excerpt(evidence: dict, question: str) -> tuple[int, str]:
         )
         if following:
             lines.append(f"{heading}：{following}")
+        else:
+            lines.append(heading)
     bigrams = {normalized_question[index : index + 2] for index in range(max(0, len(normalized_question) - 1))}
     ranked = sorted(
         (
             (
                 sum(line.count(token) for token in bigrams if token)
+                + sum(
+                    20 + len(term)
+                    for term in topic_terms
+                    if re.sub(r"\s+", "", term).lower() in re.sub(r"\s+", "", line).lower()
+                )
                 + (10 if definition_topic and f"{definition_topic}的定义" in line else 0),
                 line,
             )
@@ -306,6 +491,8 @@ def direct_conclusion(result: dict) -> str:
         return f"已精确定位教材原页：{anchor.get('source_image_path', '')}；该页尚无结构化 OCR，教材正文未确认。"
     if anchor.get("match_status") in {"ambiguous", "unmapped", "not_found", "unavailable"}:
         return result.get("fallback_note") or "当前无法唯一定位教材原页。"
+    if result.get("answer_mode") == "unconfirmed":
+        return result.get("fallback_note") or "当前教材范围内没有足够稳定的可发布证据，已停止不确定回答。"
     bundle = result.get("compare_bundle")
     if bundle:
         return bundle["summary"]
@@ -313,14 +500,21 @@ def direct_conclusion(result: dict) -> str:
         texts = dedupe([claim["text"] for claim in result["claim_hits"]])
         return "；".join(texts[:3])
     if result["evidence_hits"]:
-        excerpts = [
-            (score, text, evidence.get("title", ""))
-            for evidence in result["evidence_hits"][:5]
-            for score, text in [evidence_excerpt(evidence, str(result.get("query", "")))]
-        ]
-        excerpts.sort(key=lambda item: (-item[0], len(item[1])))
-        if excerpts and excerpts[0][1]:
-            _, text, title = excerpts[0]
+        if request_kind_for_payload(result) != "generic":
+            excerpts = [
+                (score, text, evidence.get("title", ""))
+                for evidence in result["evidence_hits"][:5]
+                for score, text in [evidence_excerpt(evidence, str(result.get("query", "")))]
+            ]
+            excerpts.sort(key=lambda item: (-item[0], len(item[1])))
+            if excerpts and excerpts[0][1]:
+                _, text, title = excerpts[0]
+                return f"{text}（来源：{title}）"
+            return "；".join(item.get("title", "") for item in result["evidence_hits"][:3])
+        evidence = result["evidence_hits"][0]
+        _, text = evidence_excerpt(evidence, str(result.get("query", "")))
+        if text:
+            title = evidence.get("title", "")
             return f"{text}（来源：{title}）"
         return "；".join(item.get("title", "") for item in result["evidence_hits"][:3])
     if result["fallback_hits"]:
@@ -389,7 +583,10 @@ def strict_explanation(result: dict) -> list[str]:
             lines.append(line)
     if not lines:
         for evidence in result["evidence_hits"][:3]:
-            first_line = evidence.get("content", "").splitlines()[0] if evidence.get("content") else evidence.get("title", "")
+            if request_kind_for_payload(result) == "generic":
+                _, first_line = evidence_excerpt(evidence, str(result.get("query", "")))
+            else:
+                first_line = evidence.get("content", "").splitlines()[0] if evidence.get("content") else evidence.get("title", "")
             lines.append(f"{evidence.get('evidence_type', '')}: {first_line}")
     return lines or ["当前没有稳定主张，只能继续补证据。"]
 
@@ -505,6 +702,7 @@ def build_citations(result: dict, *, limit: int = 3) -> list[dict[str, Any]]:
     ranking = _ranking_by_evidence(result)
     ordered_ids: list[str] = []
     grounding = normalized_answer_grounding(result)
+    request_kind = request_kind_for_payload(result)
     for side_name in ("problem", "solution"):
         for evidence_id in _side_evidence_ids(dict(grounding.get(side_name) or {})):
             if evidence_id not in ordered_ids:
@@ -536,6 +734,10 @@ def build_citations(result: dict, *, limit: int = 3) -> list[dict[str, Any]]:
         if evidence_id and evidence_id not in ordered_ids:
             ordered_ids.append(evidence_id)
 
+    if request_kind == "generic":
+        dependency_ids = generic_dependency_ids(result)
+        ordered_ids = dependency_ids + [item for item in ordered_ids if item not in dependency_ids]
+
     grounding_id_count = len(
         {
             evidence_id
@@ -543,11 +745,20 @@ def build_citations(result: dict, *, limit: int = 3) -> list[dict[str, Any]]:
             for evidence_id in _side_evidence_ids(dict(grounding.get(side_name) or {}))
         }
     )
-    citation_limit = max(limit, grounding_id_count)
+    citation_limit = max(limit, grounding_id_count, len(generic_dependency_ids(result)) if request_kind == "generic" else 0)
     citations: list[dict[str, Any]] = []
     fallback_refs = {ref.get("evidence_id", ""): ref for ref in result.get("references", [])}
     for evidence_id in ordered_ids[:citation_limit]:
         evidence = _evidence_from_id(layout, evidence_id)
+        if request_kind == "generic":
+            requested_book = generic_book_title(result)
+            if (
+                not requested_book
+                or not evidence
+                or not is_publishable_source_evidence(evidence)
+                or not evidence_matches_book(evidence, requested_book)
+            ):
+                continue
         ref = fallback_refs.get(evidence_id, {})
         locator = evidence.get("locator", {}) if evidence else {}
         page_refs = list(evidence.get("page_classification_refs", []) or ref.get("page_classification_refs", []) or [])
@@ -599,6 +810,31 @@ def build_evidence_assessment(result: dict, citations: list[dict[str, Any]]) -> 
             "can_confirm": "本地证据链当前不可用。",
             "cannot_confirm": "当前不能判断教材是否包含该页、公式、推导或原文。",
             "next_action": "请先修复配置或正式页码索引，再重新执行结构化查询。",
+        }
+    if request_kind_for_payload(result) == "generic" and "generic_gate" in result:
+        gate = dict(result.get("generic_gate") or {})
+        dependency_ids = set(generic_dependency_ids(result))
+        citation_ids = {str(item.get("evidence_id") or "").strip() for item in citations if str(item.get("evidence_id") or "").strip()}
+        gate_ok = (
+            str(gate.get("status") or "") == "exact"
+            and bool(gate.get("relevance_ok"))
+            and bool(gate.get("same_book_ok"))
+            and bool(dependency_ids)
+            and dependency_ids.issubset(citation_ids)
+            and str(answer_mode) in {"canonical_claim", "accepted_evidence"}
+        )
+        if gate_ok:
+            return {
+                "level": "structured_evidence",
+                "can_confirm": "当前教材范围内的同书审核证据支持本次结论。",
+                "cannot_confirm": "当前结论仅覆盖已列出的同书引用范围。",
+                "next_action": "可沿引用继续核对条件、例题或原始上下文。",
+            }
+        return {
+            "level": "unconfirmed",
+            "can_confirm": "当前只能确认检索边界，未形成通过主题、同书和引用覆盖门禁的结论。",
+            "cannot_confirm": "不能用其他教材、无关主题或未列入 citations 的证据补足本次回答。",
+            "next_action": str(gate.get("next_action") or "请补充同书审核证据后重新查询。"),
         }
     if answer_mode in STRUCTURED_ANSWER_MODES and citations:
         return {
@@ -795,10 +1031,28 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
     citation_ids = {str(item.get("evidence_id") or "") for item in citations}
     problem_ids = set(_side_evidence_ids(dict(grounding.get("problem") or {})))
     solution_ids = set(_side_evidence_ids(dict(grounding.get("solution") or {})))
+    request_kind = request_kind_for_payload(result)
+    generic_ids = set(generic_dependency_ids(result))
     if grounding["required"]:
         coverage_ok = bool(grounding["can_conclude"] and problem_ids and solution_ids and problem_ids <= citation_ids and solution_ids <= citation_ids)
+    elif request_kind == "generic":
+        coverage_ok = bool(generic_ids) and generic_ids.issubset(citation_ids)
     else:
         coverage_ok = (not citation_required) or bool(citations)
+    generic_bundle = build_generic_answer_bundle(
+        result,
+        direct=direct,
+        explanation=list(sections.get("strict_explanation") or []),
+        citations=citations,
+    )
+    if request_kind == "generic" and "generic_gate" in result and generic_bundle.get("status") == "blocked":
+        blocked_text = str(generic_bundle.get("failure_reason") or "当前回答未通过通用证据门禁，已停止不确定回答。")
+        sections["direct_conclusion"] = blocked_text
+        sections["intuitive_explanation"] = str(generic_bundle.get("next_action") or "请先补充同书审核证据。")
+        sections["strict_explanation"] = [blocked_text]
+        sections["typical_examples"] = []
+        sections["supplementary_derivation"] = []
+        sections["next_steps"] = [str(generic_bundle.get("next_action") or "请先补充同书审核证据。")]
     contract = {
         "answer_contract_version": ANSWER_CONTRACT_VERSION,
         "subject": result.get("subject", ""),
@@ -820,6 +1074,7 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "teaching_context": dict(result.get("teaching_context") or {}),
         "request_resolution": request_resolution,
         "page_crosscheck": dict(result.get("page_crosscheck") or {}),
+        "generic_answer_bundle": generic_bundle,
         "teaching_bundle": teaching,
         "page_content_bundle": page_content,
         "concept_routes": concept_routes,

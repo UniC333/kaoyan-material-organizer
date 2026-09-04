@@ -55,6 +55,7 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 - 后续追问若明确改指另一印刷页、定义、定理或原文位置，新指向立即取代前一道例题的页码和题号，成为本轮教材事实的证据目标；不得继续用旧例题的 `teaching_bundle` 回答新页的概念条件。比较两个定理或判断解法关系时，必须分别核验支撑该关系所需的教材正文；只能说证据已经支持的“可用于本题”“可由某定理推出”或“是专门情形”，不得把同题可用误写为两个定理的条件、结论或陈述等价。
 - 精确页码已定位但使用者未给题号时，只接受 `request_resolution.exercise_resolution.status=inferred_unique` 的正式题目关系消歧；`ambiguous`、`not_found` 或 `unavailable` 时停止解题，只询问一个必要信息。不得用普通语义检索、选项字母或模型知识猜题。
 - Windows 诊断模板：`SKILL_ROOT\.venv\Scripts\python.exe SKILL_ROOT\scripts\kb.py --config SKILL_ROOT\kaoyan.config.json query --subject <学科> --book-title <教材名> --query <使用者原话> --format json`。给教学模型消费时优先用同参数的 `ask --format teaching-json`；完整 `json` 保留为诊断和保存契约。返回后必须先检查 `request_resolution.source_request_kind`、`page_crosscheck`、`answer_grounding`、`teaching_bundle` 与 `page_content_bundle`。`exercise` 请求只有 `teaching_bundle.status=exact` 才能输出原书答案；`page_content` 请求只有 `page_content_bundle.status=exact` 才能按审核正文讲解。需要页码交叉核验但状态不是 `confirmed` 时，只报告状态并提出一个必要澄清问题。
+- 普通 `generic` 请求也必须使用解析出的 `effective_book_title` 做同书过滤。显式书名或当前任务默认教材不得跨书补证据；无同书可发布证据、主题词未覆盖或书名无法确认时保持 `answer_mode=unconfirmed`。只有 `generic_answer_bundle.status=exact` 且其主题相关性、同书性和引用覆盖均为真时，才允许把普通问答作为可保存结论；`blocked` bundle 必须保持无结论、无解释正文和无引用。
 - 普通教材检索与讲解优先使用 Terra `medium`。链路失败、歧义或缺证据时不得自动升级 Sol，也不得用更强模型猜答案；Sol 只在使用者明确选择后用于复杂推导或链路开发。
 
 - 读取本技能后，把当前 `SKILL.md` 所在目录视为 `SKILL_ROOT`。若当前工作目录不是 `SKILL_ROOT`，不得从学习 Vault 拼接 `\.venv`、`scripts` 或 `.kaoyan-kb` 相对路径。

@@ -747,3 +747,75 @@ def test_teaching_v3_exposes_compact_page_anchor_and_reviewed_page_text(monkeypa
     assert "nextval[i]" in view["page_content_bundle"]["content"]
     assert view["answer_grounding"]["status"] == "not_applicable"
     assert view["teaching_bundle"]["status"] == "not_applicable"
+
+
+def test_generic_answer_bundle_requires_same_book_relevance_and_dependency_citations(monkeypatch) -> None:
+    result = _result(answer_mode="accepted_evidence")
+    result.update(
+        book_title="王道数据结构",
+        book_resolution={"status": "explicit", "source": "explicit", "book_title": "王道数据结构"},
+        query="栈和队列有什么区别？",
+        request_resolution={"source_request_kind": "generic"},
+        generic_gate={
+            "status": "exact",
+            "book_title": "王道数据结构",
+            "topic_terms": ["栈", "队列"],
+            "matched_terms": ["栈", "队列"],
+            "dependency_evidence_ids": ["EV-STACK-QUEUE"],
+            "candidate_count": 1,
+            "relevance_ok": True,
+            "same_book_ok": True,
+            "structured_answer_ok": True,
+            "failure_reason": "",
+            "next_action": "",
+        },
+        claim_hits=[{"claim_id": "CL-1", "claim_type": "comparison", "text": "栈和队列的操作端不同。", "evidence_ids": ["EV-STACK-QUEUE"]}],
+    )
+    monkeypatch.setattr(
+        answer_module,
+        "build_citations",
+        lambda result: [{"evidence_id": "EV-STACK-QUEUE", "title": "栈和队列", "book_title": "王道数据结构"}],
+    )
+
+    contract = answer_module.build_answer_contract(result)
+
+    assert contract["generic_answer_bundle"]["status"] == "exact"
+    assert contract["generic_answer_bundle"]["evidence_ids"] == ["EV-STACK-QUEUE"]
+    assert contract["citation_coverage_ok"] is True
+    assert save_eligibility(contract) == (True, "")
+
+
+def test_blocked_generic_answer_is_content_free_and_unsaveable(monkeypatch) -> None:
+    result = _result(answer_mode="unconfirmed")
+    result.update(
+        book_title="不存在的教材",
+        book_resolution={"status": "explicit", "source": "explicit", "book_title": "不存在的教材"},
+        query="香蕉和苹果有什么区别？",
+        request_resolution={"source_request_kind": "generic"},
+        fallback_note="当前教材范围内没有找到与问题主题匹配的可发布证据。",
+        generic_gate={
+            "status": "blocked",
+            "book_title": "不存在的教材",
+            "topic_terms": ["香蕉", "苹果"],
+            "matched_terms": [],
+            "dependency_evidence_ids": [],
+            "candidate_count": 0,
+            "relevance_ok": False,
+            "same_book_ok": False,
+            "structured_answer_ok": False,
+            "failure_reason": "当前教材范围内没有找到与问题主题匹配的可发布证据。",
+            "next_action": "请补充当前教材的正式证据。",
+        },
+    )
+    monkeypatch.setattr(answer_module, "build_citations", lambda result: [])
+
+    contract = answer_module.build_answer_contract(result)
+
+    bundle = contract["generic_answer_bundle"]
+    assert bundle["status"] == "blocked"
+    assert bundle["conclusion"] == ""
+    assert bundle["explanation"] == ""
+    assert bundle["citations"] == []
+    allowed, reason = save_eligibility(contract)
+    assert not allowed
+    assert "门禁" in reason

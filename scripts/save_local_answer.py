@@ -12,7 +12,7 @@ from common import default_vault_root_arg, normalize_context, preferred_python_e
 from query_local_knowledge import query_knowledge
 
 
-SAVEABLE_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "chapter_fallback", "exercise_pair"}
+SAVEABLE_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "exercise_pair"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,6 +84,24 @@ def save_eligibility(contract: dict) -> tuple[bool, str]:
     answer_mode = str(contract.get("answer_mode", ""))
     assessment = dict(contract.get("evidence_assessment") or {})
     grounding = dict(contract.get("answer_grounding") or {})
+    request_kind = str((contract.get("request_resolution") or {}).get("source_request_kind") or "")
+    if not request_kind and grounding.get("required"):
+        request_kind = "exercise"
+    elif not request_kind and "generic_answer_bundle" in contract:
+        request_kind = "generic"
+    if request_kind == "generic":
+        generic = dict(contract.get("generic_answer_bundle") or {})
+        if (
+            str(generic.get("status") or "") != "exact"
+            or not bool(generic.get("relevance_ok"))
+            or not bool(generic.get("same_book_ok"))
+            or not bool(generic.get("citation_coverage_ok"))
+            or not generic.get("evidence_ids")
+            or not generic.get("citations")
+        ):
+            return False, "通用问答未通过主题相关性、同书证据和引用覆盖门禁，不能保存。"
+        if not bool(contract.get("citation_coverage_ok")):
+            return False, "正式事实回答缺少完整引用，不能保存。"
     if grounding.get("required"):
         if grounding.get("status") != "exact_answer" or not bool(grounding.get("can_conclude")):
             return False, "原书答案尚未形成唯一可核验锚点，不能保存为学习问答。"
@@ -100,6 +118,8 @@ def save_eligibility(contract: dict) -> tuple[bool, str]:
         "page_not_found",
         "page_unavailable",
         "structured_unconfirmed",
+        "chapter_summary",
+        "unconfirmed",
     }:
         return False, "当前只能确认资料定位或检索边界，不能保存为学习问答。"
     return True, ""
