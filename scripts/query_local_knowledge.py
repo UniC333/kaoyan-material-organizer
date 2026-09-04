@@ -9,7 +9,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, is_publishable_source_evidence, learner_file_map, load_all_json, load_json, resolve_subject, runtime_context_payload, validate_entity_contract
+from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, is_publishable_claim, is_publishable_source_evidence, learner_file_map, load_all_json, load_json, resolve_subject, runtime_context_payload, validate_entity_contract
 from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator
 from kaoyan_kb.domain.exercise_locator import assemble_exact_relation, container_path_from_query, find_exact_relation, find_exact_worked_example_relation, find_unique_relation_for_scope, list_exact_relations_for_question_page, list_exact_worked_example_relations, normalize_exercise_category, normalize_exercise_label, resolve_section_anchor
 from kaoyan_kb.domain.book_series import classify_source_request, has_exercise_request_signal, parse_exercise_request, resolve_answer_grounding, resolve_book_route, resolve_exercise_route
@@ -654,7 +654,7 @@ def exact_evidence_hits_for_locator(subject: str, chapter: str | None, locator: 
         if not path.is_file():
             continue
         evidence = load_json(path)
-        if is_stale_evidence(evidence) or evidence.get("subject") != subject:
+        if not is_publishable_source_evidence(evidence) or evidence.get("subject") != subject:
             continue
         # The locator already binds this evidence to the requested book and
         # rendered PDF page.  A page-level OCR record may expose only the
@@ -754,7 +754,13 @@ def apply_exercise_relation(locator: dict[str, Any], evidences: list[dict[str, A
         answer = dict(relation.get("answer") or {})
         linked_ids = list(answer.get("evidence_ids") or [])
         layout = ensure_kb_layout()
-        linked = [load_json(layout["evidence"] / f"{item}.json") for item in linked_ids if (layout["evidence"] / f"{item}.json").is_file()]
+        linked = [
+            evidence
+            for item in linked_ids
+            if (layout["evidence"] / f"{item}.json").is_file()
+            for evidence in [load_json(layout["evidence"] / f"{item}.json")]
+            if is_publishable_source_evidence(evidence)
+        ]
         existing_ids = {item.get("evidence_id") for item in evidences}
         locator["exercise_match_status"] = "matched"
         return {
@@ -801,7 +807,9 @@ def apply_exercise_relation(locator: dict[str, Any], evidences: list[dict[str, A
     for evidence_id in linked_ids:
         path = layout["evidence"] / f"{evidence_id}.json"
         if path.is_file():
-            linked.append(load_json(path))
+            evidence = load_json(path)
+            if is_publishable_source_evidence(evidence):
+                linked.append(evidence)
     locator["exercise_match_status"] = "matched"
     existing_ids = {item.get("evidence_id") for item in evidences}
     combined = evidences + [item for item in linked if item.get("evidence_id") not in existing_ids]
@@ -831,7 +839,14 @@ def apply_scoped_exercise_relation(*, book_title: str | None, chapter: str | Non
         return {"status": "unverified", "exercise_label": label, "reason": "current-book-and-chapter-not-unique-or-uncovered"}, []
     layout = ensure_kb_layout()
     ids = list(relation.get("question_evidence_ids", []) or []) + list(relation.get("answer_evidence_ids", []) or [])
-    evidence = [load_json(layout["evidence"] / f"{item}.json") for item in ids if (layout["evidence"] / f"{item}.json").is_file()]
+    evidence = []
+    for item in ids:
+        path = layout["evidence"] / f"{item}.json"
+        if not path.is_file():
+            continue
+        payload = load_json(path)
+        if is_publishable_source_evidence(payload):
+            evidence.append(payload)
     return assemble_exact_relation(relation, evidences=evidence, exercise_label=label)
 
 
@@ -1278,6 +1293,11 @@ def claim_hits_from_retrieval(
     topic_terms: list[str] | None = None,
 ) -> list[dict]:
     layout = ensure_kb_layout()
+    evidence_by_id = {
+        str(evidence.get("evidence_id") or "").strip(): evidence
+        for evidence in load_all_json(layout["evidence"])
+        if str(evidence.get("evidence_id") or "").strip()
+    }
     results: list[dict] = []
     intent_weight = {
         "compare": {"comparison": 1.8, "confusion": 1.5, "definition": 0.8, "rule": 0.6},
@@ -1300,7 +1320,7 @@ def claim_hits_from_retrieval(
             continue
         if node_ids and claim.get("syllabus_node_id") not in node_ids:
             continue
-        if claim.get("status") != "accepted":
+        if not is_publishable_claim(claim, evidence_by_id):
             continue
         if not _claim_support_evidence(claim, book_title):
             continue
@@ -1331,7 +1351,17 @@ def evidence_hits_from_retrieval(
     topic_terms: list[str] | None = None,
 ) -> list[dict]:
     layout = ensure_kb_layout()
-    claim_evidence_ids = {eid for claim in claim_list for eid in claim.get("evidence_ids", [])}
+    evidence_by_id = {
+        str(evidence.get("evidence_id") or "").strip(): evidence
+        for evidence in load_all_json(layout["evidence"])
+        if str(evidence.get("evidence_id") or "").strip()
+    }
+    claim_evidence_ids = {
+        eid
+        for claim in claim_list
+        if is_publishable_claim(claim, evidence_by_id)
+        for eid in claim.get("evidence_ids", [])
+    }
     results: list[dict] = []
     seen: set[str] = set()
     for retrieval_hit in retrieval_hits:
@@ -1345,12 +1375,10 @@ def evidence_hits_from_retrieval(
             path = layout["evidence"] / f"{evidence_id}.json"
             if not path.exists():
                 continue
-            seen.add(evidence_id)
             evidence = load_json(path)
-            if is_stale_evidence(evidence):
-                continue
             if not is_publishable_source_evidence(evidence):
                 continue
+            seen.add(evidence_id)
             if evidence.get("subject") != subject:
                 continue
             if book_title is not None and not evidence_matches_book(evidence, book_title):
@@ -1389,6 +1417,11 @@ def fallback_claim_hits(
     topic_terms: list[str] | None = None,
 ) -> list[dict]:
     layout = ensure_kb_layout()
+    evidence_by_id = {
+        str(evidence.get("evidence_id") or "").strip(): evidence
+        for evidence in load_all_json(layout["evidence"])
+        if str(evidence.get("evidence_id") or "").strip()
+    }
     type_weights = {
         "compare": {"comparison": 1.8, "confusion": 1.5, "definition": 0.8, "rule": 0.6},
         "diagnose": {"confusion": 1.8, "comparison": 1.0, "rule": 0.7, "definition": 0.5},
@@ -1397,7 +1430,7 @@ def fallback_claim_hits(
     }.get(intent, {})
     results: list[dict] = []
     for claim in load_all_json(layout["claims"]):
-        if claim.get("subject") != subject or claim.get("status") != "accepted":
+        if claim.get("subject") != subject or not is_publishable_claim(claim, evidence_by_id):
             continue
         if chapter and not chapter_matches(chapter, claim.get("chapter_title", ""), claim.get("chapter_hint", "")):
             continue
@@ -1429,10 +1462,20 @@ def fallback_evidence_hits(
     topic_terms: list[str] | None = None,
 ) -> list[dict]:
     layout = ensure_kb_layout()
-    claim_evidence_ids = {eid for claim in claim_list for eid in claim.get("evidence_ids", [])}
+    evidence_by_id = {
+        str(evidence.get("evidence_id") or "").strip(): evidence
+        for evidence in load_all_json(layout["evidence"])
+        if str(evidence.get("evidence_id") or "").strip()
+    }
+    claim_evidence_ids = {
+        eid
+        for claim in claim_list
+        if is_publishable_claim(claim, evidence_by_id)
+        for eid in claim.get("evidence_ids", [])
+    }
     results: list[dict] = []
     for evidence in load_all_json(layout["evidence"]):
-        if is_stale_evidence(evidence) or evidence.get("subject") != subject:
+        if not is_publishable_source_evidence(evidence) or evidence.get("subject") != subject:
             continue
         if not is_publishable_source_evidence(evidence):
             continue

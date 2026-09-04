@@ -32,6 +32,12 @@ def add_review_commands(
     evidence_decide.add_argument("--decision", choices=("accept", "reject", "acknowledge-stale"), required=True)
     evidence_decide.add_argument("--note", default="")
     evidence_decide.add_argument("--format", choices=("json", "quiet"), default="json")
+    evidence_repair = evidence_sub.add_parser("repair")
+    evidence_repair.add_argument("--subject", action="append", default=[])
+    evidence_repair.add_argument("--evidence-id", action="append", default=[])
+    evidence_repair.add_argument("--plan-fingerprint", default="")
+    evidence_repair.add_argument("--yes", action="store_true")
+    evidence_repair.add_argument("--format", choices=("json", "quiet"), default="json")
 
     conflicts = review_sub.add_parser("conflicts")
     conflicts_sub = conflicts.add_subparsers(dest="review_conflicts_command", required=True)
@@ -73,6 +79,17 @@ def dispatch_review(
                 forwarded.extend(["--subject", args.subject])
             if args.chapter_id:
                 forwarded.extend(["--chapter-id", args.chapter_id])
+            return run_script("review_evidence.py", *forwarded)
+        if args.review_evidence_command == "repair":
+            forwarded = ["repair", "--format", args.format]
+            for subject in args.subject:
+                forwarded.extend(["--subject", subject])
+            for evidence_id in args.evidence_id:
+                forwarded.extend(["--evidence-id", evidence_id])
+            if args.plan_fingerprint:
+                forwarded.extend(["--plan-fingerprint", args.plan_fingerprint])
+            if args.yes:
+                forwarded.append("--yes")
             return run_script("review_evidence.py", *forwarded)
         return run_script("review_evidence.py", "decide", "--evidence-id", args.evidence_id, "--decision", args.decision, "--note", args.note, "--format", args.format)
     if args.review_command == "conflicts":

@@ -34,6 +34,28 @@ def normalize_exercise_label(value: Any) -> str:
     return f"{int(match.group(1)):02d}" if match else ""
 
 
+def _evidence_pdf_page(evidence: dict[str, Any]) -> int:
+    def page_value(value: Any) -> int:
+        match = re.search(r"\d+", str(value or ""))
+        return int(match.group(0)) if match else 0
+
+    explicit = page_value(evidence.get("pdf_page"))
+    if explicit > 0:
+        return explicit
+    locator = evidence.get("locator") if isinstance(evidence.get("locator"), dict) else {}
+    root_page = page_value(locator.get("page_start"))
+    if root_page > 0:
+        return root_page
+    for span in evidence.get("source_spans", []) or []:
+        if not isinstance(span, dict):
+            continue
+        nested = span.get("locator") if isinstance(span.get("locator"), dict) else {}
+        page = page_value(nested.get("page_start"))
+        if page > 0:
+            return page
+    return 0
+
+
 def _container_ordinal_value(value: str) -> int | None:
     """Parse the small Chinese/Arabic ordinals used by structural headings."""
     text = str(value or "").strip()
@@ -334,7 +356,7 @@ def _relation_printed_pages(
             for evidence_id in evidence_ids
             for evidence in [evidence_by_id.get(evidence_id, {})]
             if str(evidence.get("source_id") or "") == source_id
-            and int(evidence.get("pdf_page", 0) or (evidence.get("locator") or {}).get("page_start", 0) or 0) == pdf_page
+            and _evidence_pdf_page(evidence) == pdf_page
             and int(evidence.get("printed_page", 0) or 0) > 0
         }
         if len(matches) != 1:
@@ -601,7 +623,7 @@ def build_exercise_locator_index() -> dict[str, Any]:
             continue
         if evidence.get("verification_status") != "reviewed" or not evidence.get("source_grounded") or evidence.get("mapping_status") == "stale":
             continue
-        page = int((evidence.get("locator") or {}).get("page_start") or 0)
+        page = _evidence_pdf_page(evidence)
         if page:
             pages_by_source[source_id].append(evidence)
 
@@ -623,8 +645,8 @@ def build_exercise_locator_index() -> dict[str, Any]:
         category = ""
         active_question: dict[str, Any] | None = None
         active_answer: dict[str, Any] | None = None
-        for evidence in sorted(pages, key=lambda item: int((item.get("locator") or {}).get("page_start") or 0)):
-            page = int((evidence.get("locator") or {}).get("page_start") or 0)
+        for evidence in sorted(pages, key=_evidence_pdf_page):
+            page = _evidence_pdf_page(evidence)
             lines = str(evidence.get("content") or "").splitlines()
             for line in lines:
                 marker = _heading(line)

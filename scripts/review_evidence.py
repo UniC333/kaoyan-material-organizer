@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import ensure_kb_layout, load_all_json, load_json, now_iso, save_json, resolve_subject
+from common import ensure_kb_layout, kb_layout, load_all_json, load_json, now_iso, save_json, resolve_subject
+from kaoyan_kb.domain.evidence_publication_repair import repair_publication
 
 RESOLVED_REVIEW_STATUSES = {"accepted", "rejected", "acknowledged"}
 PENDING_VERIFICATION_STATUSES = {"needs_review", "stale"}
@@ -27,6 +28,13 @@ def build_parser() -> argparse.ArgumentParser:
     decide.add_argument("--decision", choices=("accept", "reject", "acknowledge-stale"), required=True)
     decide.add_argument("--note", default="")
     decide.add_argument("--format", choices=("json", "quiet"), default="json")
+
+    repair = subparsers.add_parser("repair")
+    repair.add_argument("--subject", action="append", default=[])
+    repair.add_argument("--evidence-id", action="append", default=[])
+    repair.add_argument("--plan-fingerprint", default="")
+    repair.add_argument("--yes", action="store_true")
+    repair.add_argument("--format", choices=("json", "quiet"), default="json")
     return parser
 
 
@@ -142,6 +150,23 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args()
+    if args.command == "repair":
+        if args.yes and not args.plan_fingerprint:
+            raise SystemExit("[ERROR] --yes requires --plan-fingerprint from a prior preview")
+        layout = kb_layout()
+        subjects = [normalize_subject(item) or item for item in args.subject]
+        payload = repair_publication(
+            layout=layout,
+            subjects=subjects,
+            evidence_ids=args.evidence_id,
+            apply=bool(args.yes),
+            expected_fingerprint=args.plan_fingerprint,
+        )
+        if args.format == "json":
+            print(json.dumps(payload, ensure_ascii=False, indent=2))
+        refresh = payload.get("index_refresh") if isinstance(payload, dict) else None
+        return 1 if args.yes and isinstance(refresh, dict) and not refresh.get("ok", True) else 0
+
     layout = ensure_kb_layout()
 
     if args.command == "queue":

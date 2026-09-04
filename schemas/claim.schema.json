@@ -1,1 +1,30 @@
-{"title":"claim","type":"object","required":["claim_id","claim_key","subject","syllabus_node_id","claim_type","canonical_text","evidence_ids","status"],"properties":{"claim_id":{},"claim_key":{},"concept_id":{},"subject":{},"syllabus_node_id":{},"claim_type":{},"text":{},"canonical_text":{},"variants":{},"status":{},"evidence_ids":{},"support_count":{},"contradiction_ids":{},"origin":{},"created_at":{},"updated_at":{}},"additionalProperties":false}
+{
+  "title": "claim",
+  "type": "object",
+  "required": ["claim_id", "claim_key", "subject", "syllabus_node_id", "claim_type", "canonical_text", "evidence_ids", "status"],
+  "properties": {
+    "claim_id": {},
+    "claim_key": {},
+    "concept_id": {},
+    "subject": {},
+    "syllabus_node_id": {},
+    "claim_type": {},
+    "text": {},
+    "canonical_text": {},
+    "variants": {},
+    "status": {},
+    "evidence_ids": {},
+    "support_count": {},
+    "contradiction_ids": {},
+    "origin": {},
+    "created_at": {},
+    "updated_at": {},
+    "review_status": {},
+    "review_decision": {},
+    "review_note": {},
+    "reviewed_at": {},
+    "review_history": {"type": "array"},
+    "publication_status": {}
+  },
+  "additionalProperties": false
+}

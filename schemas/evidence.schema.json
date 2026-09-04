@@ -1,1 +1,31 @@
-{"title":"evidence","type":"object","required":["evidence_id","evidence_key","subject","source_id","chapter_id","chunk_id","title","content","origin_type","verification_status","source_spans","provenance"],"properties":{"evidence_id":{},"evidence_key":{},"subject":{},"source_id":{},"chapter_id":{},"chunk_id":{},"title":{},"content":{},"origin_type":{},"verification_status":{},"source_spans":{},"provenance":{}},"additionalProperties":true}
+{
+  "title": "evidence",
+  "type": "object",
+  "required": ["evidence_id", "evidence_key", "subject", "source_id", "chapter_id", "chunk_id", "title", "content", "origin_type", "verification_status", "source_spans", "provenance"],
+  "properties": {
+    "evidence_id": {},
+    "evidence_key": {},
+    "subject": {},
+    "source_id": {},
+    "chapter_id": {},
+    "chunk_id": {},
+    "title": {},
+    "content": {},
+    "origin_type": {},
+    "verification_status": {},
+    "source_grounded": {"type": "boolean"},
+    "source_spans": {"type": "array"},
+    "provenance": {"type": "object"},
+    "pdf_page": {"type": ["integer", "null"], "minimum": 1},
+    "printed_page": {"type": ["integer", "null"], "minimum": 1},
+    "mapping_status": {},
+    "review_status": {},
+    "review_decision": {},
+    "review_note": {},
+    "reviewed_at": {},
+    "review_history": {"type": "array"},
+    "publication_status": {},
+    "evidence_publication_repair": {"type": "object"}
+  },
+  "additionalProperties": true
+}

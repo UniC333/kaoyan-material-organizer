@@ -4,23 +4,48 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from typing import Any
 
-from common import PUBLISHABLE_EVIDENCE_VERIFICATION_STATUSES, ensure_kb_layout, is_publishable_source_evidence, load_all_json
+from common import (
+    PUBLICATION_POLICY_VERSION,
+    claim_publication_decision,
+    ensure_kb_layout,
+    evidence_publication_decision,
+    load_all_json,
+)
 
 
-FORBIDDEN_ORIGIN_TYPES = {"profile_hint", "title_inference", "placeholder"}
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
     return parser.parse_args()
 
 
-def add_error(errors: list[dict[str, str]], *, entity: str, entity_id: str, message: str) -> None:
-    errors.append({"entity": entity, "id": entity_id, "message": message})
+def add_error(
+    errors: list[dict[str, Any]],
+    *,
+    entity: str,
+    entity_id: str,
+    message: str,
+    classification: str = "structural_invalid",
+    reason_code: str = "",
+    severity: str = "error",
+) -> None:
+    errors.append(
+        {
+            "entity": entity,
+            "id": entity_id,
+            "message": message,
+            "classification": classification,
+            "reason_code": reason_code,
+            "severity": severity,
+        }
+    )
 
 
 def locator_has_required_fields(locator: dict[str, Any]) -> list[str]:
+    """Compatibility helper for callers that inspect a nested locator."""
     missing: list[str] = []
     for field in ("page_start", "page_end", "image_start", "image_end"):
         if str(locator.get(field, "")).strip() == "":
@@ -29,71 +54,85 @@ def locator_has_required_fields(locator: dict[str, Any]) -> list[str]:
 
 
 def evidence_publishability_errors(evidence: dict[str, Any]) -> list[str]:
-    issues: list[str] = []
-    evidence_id = str(evidence.get("evidence_id", "")).strip()
-    origin_type = str(evidence.get("origin_type") or evidence.get("origin") or "").strip()
-    verification_status = str(evidence.get("verification_status", "")).strip()
-    # Stale records are retained for auditability but are intentionally excluded
-    # from search and must not be treated as publishable evidence.
-    if verification_status == "stale" or str(evidence.get("mapping_status", "")).strip() == "stale":
-        return []
-    source_spans = evidence.get("source_spans", [])
-    provenance = evidence.get("provenance") if isinstance(evidence.get("provenance"), dict) else {}
-    source_grounded = bool(evidence.get("source_grounded"))
+    """Return the authoritative decision messages for one evidence record."""
+    return list(evidence_publication_decision(evidence).get("reasons", []))
 
-    for field in ("source_id", "chapter_id", "chunk_id", "evidence_key"):
-        if not str(evidence.get(field, "")).strip():
-            issues.append(f"missing {field}")
 
-    if not origin_type:
-        issues.append("missing origin_type")
-    elif origin_type in FORBIDDEN_ORIGIN_TYPES:
-        issues.append(f"forbidden origin_type: {origin_type}")
+def _decision_findings(
+    *,
+    entity: str,
+    entity_id: str,
+    decision: dict[str, Any],
+) -> list[dict[str, Any]]:
+    reasons = [str(item) for item in decision.get("reasons", []) or []]
+    codes = [str(item) for item in decision.get("reason_codes", []) or []]
+    classification = str(decision.get("classification") or "structural_invalid")
+    severity = "error" if classification == "structural_invalid" else "warning"
+    return [
+        {
+            "entity": entity,
+            "id": entity_id,
+            "message": message,
+            "classification": classification,
+            "reason_code": codes[index] if index < len(codes) else "",
+            "severity": severity,
+        }
+        for index, message in enumerate(reasons)
+    ]
 
-    if not verification_status:
-        issues.append("missing verification_status")
-    elif verification_status not in PUBLISHABLE_EVIDENCE_VERIFICATION_STATUSES and source_grounded:
-        issues.append(f"unexpected verification_status for grounded evidence: {verification_status}")
 
-    if not isinstance(source_spans, list) or not source_spans:
-        issues.append("missing source_spans")
-    else:
-        for index, span in enumerate(source_spans, start=1):
-            if not isinstance(span, dict):
-                issues.append(f"invalid source_spans[{index}]")
-                continue
-            for field in ("source_id", "file_id"):
-                if not str(span.get(field, "")).strip():
-                    issues.append(f"missing source_spans[{index}].{field}")
-            locator = span.get("locator") if isinstance(span.get("locator"), dict) else {}
-            for field in locator_has_required_fields(locator):
-                issues.append(f"missing source_spans[{index}].locator.{field}")
+def _summary(
+    *,
+    evidence_decisions: list[tuple[str, dict[str, Any]]],
+    claim_decisions: list[tuple[str, dict[str, Any]]],
+    findings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    classification_counts = Counter(str(item.get("classification") or "") for item in findings)
+    reason_counts = Counter(str(item.get("reason_code") or "") for item in findings if item.get("reason_code"))
 
-    locator = evidence.get("locator") if isinstance(evidence.get("locator"), dict) else {}
-    for field in locator_has_required_fields(locator):
-        issues.append(f"missing locator.{field}")
+    def entity_summary(decisions: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
+        counts = Counter(str(decision.get("classification") or "") for _, decision in decisions)
+        return {
+            "total_count": len(decisions),
+            "publishable_count": sum(1 for _, decision in decisions if decision.get("publishable")),
+            "audit_only_count": counts.get("audit_only", 0),
+            "structural_invalid_count": counts.get("structural_invalid", 0),
+            "distinct_entity_count": len({entity_id for entity_id, _ in decisions if entity_id}),
+            "classification_counts": dict(sorted(counts.items())),
+        }
 
-    if not provenance:
-        issues.append("missing provenance")
-    else:
-        for field in ("origin_type", "verification_status", "source_spans"):
-            value = provenance.get(field)
-            if field == "source_spans":
-                if not isinstance(value, list) or not value:
-                    issues.append("missing provenance.source_spans")
-            elif not str(value or "").strip():
-                issues.append(f"missing provenance.{field}")
-        if provenance.get("origin_type") != origin_type:
-            issues.append("provenance.origin_type mismatch")
-        if provenance.get("verification_status") != verification_status:
-            issues.append("provenance.verification_status mismatch")
-        if bool(provenance.get("source_grounded")) != source_grounded:
-            issues.append("provenance.source_grounded mismatch")
-
-    if not source_grounded:
-        issues.append(f"evidence is not source_grounded: {evidence_id}")
-
-    return issues
+    distinct_findings = {(str(item.get("entity")), str(item.get("id"))) for item in findings}
+    return {
+        "evidence": entity_summary(evidence_decisions),
+        "claim": entity_summary(claim_decisions),
+        "classification_counts": dict(sorted(classification_counts.items())),
+        "reason_counts": dict(sorted(reason_counts.items())),
+        "distinct_entity_count": len(distinct_findings),
+        "distinct_error_entity_count": len(
+            {
+                key
+                for key in distinct_findings
+                if any(
+                    str(item.get("entity")) == key[0]
+                    and str(item.get("id")) == key[1]
+                    and item.get("severity") == "error"
+                    for item in findings
+                )
+            }
+        ),
+        "audit_only_entity_count": len(
+            {
+                key
+                for key in distinct_findings
+                if any(
+                    str(item.get("entity")) == key[0]
+                    and str(item.get("id")) == key[1]
+                    and item.get("classification") == "audit_only"
+                    for item in findings
+                )
+            }
+        ),
+    }
 
 
 def main() -> int:
@@ -101,46 +140,31 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = parse_args()
     layout = ensure_kb_layout()
-    errors: list[dict[str, str]] = []
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
 
     evidence_index: dict[str, dict[str, Any]] = {}
-    publishable_evidence_ids: set[str] = set()
+    evidence_decisions: list[tuple[str, dict[str, Any]]] = []
     for evidence in load_all_json(layout["evidence"]):
         evidence_id = str(evidence.get("evidence_id", "")).strip()
         if evidence_id:
             evidence_index[evidence_id] = evidence
-        issues = evidence_publishability_errors(evidence)
-        for issue in issues:
-            add_error(errors, entity="evidence", entity_id=evidence_id, message=issue)
-        if not issues and is_publishable_source_evidence(evidence):
-            publishable_evidence_ids.add(evidence_id)
+        decision = evidence_publication_decision(evidence)
+        evidence_decisions.append((evidence_id, decision))
+        findings = _decision_findings(entity="evidence", entity_id=evidence_id, decision=decision)
+        errors.extend(findings)
+        warnings.extend(item for item in findings if item["severity"] != "error")
 
     claim_index: dict[str, dict[str, Any]] = {}
+    claim_decisions: list[tuple[str, dict[str, Any]]] = []
     for claim in load_all_json(layout["claims"]):
         claim_id = str(claim.get("claim_id", "")).strip()
         claim_index[claim_id] = claim
-        if not str(claim.get("syllabus_node_id") or claim.get("concept_id") or "").strip():
-            add_error(errors, entity="claim", entity_id=claim_id, message="missing syllabus_node_id/concept_id")
-        if not str(claim.get("canonical_text") or claim.get("text") or "").strip():
-            add_error(errors, entity="claim", entity_id=claim_id, message="missing canonical_text")
-        if claim.get("origin") == "placeholder":
-            add_error(errors, entity="claim", entity_id=claim_id, message="placeholder claim cannot be published")
-        evidence_ids = claim.get("evidence_ids", [])
-        if not evidence_ids:
-            add_error(errors, entity="claim", entity_id=claim_id, message="missing evidence_ids")
-        else:
-            for evidence_id in evidence_ids:
-                evidence_id = str(evidence_id).strip()
-                if evidence_id not in evidence_index:
-                    add_error(errors, entity="claim", entity_id=claim_id, message=f"unknown evidence: {evidence_id}")
-                    continue
-                if evidence_id not in publishable_evidence_ids:
-                    add_error(
-                        errors,
-                        entity="claim",
-                        entity_id=claim_id,
-                        message=f"claim references non-publishable evidence: {evidence_id}",
-                    )
+        decision = claim_publication_decision(claim, evidence_index)
+        claim_decisions.append((claim_id, decision))
+        findings = _decision_findings(entity="claim", entity_id=claim_id, decision=decision)
+        errors.extend(findings)
+        warnings.extend(item for item in findings if item["severity"] != "error")
 
     for conflict in load_all_json(layout["conflicts"]):
         conflict_id = str(conflict.get("conflict_id") or conflict.get("relation_id") or "").strip()
@@ -155,7 +179,21 @@ def main() -> int:
         for claim_id in claim_ids:
             if claim_id not in claim_index:
                 add_error(errors, entity="conflict", entity_id=conflict_id, message=f"unknown claim: {claim_id}")
-    payload = {"ok": not errors, "error_count": len(errors), "errors": errors}
+
+    summary = _summary(
+        evidence_decisions=evidence_decisions,
+        claim_decisions=claim_decisions,
+        findings=errors,
+    )
+    payload = {
+        "ok": not errors,
+        "publication_policy_version": PUBLICATION_POLICY_VERSION,
+        "error_count": len(errors),
+        "warning_count": len(warnings),
+        "errors": errors,
+        "warnings": warnings,
+        "summary": summary,
+    }
     if args.format == "json":
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if not errors else 1

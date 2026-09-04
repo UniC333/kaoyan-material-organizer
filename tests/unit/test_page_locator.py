@@ -1091,8 +1091,13 @@ def test_exact_page_evidence_is_not_rejected_by_subsection_name(monkeypatch, tmp
     evidence_dir.mkdir()
     (evidence_dir / "EV-PDF-67.json").write_text(
         __import__("json").dumps({
-            "evidence_id": "EV-PDF-67", "subject": "408", "verification_status": "reviewed",
+            "evidence_id": "EV-PDF-67", "evidence_key": "EV-PDF-67-key", "subject": "408",
+            "source_id": "SRC-PDF", "chapter_id": "CH-3", "chunk_id": "CHUNK-79",
+            "title": "page 67", "content": "page content", "origin_type": "paper_book_reviewed_ocr",
+            "source_grounded": True, "verification_status": "reviewed", "review_status": "accepted",
             "locator": {"page_start": 79}, "chapter_title": "第3章 栈、队列和数组",
+            "source_spans": [{"source_id": "SRC-PDF", "file_id": "FILE-79", "locator": {"page_start": 67, "page_end": 67, "image_start": 79, "image_end": 79}}],
+            "provenance": {"origin_type": "paper_book_reviewed_ocr", "verification_status": "reviewed", "source_grounded": True, "source_spans": [{"source_id": "SRC-PDF", "file_id": "FILE-79", "locator": {"page_start": 67, "page_end": 67, "image_start": 79, "image_end": 79}}]},
         }),
         encoding="utf-8",
     )

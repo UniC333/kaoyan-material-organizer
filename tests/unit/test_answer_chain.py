@@ -917,18 +917,45 @@ def _page_content_anchor(status: str = "exact_evidence") -> dict:
 
 
 def _reviewed_page_content_evidence(**overrides: object) -> dict:
+    source_span = {
+        "source_id": "SRC-408-0004",
+        "file_id": "FILE-408-0004-129",
+        "source_file_sha256": "fixture-source-sha",
+        "locator": {"page_start": 117, "page_end": 117, "image_start": 129, "image_end": 129},
+    }
     result = {
         "evidence_id": "EV-408-000068",
+        "evidence_key": "EV-408-000068-key",
+        "subject": "408",
         "source_id": "SRC-408-0004",
+        "chapter_id": "CH-4",
+        "chunk_id": "CHUNK-129",
         "book_title": "王道数据结构",
+        "title": "nextval",
         "printed_page": 117,
         "pdf_page": 129,
         "content": "if (T.ch[i]!=T.ch[j]) nextval[i]=j; else nextval[i]=nextval[j];",
+        "origin_type": "pdf_page_ocr",
         "source_grounded": True,
         "verification_status": "reviewed",
         "review_status": "accepted",
+        "mapping_status": "mapped",
+        "source_spans": [source_span],
+        "provenance": {
+            "origin_type": "pdf_page_ocr",
+            "verification_status": "reviewed",
+            "source_grounded": True,
+            "source_spans": [source_span],
+        },
     }
     result.update(overrides)
+    result["provenance"] = {
+        **result["provenance"],
+        "origin_type": result["origin_type"],
+        "verification_status": result["verification_status"],
+        "source_grounded": result["source_grounded"],
+        "source_spans": result["source_spans"],
+    }
     return result
 
 

@@ -23,6 +23,17 @@ from config import (
     load_runtime_config,
 )
 from kaoyan_kb.storage.atomic_io import load_json, load_json_or_default, save_json, save_text
+from kaoyan_kb.domain.evidence_publication import (
+    ACCEPTED_EVIDENCE_REVIEW_STATUSES,
+    BLOCKED_EVIDENCE_MAPPING_STATUSES,
+    FORBIDDEN_EVIDENCE_ORIGIN_TYPES,
+    PUBLICATION_POLICY_VERSION,
+    PUBLISHABLE_EVIDENCE_VERIFICATION_STATUSES,
+    claim_publication_decision,
+    evidence_publication_decision,
+    is_publishable_claim,
+    is_publishable_source_evidence,
+)
 
 VAULT_ROOT = DEFAULT_VAULT_ROOT
 RUNTIME_PYTHON = Path(sys.executable)
@@ -78,8 +89,6 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 BROAD_SCOPE_KEYWORDS = {"\\u5168\\u90e8", "\\u5168\\u91cf", "\\u6574\\u672c", "\\u6574\\u95e8", "\\u6574\\u79d1", "\\u6574\\u5957", "\\u5168\\u4e66", "\\u6240\\u6709\\u7ae0\\u8282", "\\u5b8c\\u6574\\u6559\\u6750"}
 BROAD_SCOPE_KEYWORDS = {item.encode("utf-8").decode("unicode_escape") for item in BROAD_SCOPE_KEYWORDS}
 PLACEHOLDERS = {"", "\\u5f85\\u8865\\u5145", "\\u5f85\\u5224\\u5b9a", "\\u5f85\\u6574\\u7406", "\\u5f85\\u786e\\u8ba4", "\\u5f85\\u8865\\u9875", "\\u5f85\\u4eba\\u5de5\\u590d\\u6838", "-", "\\u672a\\u77e5"}
-PUBLISHABLE_EVIDENCE_VERIFICATION_STATUSES = {"source_grounded", "reviewed"}
-ACCEPTED_EVIDENCE_REVIEW_STATUSES = {"accepted", "approved", "not-required"}
 PLACEHOLDERS = {item.encode("utf-8").decode("unicode_escape") if "\\u" in item else item for item in PLACEHOLDERS}
 PROFILE_DIR = Path(__file__).resolve().parent.parent / "profiles"
 SCHEMA_VERSION = "0.4.0"
@@ -661,32 +670,32 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-def kb_layout(default: Path | None = None, *, root: Path | None = None) -> dict[str, Path]:
-    """Return the machine-side layout without creating or updating anything."""
-    root = Path(root) if root is not None else kb_root(default)
+def kb_layout(default: Path | None = None, *, root: Path | str | None = None) -> dict[str, Path]:
+    """Return KB paths without creating or updating anything on disk."""
+    resolved_root = Path(root).expanduser() if root is not None else kb_root(default)
     return {
-        "root": root,
-        "manifests": root / "manifests",
-        "manifest_sources": root / "manifests" / "sources",
-        "manifest_files": root / "manifests" / "files",
-        "manifest_chapters": root / "manifests" / "chapters",
-        "manifest_chunks": root / "manifests" / "chunks",
-        "sources": root / "sources",
-        "evidence": root / "evidence",
-        "syllabus": root / "syllabus",
-        "claims": root / "claims",
-        "conflicts": root / "conflicts",
-        "indexes": root / "indexes",
-        "learner": root / "learner",
-        "runs": root / "runs",
-        "review_queues": root / "review-queues",
-        "review_syllabus_mapping": root / "review-queues" / "syllabus-mapping",
-        "schemas": root / "schemas",
+        "root": resolved_root,
+        "manifests": resolved_root / "manifests",
+        "manifest_sources": resolved_root / "manifests" / "sources",
+        "manifest_files": resolved_root / "manifests" / "files",
+        "manifest_chapters": resolved_root / "manifests" / "chapters",
+        "manifest_chunks": resolved_root / "manifests" / "chunks",
+        "sources": resolved_root / "sources",
+        "evidence": resolved_root / "evidence",
+        "syllabus": resolved_root / "syllabus",
+        "claims": resolved_root / "claims",
+        "conflicts": resolved_root / "conflicts",
+        "indexes": resolved_root / "indexes",
+        "learner": resolved_root / "learner",
+        "runs": resolved_root / "runs",
+        "review_queues": resolved_root / "review-queues",
+        "review_syllabus_mapping": resolved_root / "review-queues" / "syllabus-mapping",
+        "schemas": resolved_root / "schemas",
     }
 
 
 def ensure_kb_layout(default: Path | None = None) -> dict[str, Path]:
-    paths = kb_layout(default=default)
+    paths = kb_layout(default)
     root = paths["root"]
     for path in paths.values():
         path.mkdir(parents=True, exist_ok=True)
@@ -919,18 +928,6 @@ def merge_manual_resolution(existing: dict[str, Any] | None, incoming: dict[str,
             if current.get(key) and not payload.get(key):
                 payload[key] = current[key]
     return payload
-
-
-def is_publishable_source_evidence(evidence: dict[str, Any]) -> bool:
-    """Return whether evidence may be exposed as reviewed source text."""
-    if not bool(evidence.get("source_grounded")):
-        return False
-    if str(evidence.get("verification_status") or "") not in PUBLISHABLE_EVIDENCE_VERIFICATION_STATUSES:
-        return False
-    if str(evidence.get("mapping_status") or "") == "stale":
-        return False
-    review_status = str(evidence.get("review_status") or "").strip()
-    return not review_status or review_status in ACCEPTED_EVIDENCE_REVIEW_STATUSES
 
 
 def load_all_json(dir_path: Path) -> list[dict[str, Any]]:

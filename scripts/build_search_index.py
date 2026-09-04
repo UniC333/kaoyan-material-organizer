@@ -8,7 +8,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import ensure_kb_layout, load_json, load_json_or_default, save_json, scan_json_files, stable_fingerprint
+from common import (
+    PUBLICATION_POLICY_VERSION,
+    claim_publication_decision,
+    ensure_kb_layout,
+    evidence_publication_decision,
+    load_json,
+    load_json_or_default,
+    save_json,
+    scan_json_files,
+    stable_fingerprint,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -115,13 +125,18 @@ def file_signature(record: dict[str, Any]) -> str:
     return f"{record['size']}:{record['mtime_ns']}"
 
 
-def build_doc_from_payload(doc_type: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+def build_doc_from_payload(
+    doc_type: str,
+    payload: dict[str, Any],
+    *,
+    evidence_by_id: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     if doc_type == "evidence":
-        if payload.get("verification_status") == "stale" or payload.get("mapping_status") == "stale":
+        if not evidence_publication_decision(payload).get("publishable"):
             return None
         return evidence_doc(payload)
     if doc_type == "claim":
-        if payload.get("status") != "accepted":
+        if not claim_publication_decision(payload, evidence_by_id or {}).get("publishable"):
             return None
         return claim_doc(payload)
     raise ValueError(f"unsupported doc_type: {doc_type}")
@@ -232,11 +247,71 @@ def duplicate_metrics(documents: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    layout = ensure_kb_layout()
+def _exclusion_item(
+    *,
+    record: dict[str, Any],
+    entity_id: str,
+    decision: dict[str, Any] | None = None,
+    classification: str = "structural_invalid",
+    reason_codes: list[str] | None = None,
+    reasons: list[str] | None = None,
+) -> dict[str, Any]:
+    resolved_classification = str((decision or {}).get("classification") or classification)
+    resolved_codes = list((decision or {}).get("reason_codes") or reason_codes or [])
+    resolved_reasons = list((decision or {}).get("reasons") or reasons or [])
+    return {
+        "policy_version": str((decision or {}).get("policy_version") or PUBLICATION_POLICY_VERSION),
+        "doc_type": str(record.get("doc_type") or ""),
+        "entity_id": entity_id,
+        "file_name": str(record.get("name") or ""),
+        "classification": resolved_classification,
+        "reason_codes": resolved_codes,
+        "reasons": resolved_reasons,
+    }
+
+
+def _exclusion_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    by_doc_type: dict[str, int] = {}
+    by_classification: dict[str, int] = {}
+    by_reason: dict[str, int] = {}
+    for item in items:
+        doc_type = str(item.get("doc_type") or "unknown")
+        classification = str(item.get("classification") or "unknown")
+        by_doc_type[doc_type] = by_doc_type.get(doc_type, 0) + 1
+        by_classification[classification] = by_classification.get(classification, 0) + 1
+        reason_codes = list(item.get("reason_codes") or [])
+        if not reason_codes:
+            by_reason["unknown"] = by_reason.get("unknown", 0) + 1
+        for code in reason_codes:
+            key = str(code or "unknown")
+            by_reason[key] = by_reason.get(key, 0) + 1
+    return {
+        "count": len(items),
+        "by_doc_type": dict(sorted(by_doc_type.items())),
+        "by_classification": dict(sorted(by_classification.items())),
+        "by_reason": dict(sorted(by_reason.items())),
+        "items": items,
+    }
+
+
+def _arg(args: argparse.Namespace, name: str, default: Any) -> Any:
+    return getattr(args, name, default)
+
+
+def build_index(
+    layout: dict[str, Path] | None = None,
+    *,
+    args: argparse.Namespace | None = None,
+) -> dict[str, Any]:
+    """Build the search index using the shared publication policy."""
+    resolved_args = args or argparse.Namespace(
+        warning_scan_threshold=5000,
+        warning_parse_threshold=1000,
+        hard_failure_scan_threshold=50000,
+        hard_failure_parse_threshold=10000,
+        format="quiet",
+    )
+    layout = layout or ensure_kb_layout()
     manifest_path = layout["indexes"] / "search_manifest.json"
     docs_path = layout["indexes"] / "search_documents.json"
     inverted_path = layout["indexes"] / "inverted_index.json"
@@ -261,15 +336,95 @@ def main() -> int:
     unchanged_count = 0
     final_documents: list[dict[str, Any]] = []
     manifest_documents: dict[str, Any] = {}
+    exclusions: list[dict[str, Any]] = []
+
+    payloads_by_path: dict[Path, dict[str, Any]] = {}
+    for record in records:
+        path = Path(record["path"])
+        try:
+            payload = load_json(path)
+        except Exception as exc:
+            exclusions.append(
+                _exclusion_item(
+                    record=record,
+                    entity_id="",
+                    classification="structural_invalid",
+                    reason_codes=["invalid-json"],
+                    reasons=[f"invalid JSON: {type(exc).__name__}"],
+                )
+            )
+            continue
+        parsed_files_count += 1
+        if not isinstance(payload, dict):
+            exclusions.append(
+                _exclusion_item(
+                    record=record,
+                    entity_id="",
+                    classification="structural_invalid",
+                    reason_codes=["entity-not-object"],
+                    reasons=["entity JSON must contain an object"],
+                )
+            )
+            continue
+        payloads_by_path[path] = payload
+
+    evidence_by_id: dict[str, dict[str, Any]] = {}
+    evidence_decisions_by_path: dict[Path, dict[str, Any]] = {}
+    for record in records:
+        if record["doc_type"] != "evidence":
+            continue
+        path = Path(record["path"])
+        payload = payloads_by_path.get(path)
+        if payload is None:
+            continue
+        evidence_id = str(payload.get("evidence_id") or "").strip()
+        if evidence_id:
+            evidence_by_id[evidence_id] = payload
+        evidence_decisions_by_path[path] = evidence_publication_decision(payload)
+
+    claim_decisions_by_path: dict[Path, dict[str, Any]] = {}
+    for record in records:
+        path = Path(record["path"])
+        payload = payloads_by_path.get(path)
+        if payload is None:
+            continue
+        if record["doc_type"] == "evidence":
+            decision = evidence_decisions_by_path.get(path) or evidence_publication_decision(payload)
+        else:
+            decision = claim_publication_decision(payload, evidence_by_id)
+            claim_decisions_by_path[path] = decision
+        if not decision.get("publishable"):
+            exclusions.append(
+                _exclusion_item(
+                    record=record,
+                    entity_id=str(payload.get("evidence_id") or payload.get("claim_id") or "").strip(),
+                    decision=decision,
+                )
+            )
 
     for record in records:
         record_signature = file_signature(record)
         path = Path(record["path"])
+        payload = payloads_by_path.get(path)
+        if payload is None:
+            continue
+        decision = (
+            evidence_decisions_by_path.get(path)
+            if record["doc_type"] == "evidence"
+            else claim_decisions_by_path.get(path)
+        )
+        if not decision or not decision.get("publishable"):
+            continue
         previous_entry = previous_manifest_by_file.get((record["doc_type"], record["name"]), {})
         previous_doc_id = str(previous_entry.get("doc_id", "")).strip()
         previous_signature = str(previous_entry.get("file_signature", "")).strip()
 
-        if previous_doc_id and previous_signature == record_signature and previous_doc_id in previous_doc_map:
+        if (
+            previous_doc_id
+            and previous_signature == record_signature
+            and previous_doc_id in previous_doc_map
+            and str(previous_manifest.get("publication_policy_version", "")) == PUBLICATION_POLICY_VERSION
+        ):
             unchanged_count += 1
             doc = dict(previous_doc_map[previous_doc_id])
             final_documents.append(doc)
@@ -282,12 +437,7 @@ def main() -> int:
             }
             continue
 
-        try:
-            payload = load_json(path)
-        except Exception:
-            continue
-        doc = build_doc_from_payload(record["doc_type"], payload)
-        parsed_files_count += 1
+        doc = build_doc_from_payload(record["doc_type"], payload, evidence_by_id=evidence_by_id)
         if doc is None:
             continue
         doc["tokens"] = tokenize(doc.get("text", ""))
@@ -316,9 +466,14 @@ def main() -> int:
     removed_doc_ids = sorted(previous_doc_ids - final_doc_ids)
     added_count = sum(1 for doc_id in changed_doc_ids if doc_id not in previous_doc_ids)
     updated_count = sum(1 for doc_id in changed_doc_ids if doc_id in previous_doc_ids)
+    policy_changed = str(previous_manifest.get("publication_policy_version", "")) != PUBLICATION_POLICY_VERSION
     if not previous_manifest_docs:
         rebuild_mode = "full-rebuild"
+    elif policy_changed:
+        rebuild_mode = "policy-rebuild"
     elif changed_doc_ids:
+        rebuild_mode = "changed-only"
+    elif removed_doc_ids:
         rebuild_mode = "changed-only"
     else:
         rebuild_mode = "changed-only-noop"
@@ -332,10 +487,10 @@ def main() -> int:
     performance_boundary = build_performance_boundary(
         scanned_files_count=scanned_files_count,
         parsed_files_count=parsed_files_count,
-        warning_scan_threshold=max(1, args.warning_scan_threshold),
-        warning_parse_threshold=max(1, args.warning_parse_threshold),
-        hard_failure_scan_threshold=max(1, args.hard_failure_scan_threshold),
-        hard_failure_parse_threshold=max(1, args.hard_failure_parse_threshold),
+        warning_scan_threshold=max(1, int(_arg(resolved_args, "warning_scan_threshold", 5000))),
+        warning_parse_threshold=max(1, int(_arg(resolved_args, "warning_parse_threshold", 1000))),
+        hard_failure_scan_threshold=max(1, int(_arg(resolved_args, "hard_failure_scan_threshold", 50000))),
+        hard_failure_parse_threshold=max(1, int(_arg(resolved_args, "hard_failure_parse_threshold", 10000))),
     )
     inverted_terms = build_inverted_index(final_documents)
     bucket_manifest = build_bucket_manifest(final_documents)
@@ -346,6 +501,8 @@ def main() -> int:
         "doc_count": len(final_documents),
         "changed_count": len(changed_doc_ids),
         "rebuild_mode": rebuild_mode,
+        "publication_policy_version": PUBLICATION_POLICY_VERSION,
+        "exclusion_summary": _exclusion_summary(exclusions),
         "manifest_delta": manifest_delta,
         "performance_boundary": performance_boundary,
         "bucket_manifest": bucket_manifest,
@@ -365,6 +522,7 @@ def main() -> int:
     save_json(inverted_path, inverted_payload)
     save_json(manifest_path, manifest_payload)
 
+    exclusion_summary = manifest_payload["exclusion_summary"]
     result = {
         "doc_count": len(final_documents),
         "changed_count": len(changed_doc_ids),
@@ -373,6 +531,9 @@ def main() -> int:
         "scanned_files_count": scanned_files_count,
         "parsed_files_count": parsed_files_count,
         "rebuild_mode": rebuild_mode,
+        "publication_policy_version": PUBLICATION_POLICY_VERSION,
+        "exclusion_count": exclusion_summary["count"],
+        "exclusion_summary": exclusion_summary,
         "manifest_delta": manifest_delta,
         "performance_boundary": performance_boundary,
         "bucket_manifest": bucket_manifest,
@@ -385,6 +546,14 @@ def main() -> int:
             "manifest": str(manifest_path),
         },
     }
+    return result
+
+
+def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    args = parse_args()
+    result = build_index(args=args)
     if args.format == "json":
         print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

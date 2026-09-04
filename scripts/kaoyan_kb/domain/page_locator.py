@@ -112,6 +112,25 @@ def _pdf_page(value: Any) -> int:
     return _printed_page(value)
 
 
+def evidence_pdf_page(evidence: dict[str, Any]) -> int:
+    """Resolve a PDF page from the explicit field or a nested source span."""
+    explicit = _pdf_page(evidence.get("pdf_page"))
+    if explicit:
+        return explicit
+    root_locator = evidence.get("locator") if isinstance(evidence.get("locator"), dict) else {}
+    root_page = _pdf_page(root_locator.get("page_start"))
+    if root_page:
+        return root_page
+    for span in evidence.get("source_spans", []) or []:
+        if not isinstance(span, dict):
+            continue
+        locator = span.get("locator") if isinstance(span.get("locator"), dict) else {}
+        page = _pdf_page(locator.get("page_start"))
+        if page:
+            return page
+    return 0
+
+
 def extract_printed_page_from_ocr(content: Any) -> int:
     """Read only an explicitly printed page number from the page OCR itself.
 
@@ -176,7 +195,7 @@ def _pdf_source_records(source: dict[str, Any], layout: dict[str, Path], approve
             or evidence.get("mapping_status") == "stale"
         ):
             continue
-        pdf_page = _pdf_page((evidence.get("locator") or {}).get("page_start"))
+        pdf_page = evidence_pdf_page(evidence)
         if not pdf_page:
             continue
         evidence_by_pdf_page.setdefault(pdf_page, []).append(evidence)
@@ -548,7 +567,7 @@ def evidence_matches_locator(evidence: dict[str, Any], locator: dict[str, Any]) 
     evidence_id = str(evidence.get("evidence_id") or "")
     if evidence_id and evidence_id in set(locator.get("evidence_ids", []) or []):
         requested_pdf_page = int(locator.get("pdf_page", 0) or 0)
-        actual_pdf_page = _pdf_page((evidence.get("locator") or {}).get("page_start"))
+        actual_pdf_page = evidence_pdf_page(evidence)
         return not requested_pdf_page or actual_pdf_page == requested_pdf_page
     requested_page = locator.get("requested_page")
     source_sha = str(locator.get("source_image_sha256") or "")
