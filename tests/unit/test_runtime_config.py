@@ -27,6 +27,7 @@ CONFIG_ENV_KEYS = (
     "KAOYAN_SYLLABUS_ROOT",
     "KAOYAN_PYTHON",
     "KAOYAN_OCR_MONTHLY_PAGE_BUDGET",
+    "KAOYAN_OCR_ALLOW_REMOTE",
 )
 
 
@@ -157,3 +158,30 @@ def test_explicit_zero_ocr_budget_overrides_environment(monkeypatch, tmp_path: P
     runtime = config.load_runtime_config()
 
     assert runtime.ocr_monthly_page_budget == 0
+
+
+def test_remote_ocr_defaults_to_disabled_when_config_and_environment_are_absent(tmp_path: Path) -> None:
+    runtime = config.load_runtime_config(default_workspace=str(tmp_path))
+
+    assert runtime.ocr_allow_remote is False
+
+
+def test_remote_ocr_environment_override_is_explicit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("KAOYAN_OCR_ALLOW_REMOTE", "true")
+
+    runtime = config.load_runtime_config(default_workspace=str(tmp_path))
+
+    assert runtime.ocr_allow_remote is True
+
+
+def test_remote_ocr_config_true_remains_persistent(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "kaoyan.config.json"
+    write_config(config_path)
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    payload["ocr_allow_remote"] = True
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    runtime = config.load_runtime_config()
+
+    assert runtime.ocr_allow_remote is True

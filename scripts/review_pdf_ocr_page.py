@@ -5,14 +5,43 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
-from common import ensure_kb_layout, load_json_or_default, now_iso, save_json
+from common import ensure_kb_layout, load_json_or_default, now_iso, save_json, sha256_for_file
 
 
 def source_file_sha256(layout: dict, source_id: str) -> str:
     source = load_json_or_default(layout["sources"] / f"{source_id}.json", {})
     files = [item for item in source.get("files", []) if isinstance(item, dict)]
     return str((files[0] if files else {}).get("sha256") or "").strip()
+
+
+def page_ocr_binding(layout: dict, source_id: str, pdf_page: int) -> dict[str, str]:
+    """Recover the OCR request/image binding recorded by the PDF OCR report."""
+    reports_root = layout["indexes"] / "pdf_ocr_runs"
+    for report_path in sorted(reports_root.glob("*.json")) if reports_root.is_dir() else []:
+        report = load_json_or_default(report_path, {})
+        if str(report.get("pdf_source_id") or "") != source_id:
+            continue
+        for page in report.get("pages", report.get("chapters", [])) or []:
+            if int(page.get("pdf_page", page.get("page_start", 0)) or 0) != pdf_page:
+                continue
+            normalized_path = Path(str(page.get("normalized_path") or "").strip())
+            if not normalized_path.is_absolute():
+                normalized_path = report_path.parent / normalized_path
+            normalized = load_json_or_default(normalized_path, {})
+            image_path = Path(str(page.get("ocr_source_image_path") or page.get("rendered_image_path") or "").strip())
+            if not image_path.is_absolute():
+                image_path = report_path.parent / image_path
+            image_sha = str(normalized.get("source_file_sha256") or "").strip()
+            if not image_sha and image_path.is_file():
+                image_sha = sha256_for_file(image_path)
+            return {
+                "request_key": str(page.get("request_key") or normalized.get("request_key") or "").strip(),
+                "source_image_sha256": image_sha,
+                "source_image_path": str(image_path),
+            }
+    return {"request_key": "", "source_image_sha256": "", "source_image_path": ""}
 
 
 def main() -> int:
@@ -22,6 +51,8 @@ def main() -> int:
     parser.add_argument("--printed-page", type=int)
     parser.add_argument("--page-header-confirmed", action="store_true")
     parser.add_argument("--review-status", required=True, choices=("pending", "accepted", "rejected"))
+    parser.add_argument("--request-key", default="", help="bind the decision to the exact OCR request")
+    parser.add_argument("--source-image-sha256", default="", help="bind the decision to the exact rendered OCR image")
     parser.add_argument("--note", default="")
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
     args = parser.parse_args()
@@ -31,14 +62,19 @@ def main() -> int:
         raise SystemExit("accepted PDF page review requires --printed-page and --page-header-confirmed")
     layout = ensure_kb_layout()
     source_sha = source_file_sha256(layout, args.pdf_source_id)
+    binding = page_ocr_binding(layout, args.pdf_source_id, args.pdf_page)
+    request_key = args.request_key.strip() or binding["request_key"]
+    source_image_sha256 = args.source_image_sha256.strip() or binding["source_image_sha256"]
     if args.review_status == "accepted" and not source_sha:
         raise SystemExit("accepted PDF page review requires a registered source file SHA-256")
+    if args.review_status == "accepted" and (not request_key or not source_image_sha256):
+        raise SystemExit("accepted PDF page review requires request-key and source-image SHA-256 binding")
     path = layout["review_queues"] / "pdf-page-review" / f"{args.pdf_source_id}.json"
     payload = load_json_or_default(path, {"queue_type": "pdf-page-review", "source_id": args.pdf_source_id, "items": []})
     items = [item for item in payload.get("items", []) if int(item.get("pdf_page", 0) or 0) != args.pdf_page]
-    items.append({"pdf_page": args.pdf_page, "printed_page": args.printed_page or 0, "review_status": args.review_status, "page_header_verified": bool(args.page_header_confirmed), "source_file_sha256": source_sha, "note": args.note, "reviewed_at": now_iso()})
+    items.append({"pdf_page": args.pdf_page, "printed_page": args.printed_page or 0, "review_status": args.review_status, "page_header_verified": bool(args.page_header_confirmed), "source_file_sha256": source_sha, "request_key": request_key, "source_image_sha256": source_image_sha256, "source_image_path": binding["source_image_path"], "note": args.note, "reviewed_at": now_iso()})
     items.sort(key=lambda item: int(item["pdf_page"]))
-    result = {"queue_type": "pdf-page-review", "source_id": args.pdf_source_id, "items": items, "summary": {"accepted_count": sum(item["review_status"] == "accepted" for item in items), "pending_count": sum(item["review_status"] == "pending" for item in items), "rejected_count": sum(item["review_status"] == "rejected" for item in items)}}
+    result = {"queue_type": "pdf-page-review", "source_id": args.pdf_source_id, "source_file_sha256": source_sha, "items": items, "summary": {"accepted_count": sum(item["review_status"] == "accepted" for item in items), "pending_count": sum(item["review_status"] == "pending" for item in items), "rejected_count": sum(item["review_status"] == "rejected" for item in items)}}
     save_json(path, result, ignored_compare_keys=())
     if args.format == "json": print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0

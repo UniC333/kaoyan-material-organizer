@@ -12,7 +12,7 @@ from typing import Any
 
 from PIL import Image
 
-from common import ensure_kb_layout, load_all_json, load_json_or_default, now_iso, run_utf8_subprocess, sanitize_name, save_json
+from common import ensure_kb_layout, load_all_json, load_json_or_default, now_iso, run_utf8_subprocess, sanitize_name, save_json, sha256_for_file
 from config import load_runtime_config
 from ocr_document import run_ocr_for_file
 
@@ -163,6 +163,7 @@ def ocr_pdf_book_source(
 
     resolved_source_id = _resolve_pdf_source_id(subject, book_title, layout, pdf_source_id)
     pdf_path = _resolve_pdf_path(resolved_source_id, layout)
+    pdf_source_sha256 = sha256_for_file(pdf_path)
     anchors_path = layout["indexes"] / "pdf_book_anchors" / f"{resolved_source_id}.json"
     anchors_payload = load_json_or_default(anchors_path, {})
     if not anchors_payload:
@@ -220,6 +221,7 @@ def ocr_pdf_book_source(
             "book_title": book_title,
             "pdf_source_id": resolved_source_id,
             "pdf_path": str(pdf_path),
+            "source_file_sha256": pdf_source_sha256,
             "anchors_path": str(anchors_path),
             "updated_at": now_iso(),
             "chapters": all_pages,
@@ -238,6 +240,7 @@ def ocr_pdf_book_source(
         page_number = int(page["pdf_page"])
         output_prefix = render_root / f"chapter-{chapter_number:02d}-page-{page_number:04d}"
         rendered_image = _render_pdf_page_to_png(pdf_path=pdf_path, page_number=page_number, output_prefix=output_prefix, dpi=dpi)
+        ocr_source_image = rendered_image
         try:
             result = run_ocr_for_file(
                 source_file=rendered_image,
@@ -254,6 +257,7 @@ def ocr_pdf_book_source(
             jpeg_path = rendered_image.with_suffix(".jpg")
             with Image.open(rendered_image) as image:
                 image.convert("RGB").save(jpeg_path, format="JPEG", quality=92)
+            ocr_source_image = jpeg_path
             try:
                 result = run_ocr_for_file(
                     source_file=jpeg_path,
@@ -267,6 +271,10 @@ def ocr_pdf_book_source(
             except Exception:
                 raise exc
         remote_requests += int(result.get("remote_calls", 0) or 0)
+        normalized_payload = load_json_or_default(Path(str(result["normalized_path"])), {})
+        source_image_sha256 = str(normalized_payload.get("source_file_sha256") or "").strip()
+        if not source_image_sha256:
+            source_image_sha256 = sha256_for_file(ocr_source_image)
         report_item = {
                 "chapter_number": chapter_number,
                 "chapter_title": str(page["chapter_title"]),
@@ -274,6 +282,9 @@ def ocr_pdf_book_source(
                 "page_start": page_number,
                 "page_end": page_number,
                 "rendered_image_path": str(rendered_image),
+                "ocr_source_image_path": str(ocr_source_image),
+                "source_file_sha256": pdf_source_sha256,
+                "source_image_sha256": source_image_sha256,
                 "provider": resolved_provider,
                 "model": resolved_model,
                 "request_key": result["request_key"],

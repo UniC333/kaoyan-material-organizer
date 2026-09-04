@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from common import ensure_kb_layout, load_json_or_default, now_iso, save_json
+from common import ensure_kb_layout, kb_layout, load_json_or_default, now_iso, save_json
 from config import load_runtime_config
 from kaoyan_kb.domain.index_freshness import directory_json_inputs, fingerprint_index_inputs
 
@@ -416,7 +416,7 @@ def load_page_locator_index() -> dict[str, Any]:
         unavailable["_availability"]["detail"] = "The locator index must contain list-valued entries and sources."
         return unavailable
     current_fingerprint = page_locator_input_fingerprint(
-        ensure_kb_layout(),
+        kb_layout(root=runtime.kb_root),
         metadata_dirname=runtime.paper_book_metadata_dir,
     )
     if str(payload.get("input_fingerprint") or "") != current_fingerprint:

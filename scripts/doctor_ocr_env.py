@@ -120,10 +120,14 @@ def detect_mistralai(python_executable: Path) -> dict[str, str]:
 
 def _ocr_runtime_snapshot(root: Path) -> dict[str, object]:
     runtime = load_runtime_config(default_workspace=str(root))
+    unlimited_budget = runtime.ocr_monthly_page_budget <= 0
     return {
         "provider": runtime.ocr_provider,
         "model": runtime.ocr_model,
         "allow_remote_configured": runtime.ocr_allow_remote,
+        "remote_authorization": "persistent" if runtime.ocr_allow_remote else "disabled",
+        "monthly_page_budget": runtime.ocr_monthly_page_budget,
+        "unlimited_monthly_budget": unlimited_budget,
         "cache_root": str(runtime.ocr_cache_root),
         "config_path": str(runtime.config_path) if runtime.config_path else "",
     }
@@ -138,12 +142,15 @@ def _ocr_acceptance_report(root: Path, *, mistralai: dict[str, str], api_key_sta
         "cli_yes_required": False,
     }
     blocking_reasons: list[str] = []
+    warnings: list[str] = []
     if not gates["mistralai_importable"]:
         blocking_reasons.append("mistralai package is not importable in the selected project python")
     if not gates["api_key_present"]:
         blocking_reasons.append("MISTRAL_API_KEY is absent from the current process environment")
     if not gates["config_allow_remote"]:
         blocking_reasons.append("KAOYAN_OCR_ALLOW_REMOTE is not enabled in the current runtime config")
+    if gates["config_allow_remote"] and bool(runtime_snapshot.get("unlimited_monthly_budget")):
+        warnings.append("remote OCR has persistent authorization and no monthly page budget; usage and cost are unbounded")
 
     fixture_ocr_ready = gates["mistralai_importable"]
     live_smoke_ready = fixture_ocr_ready and gates["api_key_present"] and gates["config_allow_remote"]
@@ -154,6 +161,7 @@ def _ocr_acceptance_report(root: Path, *, mistralai: dict[str, str], api_key_sta
         "manual_only": not automation_allowed,
         "automation_allowed": automation_allowed,
         "blocking_reasons": blocking_reasons,
+        "warnings": warnings,
         "staging_root_candidates": [
             ".local-api-smoke/408-ch1",
             ".local-api-smoke/math-ch1",
@@ -221,6 +229,10 @@ def main() -> int:
     print(f"ocr_provider: {report['ocr_runtime']['provider']}")
     print(f"ocr_model: {report['ocr_runtime']['model']}")
     print(f"ocr_allow_remote_configured: {'yes' if report['ocr_runtime']['allow_remote_configured'] else 'no'}")
+    print(f"ocr_remote_authorization: {report['ocr_runtime']['remote_authorization']}")
+    print(f"ocr_monthly_page_budget: {report['ocr_runtime']['monthly_page_budget']}")
+    for warning in report["ocr_acceptance"].get("warnings", []):
+        print(f"warning: {warning}")
     print(f"fixture_ocr_ready: {'yes' if report['ocr_acceptance']['fixture_ocr_ready'] else 'no'}")
     print(f"live_smoke_ready: {'yes' if report['ocr_acceptance']['live_smoke_ready'] else 'no'}")
     print("network_requests: 0")

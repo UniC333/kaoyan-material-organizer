@@ -176,7 +176,16 @@ def load_runtime_config(default_workspace: str | None = None) -> RuntimeConfig:
     ocr_monthly_page_budget = int(
         configured_budget if configured_budget is not None else os.environ.get("KAOYAN_OCR_MONTHLY_PAGE_BUDGET", 0)
     )
-    ocr_allow_remote = str(config_payload.get("ocr_allow_remote", os.environ.get("KAOYAN_OCR_ALLOW_REMOTE", True))).lower() in {"1", "true", "yes"}
+    # Remote OCR is opt-in.  A missing key must never become an implicit grant;
+    # a value in the selected config remains a persistent authorization, while
+    # the environment is the fallback for an explicitly supplied override.
+    if "ocr_allow_remote" in config_payload:
+        remote_raw = config_payload.get("ocr_allow_remote")
+    elif "KAOYAN_OCR_ALLOW_REMOTE" in os.environ:
+        remote_raw = os.environ.get("KAOYAN_OCR_ALLOW_REMOTE")
+    else:
+        remote_raw = False
+    ocr_allow_remote = str(remote_raw).lower() in {"1", "true", "yes"}
     paper_book_incoming_dir = str(
         os.environ.get("KAOYAN_PAPER_BOOK_INCOMING_DIR")
         or config_payload.get("paper_book_incoming_dir")

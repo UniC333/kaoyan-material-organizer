@@ -8,7 +8,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from common import ensure_kb_layout, load_json_or_default, now_iso, sanitize_name, save_json, save_text
+from common import ensure_kb_layout, load_json_or_default, now_iso, sanitize_name, save_json, save_text, sha256_for_file
 from ocr.review import queue_review_items
 
 ARTIFACT_ID = "r23-pdf-ocr-review-queue-artifact"
@@ -91,7 +91,11 @@ def _page_summary(page_id: str, items: list[dict[str, Any]]) -> dict[str, Any]:
         "printed_page_label": first.get("printed_page_label", ""),
         "chapter_id": first.get("chapter_id"),
         "chapter_title": first.get("chapter_title", ""),
+        "pdf_page": first.get("pdf_page"),
         "request_key": first.get("request_key", ""),
+        "source_file_sha256": first.get("source_file_sha256", ""),
+        "source_image_sha256": first.get("source_image_sha256", ""),
+        "source_image_path": first.get("source_image_path", ""),
         "review_status": review_status,
         **counts,
     }
@@ -106,7 +110,11 @@ def _no_review_required_page_summary(page: dict[str, Any], classification: dict[
         "printed_page_label": page.get("printed_page_label", ""),
         "chapter_id": classification.get("chapter_id", ""),
         "chapter_title": classification.get("chapter_title", ""),
+        "pdf_page": page.get("pdf_page"),
         "request_key": page.get("request_key", ""),
+        "source_file_sha256": page.get("source_file_sha256", ""),
+        "source_image_sha256": page.get("source_image_sha256", ""),
+        "source_image_path": page.get("source_image_path", ""),
         "review_status": "not-required",
         "pending_count": 0,
         "accepted_count": 0,
@@ -128,6 +136,14 @@ def _classify_handoff_ledger(page_summaries: list[dict[str, Any]]) -> list[dict[
                 "section_id": item.get("section_id"),
                 "section_title": item.get("section_title"),
                 "part_title": item.get("part_title"),
+                "pdf_page": item.get("pdf_page"),
+                "request_key": item.get("request_key", ""),
+                "source_file_sha256": item.get("source_file_sha256", ""),
+                "source_image_sha256": item.get("source_image_sha256", ""),
+                "source_image_path": item.get("source_image_path", ""),
+                "page_header_verified": item.get("page_header_verified", False),
+                "page_reviewed_at": item.get("page_reviewed_at", ""),
+                "classification_status": item.get("classification_status", ""),
                 "review_status": item.get("review_status", ""),
                 "handoff_status": "classify-candidate-only",
                 "evidence_gate_status": "not-started",
@@ -152,6 +168,14 @@ def build_pdf_ocr_review_artifact(
 
     queue_payload = queue_review_items(book_root=book_root, review_type=None)
     page_review_path = layout["review_queues"] / "pdf-page-review" / f"{bridge.get('pdf_source_id', '')}.json"
+    report_path = Path(str(bridge.get("pdf_ocr_report_path", "")).strip())
+    source_file_sha256 = str(bridge.get("source_file_sha256") or "").strip()
+    report_sha256 = str(bridge.get("pdf_ocr_report_sha256") or "").strip()
+    if report_path.is_file():
+        report_sha256 = sha256_for_file(report_path)
+        report_payload = load_json_or_default(report_path, {})
+        source_file_sha256 = source_file_sha256 or str(report_payload.get("source_file_sha256") or "").strip()
+    page_review_sha256 = sha256_for_file(page_review_path) if page_review_path.is_file() else ""
     page_decisions = {
         int(item.get("pdf_page", 0) or 0): item
         for item in load_json_or_default(page_review_path, {}).get("items", [])
@@ -189,6 +213,10 @@ def build_pdf_ocr_review_artifact(
         summary["printed_page"] = printed_page
         summary["printed_page_label"] = f"印刷第{printed_page}页（PDF第{pdf_page}页）" if printed_page else f"PDF第{pdf_page}页（印刷页待确认）"
         summary["pdf_page"] = pdf_page
+        summary["source_file_sha256"] = str(page.get("source_file_sha256") or source_file_sha256).strip()
+        summary["source_image_sha256"] = str(page.get("source_image_sha256") or "").strip()
+        summary["source_image_path"] = str(page.get("source_image_path") or "").strip()
+        summary["classification_status"] = classification.get("classification_status", "")
         summary["page_header_verified"] = bool(decision.get("page_header_verified", False))
         summary["page_review_note"] = decision.get("note", "")
         summary["page_reviewed_at"] = decision.get("reviewed_at", "")
@@ -220,6 +248,9 @@ def build_pdf_ocr_review_artifact(
         "subject": subject,
         "book_title": book_title,
         "pdf_source_id": bridge.get("pdf_source_id", ""),
+        "source_file_sha256": source_file_sha256,
+        "pdf_ocr_report_path": str(report_path),
+        "pdf_ocr_report_sha256": report_sha256,
         "scope": "bridged PDF OCR review queue -> classify-handoff candidate ledger",
         "bridge_report_path": bridge.get("bridge_report_path", ""),
         "book_root": str(book_root),
@@ -236,6 +267,7 @@ def build_pdf_ocr_review_artifact(
             "remote_ocr_called": False,
         },
         "page_review_queue_path": str(page_review_path),
+        "page_review_sha256": page_review_sha256,
         "readiness_status": "ready-for-r23-close",
         "updated_at": now_iso(),
         "artifact_path": str(artifact_path),

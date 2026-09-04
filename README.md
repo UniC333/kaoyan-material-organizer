@@ -9,7 +9,7 @@
 ## 主要能力
 
 - 注册教材、PDF 与纸质书照片，并保留来源和内容哈希。
-- 按 `inspect -> map-pages -> OCR -> review -> classify` 处理纸质教材。
+- 按 `inspect -> map-pages -> OCR -> review -> classify -> publish -> query/ask` 处理纸质教材与 PDF。
 - 将证据关联到考纲、知识点和可复用知识卡。
 - 在本地知识库中检索和提问，输出带来源的回答。
 - 根据学习记录、错题和薄弱点生成复习与学习建议。
@@ -135,6 +135,15 @@ $env:MISTRAL_API_KEY = "your-key"
 
 `--dry-run` 不访问远程 OCR，也不写 `page_ocr_status.json`。OCR、复核和分类完成后，先预览 `book publish-exercises`；只有追加 `--yes` 才会把审核通过的习题发布到 evidence。问答结果中的 `book_route` 和 `exercise_route` 分别说明书系识别及题目—题解配对状态。
 
+OCR 证据发布使用独立的零写入预览：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\kb.py book ocr-publish --book-root <book-root> --format json
+.\.venv\Scripts\python.exe scripts\kb.py book ocr-publish --book-root <book-root> --yes --plan-fingerprint <fingerprint> --format json
+```
+
+预览会列出可发布项、阻断原因、输入哈希和稳定 `plan_fingerprint`；只有 `--yes` 且携带未变化的指纹才会写 evidence 并刷新 page/exercise/search/book-series 索引。图片来源哈希、OCR request、复核状态和正式页码映射不一致时 fail-closed；任何索引刷新失败都会回滚本次 evidence 与相关索引。PDF 走同一条边界：`ocr-pdf-source -> pdf-ocr-review-status -> pdf-ocr-review-artifact -> pdf-ocr-publish`，发布只接受显式 `accepted` 的逐页复核，且同时绑定注册 PDF SHA、渲染源图 SHA、request key、`pdf_page` 与 `printed_page`；`not-required` 不能发布。发布后应重放原始 `query` / `ask` 请求验证结果。旧的 `publish_full_pdf_ocr_evidence.py` 仅返回迁移错误，不再提供旁路发布。
+
 `book exercise-coverage` 同时支持 PDF 与照片教材。`--source-id` 是统一参数，旧的 `--pdf-source-id` 继续兼容；追加 `--verify-query-ask` 会逐关系验证检索与教学问答入口，`--expected-relations` 固定预期数量，`--require-complete` 在关系数、答案门禁或来源页码任一不一致时返回非零：
 
 ```powershell
@@ -191,7 +200,7 @@ $env:MISTRAL_API_KEY = "your-key"
 - 原始资料保留在使用者自己的目录中，不通过移动原文件表达章节归属。
 - `.kaoyan-kb/`、`.kaoyan-backups/`、本机配置和临时目录不会进入 Git。
 - OCR 结果必须经过审核与证据门控，不能直接成为正式 claim。
-- 远程 OCR 默认关闭；启用前请确认资料授权、隐私边界和费用预算。
+- 远程 OCR 默认关闭；启用前请确认资料授权、隐私边界和费用预算。配置持久开启远程且月预算为 `0`（无限制）时，`doctor` 会明确警告用量与费用无上限。
 - API key 只放在进程环境或系统密钥管理工具中，不写入配置、日志或 Markdown。
 
 当前主要支持 Windows、本地 Obsidian vault 和中文考研资料。

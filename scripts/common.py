@@ -661,9 +661,10 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-def ensure_kb_layout(default: Path | None = None) -> dict[str, Path]:
-    root = kb_root(default)
-    paths = {
+def kb_layout(default: Path | None = None, *, root: Path | None = None) -> dict[str, Path]:
+    """Return the machine-side layout without creating or updating anything."""
+    root = Path(root) if root is not None else kb_root(default)
+    return {
         "root": root,
         "manifests": root / "manifests",
         "manifest_sources": root / "manifests" / "sources",
@@ -682,6 +683,11 @@ def ensure_kb_layout(default: Path | None = None) -> dict[str, Path]:
         "review_syllabus_mapping": root / "review-queues" / "syllabus-mapping",
         "schemas": root / "schemas",
     }
+
+
+def ensure_kb_layout(default: Path | None = None) -> dict[str, Path]:
+    paths = kb_layout(default=default)
+    root = paths["root"]
     for path in paths.values():
         path.mkdir(parents=True, exist_ok=True)
     schema_version_path = root / "schema-version.json"

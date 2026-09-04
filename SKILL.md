@@ -176,12 +176,15 @@ description: 将考研教材、课件、讲义、截图、OCR、PDF 和学习记
 纸质教材按以下顺序处理：
 
 ```text
-inspect -> map-pages -> OCR -> review -> classify
+inspect -> map-pages -> OCR -> review -> classify -> publish -> query/ask
 ```
 
 - 原图是只读可信源，不通过移动文件表达书籍或章节归属。
 - OCR 输出在完成审核和证据门控前，不直接写入正式 evidence 或 claim。
 - OCR 置信度不等于章节分类置信度。
+- `book ocr-publish` 与 `book pdf-ocr-publish` 默认只生成零写入发布计划；执行必须显式使用 `--yes --plan-fingerprint <fingerprint>`。执行前会重新计算输入指纹，输入漂移、正式页码索引缺失/过期/冲突或任一复核门禁未通过时 fail-closed。
+- 发布事务同时覆盖 evidence 与 page/exercise/search/book-series 索引；刷新失败必须回滚全部相关写入。PDF 发布还必须绑定注册 PDF SHA、当前 OCR 源图 SHA、request key、明确 `accepted` 页复核，以及独立的 `pdf_page` / `printed_page` 映射；`not-required` 页面不具备发布资格。
+- 发布完成后的验收必须重放原始自然语言 `query` / `ask` 请求；索引数量、覆盖率或通用测试不能单独证明学习问题闭环。旧的 `publish_full_pdf_ocr_evidence.py` 是显式失败的兼容 shim，不得作为旁路入口。
 - 人工文件、人工审核结果和人工考纲不得自动覆盖。
 - 删除、迁移、批量发布等操作必须先预览范围，并保留受控恢复路径。
 - 普通章节接入以让目标范围能够被现有 `query` / `ask` 检索为目标，不以复制整个 Vault、媒体库或知识库作为默认前置门禁。写入范围可以枚举时，只为将改动的 OCR 状态、证据、清单和索引建立小范围、可审计的恢复点；仅在迁移、批量删除或覆盖、无法枚举写入范围，或使用者明确要求时扩大恢复范围。
@@ -195,6 +198,7 @@ PDF 来源必须把 `pdf_page` 和 `printed_page` 作为独立字段保存，即
 
 - 默认只处理使用者明确指定的本地资料目录。
 - 远程 OCR 默认关闭；未经使用者明确允许，不向外部服务发送资料。
+- 若运行配置持久开启远程 OCR 且月页数预算为 `0`（无限制），`doctor` 必须明确警告用量与费用无上限；不得把 API key 写入任何产物。
 - API key 只从进程环境读取，不写入配置、日志或学习资料。
 - 本地配置、知识库、快照、教材 profile 和考纲定义不得提交回公共仓库。
 

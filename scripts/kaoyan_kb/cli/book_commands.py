@@ -6,7 +6,16 @@ from collections.abc import Callable
 
 def add_book_commands(subparsers: argparse._SubParsersAction, *, formatter_class: type[argparse.HelpFormatter] | None = None) -> None:
     opts = {} if formatter_class is None else {"formatter_class": formatter_class}
-    book = subparsers.add_parser("book", help="paper-book intake, OCR, PDF source registration, and classify handoff", description="Paper-book intake, OCR, PDF source registration, and classify handoff.", **opts)
+    book = subparsers.add_parser(
+        "book",
+        help="paper-book intake and OCR publication",
+        description=(
+            "Paper-book/PDF workflow: inspect -> map-pages -> OCR -> review -> classify -> "
+            "publish -> query/ask. OCR publication is preview-only unless --yes is supplied."
+        ),
+        epilog="Publication previews expose a stable plan fingerprint; --yes must use the unchanged inputs.",
+        **opts,
+    )
     commands = book.add_subparsers(dest="book_command", required=True)
     def command(name: str) -> argparse.ArgumentParser: return commands.add_parser(name)
     def path(name: str, *, dry: bool = False) -> argparse.ArgumentParser:
@@ -24,14 +33,33 @@ def add_book_commands(subparsers: argparse._SubParsersAction, *, formatter_class
         item = command(name); item.add_argument("--subject", required=True); item.add_argument("--book-title", action="append", default=[]); item.add_argument("--format", choices=("json", "quiet"), default="json")
     ocr = path("ocr"); ocr.add_argument("--provider"); ocr.add_argument("--model"); ocr.add_argument("--fixture-json"); ocr.add_argument("--allow-remote", action="store_true"); ocr.add_argument("--yes", action="store_true"); ocr.add_argument("--max-retries", type=int, default=2); ocr.add_argument("--require-quality-gate", action="store_true"); ocr.add_argument("--quality-report"); ocr.add_argument("--stage", choices=("basic", "advanced")); ocr.add_argument("--chapter-id", action="append", default=[]); ocr.add_argument("--dry-run", action="store_true")
     ocr_publish = path("ocr-publish")
+    ocr_publish.description = (
+        "Preview or publish reviewed image OCR. Workflow: inspect -> map-pages -> OCR -> review -> "
+        "classify -> publish -> query/ask. Default is zero-write; --yes executes the plan."
+    )
     ocr_publish.add_argument("--chapter-id", action="append", default=[])
     ocr_publish.add_argument("--require-complete", action="store_true")
-    ocr_publish.add_argument("--no-refresh-indexes", action="store_true")
+    ocr_publish.add_argument("--yes", action="store_true", help="execute the plan and refresh all retrieval indexes")
+    ocr_publish.add_argument("--plan-fingerprint", help="fingerprint from preview; reject execution after input drift")
     ocr_pdf = command("ocr-pdf-source"); ocr_pdf.add_argument("--subject", required=True); ocr_pdf.add_argument("--book-title", required=True); ocr_pdf.add_argument("--pdf-source-id", default=""); ocr_pdf.add_argument("--chapter-number", action="append", type=int, default=[]); ocr_pdf.add_argument("--page-start", type=int); ocr_pdf.add_argument("--page-end", type=int); ocr_pdf.add_argument("--provider"); ocr_pdf.add_argument("--model"); ocr_pdf.add_argument("--fixture-json"); ocr_pdf.add_argument("--allow-remote", action="store_true"); ocr_pdf.add_argument("--yes", action="store_true"); ocr_pdf.add_argument("--dpi", type=int, default=200); ocr_pdf.add_argument("--format", choices=("json", "quiet"), default="json")
     for name, extra in (("pdf-ocr-review-status", "--report-path"), ("pdf-ocr-review-artifact", "--bridge-report-path")):
         item = command(name); item.add_argument("--subject", required=True); item.add_argument("--book-title", required=True); item.add_argument("--pdf-source-id", default=""); item.add_argument(extra, default=""); item.add_argument("--format", choices=("json", "quiet"), default="json")
-    pdf_publish = command("pdf-ocr-publish"); pdf_publish.add_argument("--subject", required=True); pdf_publish.add_argument("--book-title", required=True); pdf_publish.add_argument("--pdf-source-id", required=True); pdf_publish.add_argument("--report-path", required=True); pdf_publish.add_argument("--review-artifact-path", required=True); pdf_publish.add_argument("--chapter-number", type=int); pdf_publish.add_argument("--format", choices=("json", "quiet"), default="json")
-    page_review = command("pdf-ocr-page-review"); page_review.add_argument("--pdf-source-id", required=True); page_review.add_argument("--pdf-page", required=True, type=int); page_review.add_argument("--printed-page", type=int); page_review.add_argument("--page-header-confirmed", action="store_true"); page_review.add_argument("--review-status", choices=("pending", "accepted", "rejected"), required=True); page_review.add_argument("--note", default=""); page_review.add_argument("--format", choices=("json", "quiet"), default="json")
+    pdf_publish = command("pdf-ocr-publish")
+    pdf_publish.description = (
+        "Preview or publish reviewed PDF OCR. Workflow: inspect -> map-pages -> OCR -> review -> "
+        "classify -> publish -> query/ask. Default is zero-write; --yes executes the plan."
+    )
+    pdf_publish.add_argument("--subject", required=True)
+    pdf_publish.add_argument("--book-title", required=True)
+    pdf_publish.add_argument("--pdf-source-id", required=True)
+    pdf_publish.add_argument("--report-path", required=True)
+    pdf_publish.add_argument("--review-artifact-path", required=True)
+    pdf_publish.add_argument("--chapter-number", type=int)
+    pdf_publish.add_argument("--require-complete", action="store_true", help="block the whole selected scope when any page is not publishable")
+    pdf_publish.add_argument("--yes", action="store_true", help="execute the plan and refresh all retrieval indexes")
+    pdf_publish.add_argument("--plan-fingerprint", help="fingerprint from preview; reject execution after input drift")
+    pdf_publish.add_argument("--format", choices=("json", "quiet"), default="json")
+    page_review = command("pdf-ocr-page-review"); page_review.add_argument("--pdf-source-id", required=True); page_review.add_argument("--pdf-page", required=True, type=int); page_review.add_argument("--printed-page", type=int); page_review.add_argument("--page-header-confirmed", action="store_true"); page_review.add_argument("--review-status", choices=("pending", "accepted", "rejected"), required=True); page_review.add_argument("--request-key", default=""); page_review.add_argument("--source-image-sha256", default=""); page_review.add_argument("--note", default=""); page_review.add_argument("--format", choices=("json", "quiet"), default="json")
     mapping_candidates = command("pdf-ocr-map-candidates"); mapping_candidates.add_argument("--subject", required=True); mapping_candidates.add_argument("--book-title", required=True); mapping_candidates.add_argument("--pdf-source-id", required=True); mapping_candidates.add_argument("--report-path", default=""); mapping_candidates.add_argument("--format", choices=("json", "quiet"), default="json")
     mapping_interval = command("pdf-ocr-approve-mapping-interval"); mapping_interval.add_argument("--pdf-source-id", required=True); mapping_interval.add_argument("--pdf-start", type=int, required=True); mapping_interval.add_argument("--pdf-end", type=int, required=True); mapping_interval.add_argument("--printed-start", type=int, required=True); mapping_interval.add_argument("--printed-end", type=int, required=True); mapping_interval.add_argument("--visual-review-note", required=True); mapping_interval.add_argument("--yes", action="store_true"); mapping_interval.add_argument("--format", choices=("json", "quiet"), default="json")
     outline = command("pdf-ocr-apply-outline"); outline.add_argument("--subject", required=True); outline.add_argument("--book-title", required=True); outline.add_argument("--pdf-source-id", required=True); outline.add_argument("--outline-json", required=True); outline.add_argument("--yes", action="store_true"); outline.add_argument("--format", choices=("json", "quiet"), default="json")
@@ -95,7 +123,8 @@ def dispatch_book(args: argparse.Namespace, run_script: Callable[..., str]) -> s
         for chapter_id in args.chapter_id:
             forwarded.extend(["--chapter-id", chapter_id])
         if args.require_complete: forwarded.append("--require-complete")
-        if args.no_refresh_indexes: forwarded.append("--no-refresh-indexes")
+        if args.yes: forwarded.append("--yes")
+        if args.plan_fingerprint: forwarded.extend(["--plan-fingerprint", args.plan_fingerprint])
         return run_script("publish_book_ocr_evidence.py", *forwarded)
     if c == "ocr-pdf-source":
         forwarded = _format(args, "--subject", args.subject, "--book-title", args.book_title, "--pdf-source-id", args.pdf_source_id, "--dpi", str(args.dpi))
@@ -115,11 +144,16 @@ def dispatch_book(args: argparse.Namespace, run_script: Callable[..., str]) -> s
     if c == "pdf-ocr-publish":
         forwarded = _format(args, "--subject", args.subject, "--book-title", args.book_title, "--pdf-source-id", args.pdf_source_id, "--report-path", args.report_path, "--review-artifact-path", args.review_artifact_path)
         if args.chapter_number is not None: forwarded.extend(["--chapter-number", str(args.chapter_number)])
+        if args.require_complete: forwarded.append("--require-complete")
+        if args.yes: forwarded.append("--yes")
+        if args.plan_fingerprint: forwarded.extend(["--plan-fingerprint", args.plan_fingerprint])
         return run_script("publish_pdf_ocr_evidence.py", *forwarded)
     if c == "pdf-ocr-page-review":
         forwarded = _format(args, "--pdf-source-id", args.pdf_source_id, "--pdf-page", str(args.pdf_page), "--review-status", args.review_status, "--note", args.note)
         if args.printed_page is not None: forwarded.extend(["--printed-page", str(args.printed_page)])
         if args.page_header_confirmed: forwarded.append("--page-header-confirmed")
+        if args.request_key: forwarded.extend(["--request-key", args.request_key])
+        if args.source_image_sha256: forwarded.extend(["--source-image-sha256", args.source_image_sha256])
         return run_script("review_pdf_ocr_page.py", *forwarded)
     if c == "pdf-ocr-map-candidates":
         forwarded = _format(args, "--subject", args.subject, "--book-title", args.book_title, "--pdf-source-id", args.pdf_source_id)

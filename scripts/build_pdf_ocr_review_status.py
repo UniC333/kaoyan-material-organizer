@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import ensure_kb_layout, load_all_json, load_json_or_default, now_iso, sanitize_name, save_json
+from common import ensure_kb_layout, load_all_json, load_json_or_default, now_iso, sanitize_name, save_json, sha256_for_file
 from config import load_runtime_config
 
 
@@ -105,6 +105,8 @@ def build_pdf_ocr_review_status(
     report_payload = load_json_or_default(resolved_report_path, {})
     if not report_payload:
         raise SystemExit(f"[ERROR] pdf OCR report not found: {resolved_report_path}")
+    report_sha256 = sha256_for_file(resolved_report_path)
+    pdf_source_sha256 = str(report_payload.get("source_file_sha256") or "").strip()
 
     bridge_root = layout["review_queues"] / "pdf-ocr-books" / f"{subject.lower()}-{sanitize_name(book_title)}"
     metadata_paths = _metadata_paths(bridge_root, runtime.paper_book_metadata_dir)
@@ -130,7 +132,7 @@ def build_pdf_ocr_review_status(
         normalized_payload = load_json_or_default(normalized_path, {})
         completed_at = str(normalized_payload.get("normalized_at") or report_payload.get("updated_at") or now_iso())
         updated_at = str(report_payload.get("updated_at") or now_iso())
-        source_file_sha256 = str(normalized_payload.get("source_file_sha256", "")).strip()
+        source_image_sha256 = str(normalized_payload.get("source_file_sha256", "")).strip()
 
         status_items.append(
             {
@@ -141,8 +143,9 @@ def build_pdf_ocr_review_status(
                 "printed_page_label": f"PDF 第{pdf_page}页（待人工确认印刷页）",
                 "pdf_page": pdf_page,
                 "current_version_id": f"{page_id}-v1",
-                "source_image_path": str(chapter.get("rendered_image_path", "")),
-                "source_image_sha256": source_file_sha256,
+                "source_image_path": str(chapter.get("ocr_source_image_path") or chapter.get("rendered_image_path", "")),
+                "source_image_sha256": source_image_sha256,
+                "source_file_sha256": pdf_source_sha256,
                 "quality_status": "needs_review",
                 "request_key": str(chapter.get("request_key", "")).strip(),
                 "provider": str(chapter.get("provider", "")).strip(),
@@ -177,6 +180,10 @@ def build_pdf_ocr_review_status(
                 "updated_at": updated_at,
                 "printed_page": None,
                 "pdf_page": pdf_page,
+                "request_key": str(chapter.get("request_key", "")).strip(),
+                "source_file_sha256": pdf_source_sha256,
+                "source_image_sha256": source_image_sha256,
+                "source_image_path": str(chapter.get("ocr_source_image_path") or chapter.get("rendered_image_path", "")),
             }
         )
         definition = chapter_definitions_by_id.get(chapter_id)
@@ -215,6 +222,8 @@ def build_pdf_ocr_review_status(
         "source_root": str(bridge_root),
         "provider": str(report_payload.get("chapters", [{}])[0].get("provider", "") if report_payload.get("chapters") else ""),
         "model": str(report_payload.get("chapters", [{}])[0].get("model", "") if report_payload.get("chapters") else ""),
+        "source_file_sha256": pdf_source_sha256,
+        "pdf_ocr_report_sha256": report_sha256,
         "created_at": report_payload.get("updated_at") or now_iso(),
         "updated_at": now_iso(),
         "items": status_items,
@@ -258,6 +267,8 @@ def build_pdf_ocr_review_status(
         "book_id": book_id,
         "pdf_source_id": resolved_source_id,
         "pdf_ocr_report_path": str(resolved_report_path),
+        "source_file_sha256": pdf_source_sha256,
+        "pdf_ocr_report_sha256": report_sha256,
         "book_root": str(bridge_root),
         "page_ocr_status_path": str(metadata_paths["page_ocr_status"]),
         "page_classifications_path": str(metadata_paths["page_classifications"]),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,9 +15,12 @@ if str(SCRIPTS) not in sys.path:
 import answer_local_question as answer_module
 import ask_local_knowledge as ask_module
 import build_pdf_ocr_review_artifact as pdf_review_artifact_module
+import doctor_ocr_env as doctor_module
 import kb as kb_module
 import lint_kb_entities as lint_module
+import publish_book_ocr_evidence as image_publish_module
 import publish_pdf_ocr_evidence as pdf_publish_module
+import publish_full_pdf_ocr_evidence as legacy_pdf_publish_module
 import query_local_knowledge as query_module
 import save_local_answer as save_module
 from save_local_answer import save_answer_contract, save_eligibility
@@ -97,6 +101,302 @@ def test_pdf_mapping_approval_cannot_close_a_pending_sensitive_block() -> None:
     decision = {"review_status": "accepted"}
     assert pdf_review_artifact_module._resolved_page_review_status(decision, 1) == "pending"
     assert pdf_review_artifact_module._resolved_page_review_status(decision, 0) == "accepted"
+
+
+def test_doctor_warns_when_remote_is_persistent_without_a_page_budget() -> None:
+    report = doctor_module._ocr_acceptance_report(
+        Path("."),
+        mistralai={"importable": "yes"},
+        api_key_state="absent",
+        runtime_snapshot={
+            "allow_remote_configured": True,
+            "unlimited_monthly_budget": True,
+            "remote_authorization": "persistent",
+        },
+    )
+
+    assert report["warnings"]
+    assert "unbounded" in report["warnings"][0]
+    assert "sk-test-secret" not in json.dumps(report, ensure_ascii=False)
+
+
+def test_image_publication_preview_is_zero_write(monkeypatch, tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    runtime = SimpleNamespace(kb_root=tmp_path)
+    layout = {"evidence": evidence_dir}
+    plan = {"plan_fingerprint": "preview-fp", "can_execute": True, "preview_only": True}
+    calls: list[str] = []
+    monkeypatch.setattr(image_publish_module, "_prepare_plan", lambda **_: (plan, [], {}, runtime, layout))
+    monkeypatch.setattr(image_publish_module, "ensure_kb_layout", lambda: calls.append("ensure"))
+    monkeypatch.setattr(image_publish_module, "refresh_query_indexes", lambda: calls.append("refresh"))
+
+    result = image_publish_module.publish(book_root=tmp_path, yes=False)
+
+    assert result is plan
+    assert calls == []
+    assert list(evidence_dir.iterdir()) == []
+
+
+def test_publication_rejects_input_drift_after_preview(monkeypatch, tmp_path: Path) -> None:
+    runtime = SimpleNamespace(kb_root=tmp_path)
+    layout = {"evidence": tmp_path / "evidence"}
+    layout["evidence"].mkdir()
+    plan = {"plan_fingerprint": "new-fp", "can_execute": True, "preview_only": True}
+    monkeypatch.setattr(image_publish_module, "_prepare_plan", lambda **_: (plan, [], {}, runtime, layout))
+
+    with pytest.raises(SystemExit, match="fingerprint changed"):
+        image_publish_module.publish(book_root=tmp_path, yes=False, expected_plan_fingerprint="old-fp")
+
+
+def test_image_publication_rolls_back_evidence_when_index_refresh_fails(monkeypatch, tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    runtime = SimpleNamespace(kb_root=tmp_path)
+    layout = {"evidence": evidence_dir}
+    plan = {"plan_fingerprint": "preview-fp", "can_execute": True, "preview_only": True}
+    item = {"page_id": "PAGE-1", "status": {}}
+    monkeypatch.setattr(image_publish_module, "_prepare_plan", lambda **_: (plan, [item], {}, runtime, layout))
+    monkeypatch.setattr(image_publish_module, "_build_evidence", lambda **_: {"evidence_id": "EV-MATH-000001"})
+    monkeypatch.setattr(image_publish_module, "ensure_kb_layout", lambda: layout)
+    monkeypatch.setattr(image_publish_module, "refresh_query_indexes", lambda: (_ for _ in ()).throw(RuntimeError("refresh failed")))
+
+    result = image_publish_module.publish(book_root=tmp_path, yes=True, expected_plan_fingerprint="preview-fp")
+
+    assert result["publish_status"] == "failed"
+    assert result["rolled_back"] is True
+    assert not (evidence_dir / "EV-MATH-000001.json").exists()
+
+
+def test_pdf_publication_rejects_not_required_page_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    image_path = tmp_path / "page.png"
+    image_path.write_bytes(b"rendered-page")
+    from common import sha256_for_file
+
+    image_sha = sha256_for_file(image_path)
+    normalized_path = tmp_path / "normalized.json"
+    normalized_path.write_text(
+        json.dumps(
+            {
+                "request_key": "request-1",
+                "source_file_sha256": image_sha,
+                "chunk_candidates": [{"block_id": "b1", "block_type": "paragraph", "text": "正文"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pdf_publish_module, "_formal_pdf_locator", lambda *args, **kwargs: ({"pdf_page": 7}, []))
+
+    prepared, blocked, _ = pdf_publish_module._validate_pdf_page(
+        page={
+            "pdf_page": 7,
+            "source_file_sha256": "pdf-sha",
+            "source_image_sha256": image_sha,
+            "request_key": "request-1",
+            "normalized_path": str(normalized_path),
+            "ocr_source_image_path": str(image_path),
+        },
+        handoff={
+            "page_id": "PDFPAGE-SRC-0007",
+            "review_status": "not-required",
+            "printed_page": 1,
+            "source_file_sha256": "pdf-sha",
+            "source_image_sha256": image_sha,
+            "request_key": "request-1",
+            "classification_status": "confirmed",
+            "chapter_id": "CH-1",
+            "chapter_title": "第一章",
+        },
+        decision={
+            "review_status": "accepted",
+            "page_header_verified": True,
+            "source_file_sha256": "pdf-sha",
+            "source_image_sha256": image_sha,
+            "request_key": "request-1",
+        },
+        source={"source_id": "SRC"},
+        source_file={"sha256": "pdf-sha"},
+        source_sha="pdf-sha",
+        report_path=tmp_path / "report.json",
+        artifact_path=tmp_path / "artifact.json",
+        overlay={},
+        overlay_path=tmp_path / "overlay.json",
+        locator_index={"entries": []},
+    )
+
+    assert prepared is None
+    assert any(item["reason"] == "page-review-not-explicitly-accepted" for item in blocked)
+
+
+def test_legacy_full_pdf_publisher_is_an_explicit_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    assert legacy_pdf_publish_module.main() == 2
+    assert "no longer supported" in capsys.readouterr().err
+
+
+def test_help_exposes_the_single_full_publication_chain() -> None:
+    help_text = kb_module.build_parser().format_help()
+    assert "inspect -> map-pages -> OCR -> review -> classify -> publish -> query/ask" in help_text
+    parsed = kb_module.build_parser().parse_args(
+        [
+            "book",
+            "pdf-ocr-publish",
+            "--subject",
+            "数学",
+            "--book-title",
+            "书",
+            "--pdf-source-id",
+            "SRC-MATH-0001",
+            "--report-path",
+            "report.json",
+            "--review-artifact-path",
+            "artifact.json",
+            "--yes",
+            "--plan-fingerprint",
+            "fp",
+        ]
+    )
+    assert parsed.yes is True
+    assert parsed.plan_fingerprint == "fp"
+
+
+def test_pdf_publication_plan_binds_report_artifact_review_and_current_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import hashlib
+
+    kb_root = tmp_path / "kb"
+    for directory in (kb_root / "sources", kb_root / "indexes", kb_root / "review-queues" / "pdf-page-review", kb_root / "evidence"):
+        directory.mkdir(parents=True)
+    pdf_path = tmp_path / "source.pdf"
+    pdf_path.write_bytes(b"registered-pdf")
+    pdf_sha = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+    source_path = kb_root / "sources" / "SRC-PDF.json"
+    source_path.write_text(
+        json.dumps(
+            {
+                "source_id": "SRC-PDF",
+                "subject": "数学",
+                "source_name": "书",
+                "material_type": "book-pdf",
+                "status": "active",
+                "files": [{"file_id": "FILE-PDF", "absolute_path": str(pdf_path), "sha256": pdf_sha}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    image_path = tmp_path / "page.png"
+    image_path.write_bytes(b"rendered-page")
+    image_sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    normalized_path = tmp_path / "normalized.json"
+    normalized_path.write_text(
+        json.dumps(
+            {
+                "request_key": "request-1",
+                "source_file_sha256": image_sha,
+                "chunk_candidates": [{"block_id": "b1", "block_type": "paragraph", "text": "正文"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "subject": "数学",
+                "book_title": "书",
+                "pdf_source_id": "SRC-PDF",
+                "pdf_path": str(pdf_path),
+                "source_file_sha256": pdf_sha,
+                "pages": [
+                    {
+                        "pdf_page": 7,
+                        "chapter_number": 1,
+                        "chapter_title": "第一章",
+                        "source_file_sha256": pdf_sha,
+                        "source_image_sha256": image_sha,
+                        "ocr_source_image_path": str(image_path),
+                        "request_key": "request-1",
+                        "normalized_path": str(normalized_path),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    page_review_path = kb_root / "review-queues" / "pdf-page-review" / "SRC-PDF.json"
+    page_review_path.write_text(
+        json.dumps(
+            {
+                "source_id": "SRC-PDF",
+                "source_file_sha256": pdf_sha,
+                "items": [
+                    {
+                        "pdf_page": 7,
+                        "printed_page": 1,
+                        "review_status": "accepted",
+                        "page_header_verified": True,
+                        "source_file_sha256": pdf_sha,
+                        "source_image_sha256": image_sha,
+                        "request_key": "request-1",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+    artifact_path = tmp_path / "artifact.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "subject": "数学",
+                "book_title": "书",
+                "pdf_source_id": "SRC-PDF",
+                "source_file_sha256": pdf_sha,
+                "pdf_ocr_report_path": str(report_path),
+                "pdf_ocr_report_sha256": sha(report_path),
+                "page_review_queue_path": str(page_review_path),
+                "page_review_sha256": sha(page_review_path),
+                "classify_handoff_ledger": [
+                    {
+                        "page_id": "PDFPAGE-SRC-PDF-0007",
+                        "pdf_page": 7,
+                        "printed_page": 1,
+                        "review_status": "accepted",
+                        "source_file_sha256": pdf_sha,
+                        "source_image_sha256": image_sha,
+                        "request_key": "request-1",
+                        "page_header_verified": True,
+                        "classification_status": "confirmed",
+                        "chapter_id": "CH-1",
+                        "chapter_title": "第一章",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime = SimpleNamespace(kb_root=kb_root, ocr_cache_root=tmp_path / "ocr")
+    monkeypatch.setattr(pdf_publish_module, "load_runtime_config", lambda: runtime)
+    monkeypatch.setattr(
+        pdf_publish_module,
+        "load_page_locator_index",
+        lambda: {
+            "_availability": {"available": True},
+            "entries": [{"source_id": "SRC-PDF", "pdf_page": 7, "printed_page": 1, "source_file_sha256": pdf_sha}],
+        },
+    )
+
+    plan = pdf_publish_module.build_publication_plan(
+        subject="数学",
+        book_title="书",
+        pdf_source_id="SRC-PDF",
+        report_path=report_path,
+        review_artifact_path=artifact_path,
+    )
+
+    assert plan["can_execute"] is True
+    assert plan["blocked"] == []
+    assert plan["items"][0]["pdf_page"] == 7
+    assert plan["items"][0]["printed_page"] == 1
 
 
 def _result(*, intent: str = "define", answer_mode: str = "chapter_fallback", page_anchor: dict | None = None) -> dict:
