@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from common import default_vault_root_arg, ensure_kb_layout, is_publishable_source_evidence, load_json, resolve_subject, validate_entity_contract
-from query_local_knowledge import build_page_content_bundle, build_teaching_bundle, detect_intent, evidence_matches_book, generic_topic_terms, preferred_page_ref, query_knowledge, should_prefer_evidence_chapter
+from query_local_knowledge import build_page_content_bundle, build_teaching_bundle, detect_intent, evidence_has_formal_topic_statement, evidence_matches_book, generic_topic_terms, preferred_page_ref, query_knowledge, should_prefer_evidence_chapter
 
 
 ANSWER_CONTRACT_VERSION = "m6.answer.v4"
@@ -474,6 +474,59 @@ def evidence_excerpt(evidence: dict, question: str) -> tuple[int, str]:
     return score, line[:320]
 
 
+def formal_topic_excerpt(evidence: dict, topic: str) -> tuple[int, str]:
+    """Choose a formal, topic-specific sentence for a comparison answer."""
+    normalized_topic = re.sub(r"\s+", "", str(topic or "")).lower()
+    if not normalized_topic or not evidence_has_formal_topic_statement(evidence, [normalized_topic]):
+        return 0, ""
+    candidates: list[tuple[int, str]] = []
+    rejected = ("例", "例如", "解", "证明", "证法", "由", "利用", "根据", "题型", "方法", "考点追踪")
+    for raw_line in str(evidence.get("content") or "").splitlines():
+        line = re.sub(r"\s+", " ", str(raw_line)).strip()
+        compact = re.sub(r"\s+", "", line.lstrip("#>*- 【[（(")).lower()
+        if normalized_topic not in compact or line.startswith(("#", "![")):
+            continue
+        if compact.startswith(rejected) or "应用" in compact or "用法" in compact:
+            continue
+        score = 10
+        if re.search(
+            re.escape(normalized_topic)
+            + r"(?:[（(][^）)]{0,12}[）)]|的(?:定义|概念|特点|特性|核心规则))?(?:是|为|指|叫做|称为|定义为)",
+            compact,
+        ):
+            score += 100
+        if any(marker in compact for marker in ("先进后出", "先进先出", "插入和删除", "入队", "出队", "入栈", "出栈")):
+            score += 40
+        if compact.startswith(normalized_topic):
+            score += 10
+        candidates.append((score, line))
+    if not candidates:
+        return 0, ""
+    candidates.sort(key=lambda item: (-item[0], len(item[1])))
+    score, line = candidates[0]
+    return score, line[:320]
+
+
+def generic_compare_conclusion(result: dict) -> str:
+    """Build one deduplicated conclusion per formally covered comparison topic."""
+    if request_kind_for_payload(result) != "generic" or str(result.get("intent") or "") != "compare":
+        return ""
+    terms = [str(item).strip() for item in (dict(result.get("generic_gate") or {}).get("topic_terms") or []) if str(item).strip()]
+    chunks: list[str] = []
+    for term in terms:
+        candidates = []
+        for evidence in result.get("evidence_hits", []) or []:
+            score, text = formal_topic_excerpt(evidence, term)
+            if text:
+                candidates.append((score, text, str(evidence.get("title") or "")))
+        if not candidates:
+            return ""
+        candidates.sort(key=lambda item: (-item[0], len(item[1]), item[2]))
+        _, text, title = candidates[0]
+        chunks.append(f"{text}（来源：{title}）" if title else text)
+    return "；".join(dedupe(chunks))
+
+
 def direct_conclusion(result: dict) -> str:
     exercise = dict(result.get("exercise_route") or {})
     if exercise.get("match_status") == "exact_exercise":
@@ -483,6 +536,9 @@ def direct_conclusion(result: dict) -> str:
             return f"已定位原题（题目册 P{','.join(map(str, question.get('printed_pages', []))) or '未标页'}）并配对书中题解（题解册 P{','.join(map(str, solution.get('printed_pages', []))) or '未标页'}）。"
         if exercise.get("pair_status") == "solution_pending":
             return "原题已经定位，但强化篇题解尚未接入；当前不能把独立推导称为书中解析。"
+    compare_conclusion = generic_compare_conclusion(result)
+    if compare_conclusion:
+        return compare_conclusion
     anchor_snippets = page_anchor_snippets(result)
     if anchor_snippets:
         return anchor_snippets[0]

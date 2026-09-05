@@ -1113,6 +1113,141 @@ def test_generic_answer_bundle_requires_same_book_relevance_and_dependency_citat
     assert save_eligibility(contract) == (True, "")
 
 
+def test_definition_generic_gate_requires_a_formal_statement_not_an_example_mention() -> None:
+    def evidence(evidence_id: str, content: str) -> dict:
+        return {
+            "evidence_id": evidence_id,
+            "book_title": "李正元数一",
+            "source_grounded": True,
+            "verification_status": "reviewed",
+            "title": "测试教材正文",
+            "content": content,
+        }
+
+    example_mention = evidence(
+        "EV-LI-TAYLOR-EXAMPLE",
+        "【证法二】在 x_0=c=(a+b)/2 处 f(x) 展成泰勒公式。",
+    )
+    formal_statement = evidence(
+        "EV-LI-TAYLOR-FORMAL",
+        "### 泰勒公式\n设函数 f 在区间上具有 n 阶导数，则 f(x)=...。",
+    )
+
+    blocked = query_module.build_generic_gate(
+        answer_mode="accepted_evidence",
+        book_title="李正元数一",
+        intent="define",
+        claims=[],
+        evidences=[example_mention],
+        compare_bundle=None,
+        topic_terms=["泰勒公式"],
+        formal_only=True,
+    )
+    exact = query_module.build_generic_gate(
+        answer_mode="accepted_evidence",
+        book_title="李正元数一",
+        intent="define",
+        claims=[],
+        evidences=[formal_statement],
+        compare_bundle=None,
+        topic_terms=["泰勒公式"],
+        formal_only=True,
+    )
+
+    assert blocked["status"] == "blocked"
+    assert blocked["formal_statement_required"] is True
+    assert blocked["formal_statement_ok"] is False
+    assert blocked["dependency_evidence_ids"] == []
+    assert exact["status"] == "exact"
+    assert exact["formal_statement_ok"] is True
+    assert exact["dependency_evidence_ids"] == ["EV-LI-TAYLOR-FORMAL"]
+
+
+def test_compare_gate_requires_formal_same_book_coverage_for_each_topic() -> None:
+    def evidence(evidence_id: str, content: str) -> dict:
+        return {
+            "evidence_id": evidence_id,
+            "book_title": "王道数据结构",
+            "source_grounded": True,
+            "verification_status": "reviewed",
+            "title": "第3章 栈、队列和数组",
+            "content": content,
+        }
+
+    stack = evidence("EV-STACK-FORMAL", "# 栈的定义\n栈是后进先出的线性表。")
+    queue = evidence("EV-QUEUE-FORMAL", "# 队列的定义\n队列是先进先出的线性表。")
+
+    assert query_module.compare_parts("栈和队列的区别") == ["栈", "队列"]
+    blocked = query_module.build_generic_gate(
+        answer_mode="accepted_evidence",
+        book_title="王道数据结构",
+        intent="compare",
+        claims=[],
+        evidences=[stack],
+        compare_bundle=None,
+        topic_terms=["栈", "队列"],
+        formal_only=True,
+        require_topic_formal_coverage=True,
+    )
+    exact = query_module.build_generic_gate(
+        answer_mode="accepted_evidence",
+        book_title="王道数据结构",
+        intent="compare",
+        claims=[],
+        evidences=[stack, queue],
+        compare_bundle=None,
+        topic_terms=["栈", "队列"],
+        formal_only=True,
+        require_topic_formal_coverage=True,
+    )
+
+    assert blocked["status"] == "blocked"
+    assert blocked["formal_topic_coverage_required"] is True
+    assert blocked["formal_topic_coverage_ok"] is False
+    assert exact["status"] == "exact"
+    assert exact["formal_topic_coverage_ok"] is True
+    assert exact["dependency_evidence_ids"] == ["EV-STACK-FORMAL", "EV-QUEUE-FORMAL"]
+
+
+def test_compare_conclusion_covers_each_topic_and_deduplicates_repeated_evidence() -> None:
+    result = _result(intent="compare", answer_mode="accepted_evidence")
+    result.update(
+        query="栈和队列的区别",
+        request_resolution={"source_request_kind": "generic"},
+        generic_gate={
+            "status": "exact",
+            "book_title": "王道数据结构",
+            "topic_terms": ["栈", "队列"],
+            "dependency_evidence_ids": ["EV-STACK-FORMAL", "EV-QUEUE-FORMAL", "EV-QUEUE-DUP"],
+            "relevance_ok": True,
+            "same_book_ok": True,
+        },
+        evidence_hits=[
+            {
+                "evidence_id": "EV-STACK-FORMAL",
+                "title": "栈正文",
+                "content": "# 栈的定义\n栈是后进先出的线性表。",
+            },
+            {
+                "evidence_id": "EV-QUEUE-FORMAL",
+                "title": "队列正文",
+                "content": "# 队列的定义\n队列是先进先出的线性表。",
+            },
+            {
+                "evidence_id": "EV-QUEUE-DUP",
+                "title": "队列正文重复页段",
+                "content": "# 队列的定义\n队列是先进先出的线性表。",
+            },
+        ],
+    )
+
+    conclusion = answer_module.direct_conclusion(result)
+
+    assert "栈是后进先出的线性表" in conclusion
+    assert "队列是先进先出的线性表" in conclusion
+    assert conclusion.count("队列是先进先出的线性表") == 1
+
+
 def test_blocked_generic_answer_is_content_free_and_unsaveable(monkeypatch) -> None:
     result = _result(answer_mode="unconfirmed")
     result.update(

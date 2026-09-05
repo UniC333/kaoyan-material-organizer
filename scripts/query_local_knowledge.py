@@ -1142,7 +1142,7 @@ def compare_parts(query: str) -> list[str]:
     cleaned = re.sub(r"(怎么区分|如何区分|怎么区别|如何区别|区别|区分|比较|对比|有什么不同|有什么区别)", " ", query)
     parts = re.split(r"[和与跟及、/]|vs|VS", cleaned)
     normalized = [
-        re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", normalize_text(part))
+        re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", normalize_text(part)).rstrip("的")
         for part in parts
         if normalize_text(part)
     ]
@@ -1187,6 +1187,104 @@ def topic_coverage(candidate_text: Any, topic_terms: list[str] | None) -> dict[s
         "matched_terms": list(dict.fromkeys(matched)),
         "ok": bool(terms) and len(matched) == len(terms),
     }
+
+
+def is_definition_request(query: str, intent: str = "define") -> bool:
+    """Identify requests that require a definition/theorem statement, not a usage mention."""
+    text = unicodedata.normalize("NFKC", str(query or "")).lower()
+    if intent != "define":
+        return False
+    return any(token in text for token in ("什么是", "是什么", "的定义", "定义", "概念", "含义"))
+
+
+def evidence_has_formal_topic_statement(evidence: dict[str, Any], topic_terms: list[str] | None) -> bool:
+    """Require a nearby formal statement before exposing a definition answer."""
+    terms = [
+        re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(term or "")).lower())
+        for term in (topic_terms or [])
+        if str(term or "").strip()
+    ]
+    terms = [term for term in terms if term]
+    if not terms:
+        return False
+    raw_lines = [re.sub(r"\s+", " ", str(line)).strip() for line in str(evidence.get("content") or "").splitlines()]
+    formal_labels = ("定义", "定理", "概念", "法则")
+    rejected_prefixes = (
+        "例",
+        "例如",
+        "解",
+        "证明",
+        "证法",
+        "由",
+        "利用",
+        "根据",
+        "应用",
+        "本题",
+        "问题",
+        "练习",
+        "题型",
+        "方法",
+    )
+
+    def compact_line(value: str) -> str:
+        return re.sub(r"\s+", "", value.lstrip("#>*- 【[（(").lower())
+
+    def rejected_line(compact: str) -> bool:
+        return (
+            any(compact.startswith(prefix) for prefix in rejected_prefixes)
+            or "应用" in compact
+            or "用法" in compact
+            or any(marker in compact for marker in ("（ ）", "()", "选项", "真题", "选择题", "试编写", "下列"))
+        )
+
+    def has_formal_statement(compact: str, *, require_topic: bool = False) -> bool:
+        if not compact or (require_topic and not any(term in compact for term in terms)):
+            return False
+        if rejected_line(compact):
+            return False
+
+        # A direct predicate such as “栈是……” or “泰勒公式为……” is a
+        # definition-shaped sentence.  Do not treat the word “公式” in a
+        # topic name as a formal label by itself.
+        direct_definition = any(
+            re.search(
+                re.escape(term) + r"(?:[（(][^）)]{0,12}[）)]|的(?:定义|概念|特点|特性|核心规则))?(?:是|为|指|叫做|称为|定义为)",
+                compact,
+            )
+            for term in terms
+        )
+        condition_statement = (
+            ("设" in compact and "则" in compact)
+            or ("若" in compact and "则" in compact)
+            or ("如果" in compact and "则" in compact)
+            or ("对任意" in compact and ("存在" in compact or "则" in compact))
+            or ("对于" in compact and ("存在" in compact or "则" in compact or "满足" in compact))
+        )
+        labeled_definition = any(label in compact for label in formal_labels) and (
+            direct_definition or condition_statement or "定义" in compact
+        )
+        return direct_definition or condition_statement or labeled_definition
+
+    for index, raw_line in enumerate(raw_lines):
+        compact = compact_line(raw_line)
+        if not any(term in compact for term in terms):
+            continue
+        if rejected_line(compact):
+            continue
+        if has_formal_statement(compact, require_topic=True):
+            return True
+
+        # A clean section/definition heading may carry the topic while the
+        # actual formal sentence starts on the next line.  Restrict this
+        # bridge to headings so an example sentence cannot borrow a nearby
+        # “设……则……” from the same page.
+        heading_like = raw_line.startswith("#") or len(compact) <= 16
+        if heading_like and any(
+            has_formal_statement(compact_line(candidate))
+            for candidate in raw_lines[index + 1 : index + 6]
+        ):
+            return True
+    return False
 
 
 def _claim_topic_text(claim: dict[str, Any]) -> str:
@@ -1291,6 +1389,7 @@ def claim_hits_from_retrieval(
     intent: str,
     book_title: str | None = None,
     topic_terms: list[str] | None = None,
+    formal_only: bool = False,
 ) -> list[dict]:
     layout = ensure_kb_layout()
     evidence_by_id = {
@@ -1322,7 +1421,10 @@ def claim_hits_from_retrieval(
             continue
         if not is_publishable_claim(claim, evidence_by_id):
             continue
-        if not _claim_support_evidence(claim, book_title):
+        support_evidence = _claim_support_evidence(claim, book_title)
+        if not support_evidence:
+            continue
+        if formal_only and not all(evidence_has_formal_topic_statement(item, topic_terms) for item in support_evidence):
             continue
         if topic_terms is not None and not topic_coverage(_claim_topic_text(claim), topic_terms).get("matched_terms"):
             continue
@@ -1349,6 +1451,7 @@ def evidence_hits_from_retrieval(
     page_anchor: dict[str, Any] | None = None,
     book_title: str | None = None,
     topic_terms: list[str] | None = None,
+    formal_only: bool = False,
 ) -> list[dict]:
     layout = ensure_kb_layout()
     evidence_by_id = {
@@ -1389,6 +1492,8 @@ def evidence_hits_from_retrieval(
                 f"{evidence.get('title', '')}\n{evidence.get('content', '')}", topic_terms
             ).get("matched_terms"):
                 continue
+            if formal_only and not evidence_has_formal_topic_statement(evidence, topic_terms):
+                continue
             accepted_nodes = [item.get("node_id") for item in evidence.get("accepted_syllabus_nodes", [])]
             if node_ids and accepted_nodes and not set(node_ids).intersection(accepted_nodes):
                 continue
@@ -1415,6 +1520,7 @@ def fallback_claim_hits(
     intent: str,
     book_title: str | None = None,
     topic_terms: list[str] | None = None,
+    formal_only: bool = False,
 ) -> list[dict]:
     layout = ensure_kb_layout()
     evidence_by_id = {
@@ -1436,7 +1542,10 @@ def fallback_claim_hits(
             continue
         if node_ids and claim.get("syllabus_node_id") not in node_ids:
             continue
-        if not _claim_support_evidence(claim, book_title):
+        support_evidence = _claim_support_evidence(claim, book_title)
+        if not support_evidence:
+            continue
+        if formal_only and not all(evidence_has_formal_topic_statement(item, topic_terms) for item in support_evidence):
             continue
         if topic_terms is not None and not topic_coverage(_claim_topic_text(claim), topic_terms).get("matched_terms"):
             continue
@@ -1460,6 +1569,7 @@ def fallback_evidence_hits(
     page_anchor: dict[str, Any],
     book_title: str | None = None,
     topic_terms: list[str] | None = None,
+    formal_only: bool = False,
 ) -> list[dict]:
     layout = ensure_kb_layout()
     evidence_by_id = {
@@ -1486,6 +1596,8 @@ def fallback_evidence_hits(
         if topic_terms is not None and not topic_coverage(
             f"{evidence.get('title', '')}\n{evidence.get('content', '')}", topic_terms
         ).get("matched_terms"):
+            continue
+        if formal_only and not evidence_has_formal_topic_statement(evidence, topic_terms):
             continue
         accepted_nodes = [item.get("node_id") for item in evidence.get("accepted_syllabus_nodes", [])]
         if node_ids and accepted_nodes and not set(node_ids).intersection(accepted_nodes):
@@ -1836,8 +1948,23 @@ def _resolve_query_hits(
     page_anchor_request: dict[str, Any],
     book_title: str | None = None,
     topic_terms: list[str] | None = None,
+    formal_only: bool = False,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict], bool]:
-    retrieval_hits = retrieve_hits(subject, query, topk, chapter, book_title)
+    retrieval_topk = max(topk, 10) if intent == "compare" and topic_terms else topk
+    if intent == "compare" and topic_terms:
+        merged_hits: dict[tuple[str, str], dict] = {}
+        for retrieval_query in [query, *topic_terms]:
+            for hit in retrieve_hits(subject, retrieval_query, retrieval_topk, chapter, book_title):
+                key = (str(hit.get("doc_type") or ""), str(hit.get("entity_id") or hit.get("doc_id") or ""))
+                previous = merged_hits.get(key)
+                if previous is None or float(hit.get("score", 0.0) or 0.0) > float(previous.get("score", 0.0) or 0.0):
+                    merged_hits[key] = hit
+        retrieval_hits = sorted(
+            merged_hits.values(),
+            key=lambda item: (-float(item.get("score", 0.0) or 0.0), str(item.get("entity_id") or "")),
+        )
+    else:
+        retrieval_hits = retrieve_hits(subject, query, retrieval_topk, chapter, book_title)
     routed = route_syllabus_nodes(subject, query, max(topk, 3), intent)
     if not routed:
         routed = route_from_retrieval_hits(subject, retrieval_hits, topk)
@@ -1852,8 +1979,9 @@ def _resolve_query_hits(
             intent,
             book_title,
             topic_terms,
+            formal_only,
         )[:8]
-        evidences = evidence_hits_from_retrieval(
+        evidence_candidates = evidence_hits_from_retrieval(
             subject,
             chapter,
             node_ids,
@@ -1864,7 +1992,26 @@ def _resolve_query_hits(
             page_anchor_request,
             book_title,
             topic_terms,
-        )[:5]
+            formal_only,
+        )
+        if intent == "compare" and topic_terms:
+            evidences = evidence_candidates[: max(5, len(topic_terms) * 4)]
+            selected_ids = {str(item.get("evidence_id") or "") for item in evidences}
+            for term in topic_terms:
+                formal_match = next(
+                    (
+                        item
+                        for item in evidence_candidates
+                        if evidence_has_formal_topic_statement(item, [term])
+                    ),
+                    None,
+                )
+                evidence_id = str((formal_match or {}).get("evidence_id") or "")
+                if formal_match is not None and evidence_id and evidence_id not in selected_ids:
+                    evidences.append(formal_match)
+                    selected_ids.add(evidence_id)
+        else:
+            evidences = evidence_candidates[:5]
     else:
         claims = fallback_claim_hits(
             subject,
@@ -1875,6 +2022,7 @@ def _resolve_query_hits(
             intent,
             book_title,
             topic_terms,
+            formal_only,
         )[:8]
         evidences = fallback_evidence_hits(
             subject,
@@ -1886,7 +2034,8 @@ def _resolve_query_hits(
             page_anchor_request,
             book_title,
             topic_terms,
-        )[:5]
+            formal_only,
+        )[: max(5, len(topic_terms or []) * 4) if intent == "compare" else 5]
     if not routed and (claims or evidences):
         routed = infer_route_from_hits(subject, topk, claims, evidences)
     return retrieval_hits, routed, claims, evidences, index_routed
@@ -2005,13 +2154,27 @@ def _generic_candidate_records(
     compare_bundle: dict | None,
     book_title: str,
     topic_terms: list[str],
+    formal_only: bool = False,
+    require_topic_formal_coverage: bool = False,
 ) -> tuple[list[dict[str, Any]], list[str], bool]:
     """Return only publishable same-book candidates and their covered topics."""
     records: list[dict[str, Any]] = []
     covered_terms: list[str] = []
     safe = True
 
-    def add_terms(text: Any) -> None:
+    def formal_matched_terms(support: list[dict[str, Any]]) -> list[str]:
+        return [
+            term
+            for term in topic_terms
+            if any(evidence_has_formal_topic_statement(item, [term]) for item in support)
+        ]
+
+    def add_terms(text: Any, support: list[dict[str, Any]] | None = None) -> None:
+        if require_topic_formal_coverage:
+            for term in formal_matched_terms(support or []):
+                if term not in covered_terms:
+                    covered_terms.append(term)
+            return
         coverage = topic_coverage(text, topic_terms)
         for term in coverage.get("matched_terms", []):
             if term not in covered_terms:
@@ -2022,6 +2185,10 @@ def _generic_candidate_records(
         if not support:
             safe = False
             continue
+        if formal_only and not all(evidence_has_formal_topic_statement(item, topic_terms) for item in support):
+            continue
+        if require_topic_formal_coverage and not formal_matched_terms(support):
+            continue
         records.append(
             {
                 "kind": "claim",
@@ -2030,11 +2197,15 @@ def _generic_candidate_records(
                 "text": _claim_topic_text(claim),
             }
         )
-        add_terms(_claim_topic_text(claim))
+        add_terms(_claim_topic_text(claim), support)
 
     for evidence in evidences:
         if not is_publishable_source_evidence(evidence) or not evidence_matches_book(evidence, book_title):
             safe = False
+            continue
+        if formal_only and not evidence_has_formal_topic_statement(evidence, topic_terms):
+            continue
+        if require_topic_formal_coverage and not formal_matched_terms([evidence]):
             continue
         evidence_id = str(evidence.get("evidence_id") or "").strip()
         if not evidence_id:
@@ -2048,11 +2219,11 @@ def _generic_candidate_records(
                 "text": f"{evidence.get('title', '')}\n{evidence.get('content', '')}",
             }
         )
-        add_terms(records[-1]["text"])
+        add_terms(records[-1]["text"], [evidence])
 
     # Keep the selected comparison components explicit.  They are the only
     # candidates a comparison summary is allowed to depend on.
-    if compare_bundle:
+    if compare_bundle and not require_topic_formal_coverage:
         selected = []
         for key in ("primary_claim", "left_claim", "right_claim"):
             value = compare_bundle.get(key)
@@ -2080,6 +2251,8 @@ def build_generic_gate(
     evidences: list[dict],
     compare_bundle: dict | None,
     topic_terms: list[str],
+    formal_only: bool = False,
+    require_topic_formal_coverage: bool = False,
 ) -> dict[str, Any]:
     """Build a fail-closed gate for ordinary, book-scoped answers."""
     requested = str(book_title or "").strip()
@@ -2094,6 +2267,10 @@ def build_generic_gate(
         "relevance_ok": False,
         "same_book_ok": False,
         "structured_answer_ok": answer_mode in GENERIC_ANSWER_MODES,
+        "formal_statement_required": formal_only,
+        "formal_statement_ok": not formal_only,
+        "formal_topic_coverage_required": require_topic_formal_coverage,
+        "formal_topic_coverage_ok": not require_topic_formal_coverage,
         "failure_reason": "",
         "next_action": "",
     }
@@ -2116,6 +2293,8 @@ def build_generic_gate(
         compare_bundle=compare_bundle,
         book_title=requested,
         topic_terms=terms,
+        formal_only=formal_only,
+        require_topic_formal_coverage=require_topic_formal_coverage,
     )
     dependency_ids = list(
         dict.fromkeys(
@@ -2133,8 +2312,20 @@ def build_generic_gate(
         candidate_count=len(records),
         relevance_ok=relevance_ok,
         same_book_ok=same_book_ok,
+        formal_statement_ok=(not formal_only) or bool(records),
+        formal_topic_coverage_ok=(not require_topic_formal_coverage) or all(term in covered_terms for term in terms),
     )
-    if not records:
+    if not records and require_topic_formal_coverage:
+        base.update(
+            failure_reason="比较请求没有找到当前教材中分别覆盖全部主题的正式同书证据。",
+            next_action="请补充每个比较对象各自的正式定义、性质或比较证据。",
+        )
+    elif not records and formal_only:
+        base.update(
+            failure_reason="定义/‘是什么’请求没有找到当前教材中支持正式定义或定理陈述的证据。",
+            next_action="请补充当前教材中包含正式定义、定理或公式陈述的正文证据。",
+        )
+    elif not records:
         base.update(
             failure_reason="当前教材范围内没有找到与问题主题匹配的可发布证据。",
             next_action="请补充章节、页码或先发布该概念的同书审核证据。",
@@ -2146,8 +2337,16 @@ def build_generic_gate(
         )
     elif not relevance_ok:
         base.update(
-            failure_reason="当前教材证据没有覆盖问题中的全部有效主题词。",
-            next_action="请拆分问题或补充覆盖全部主题词的同书证据。",
+            failure_reason=(
+                "比较请求的正式同书证据没有分别覆盖问题中的全部主题。"
+                if require_topic_formal_coverage
+                else "当前教材证据没有覆盖问题中的全部有效主题词。"
+            ),
+            next_action=(
+                "请补充缺失比较对象的正式定义、性质或比较证据。"
+                if require_topic_formal_coverage
+                else "请拆分问题或补充覆盖全部主题词的同书证据。"
+            ),
         )
     elif not base["structured_answer_ok"]:
         base.update(
@@ -2223,6 +2422,7 @@ def _find_formal_concept_evidence(
             {},
             book_title,
             [concept],
+            True,
         )
     else:
         evidences = fallback_evidence_hits(
@@ -2235,6 +2435,7 @@ def _find_formal_concept_evidence(
             {},
             book_title,
             [concept],
+            True,
         )
     for evidence in evidences:
         evidence_id = str(evidence.get("evidence_id") or "")
@@ -2363,6 +2564,8 @@ def query_knowledge(
     page_semantics = str(request_resolution["page"]["semantics"])
     generic_request = str(request_resolution.get("source_request_kind") or "generic") == "generic"
     topic_terms = generic_topic_terms(query, intent) if generic_request else None
+    formal_only = generic_request and (is_definition_request(query, intent) or intent == "compare")
+    require_topic_formal_coverage = generic_request and intent == "compare"
     scoped_exercise = bool(resolved_label and page_semantics != "exact_page" and not book_route.get("series_id"))
     if scoped_exercise:
         exercise_anchor, evidences = apply_scoped_exercise_relation(
@@ -2446,6 +2649,7 @@ def query_knowledge(
         page_anchor_request,
         book_title=effective_book_title,
         topic_terms=topic_terms,
+        formal_only=formal_only,
     )
     if topic_terms is not None:
         routed = [
@@ -2596,6 +2800,8 @@ def query_knowledge(
         "relevance_ok": False,
         "same_book_ok": False,
         "structured_answer_ok": False,
+        "formal_statement_required": False,
+        "formal_statement_ok": True,
         "failure_reason": "",
         "next_action": "",
     }
@@ -2608,6 +2814,8 @@ def query_knowledge(
             evidences=evidences,
             compare_bundle=compare_bundle,
             topic_terms=list(topic_terms or []),
+            formal_only=formal_only,
+            require_topic_formal_coverage=require_topic_formal_coverage,
         )
         if generic_gate.get("status") != "exact" and not str(answer_mode).startswith("exercise"):
             answer_mode = "unconfirmed"
