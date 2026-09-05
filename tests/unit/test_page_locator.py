@@ -21,6 +21,66 @@ import sync_exam_kb
 import create_snapshot
 
 
+def _publication_ready_evidences(evidences: list[dict]) -> list[dict]:
+    ready = []
+    for original in evidences:
+        evidence = dict(original)
+        evidence_id = str(evidence.get("evidence_id") or "TEST-EVIDENCE")
+        refs = [item for item in evidence.get("page_classification_refs", []) or [] if isinstance(item, dict)]
+        source_id = str(evidence.get("source_id") or f"SRC-{evidence_id}")
+        chapter_id = str(evidence.get("chapter_id") or (refs[0].get("chapter_id") if refs else "CH-TEST"))
+        span = {
+            "source_id": source_id,
+            "file_id": f"FILE-{evidence_id}",
+            "source_file_sha256": "test-source-sha",
+            "locator": {"page_start": 1, "page_end": 1, "image_start": 1, "image_end": 1},
+        }
+        evidence.update({
+            "evidence_key": evidence.get("evidence_key") or f"{evidence_id}-key",
+            "source_id": source_id,
+            "chapter_id": chapter_id,
+            "chunk_id": evidence.get("chunk_id") or f"CHUNK-{evidence_id}",
+            "origin_type": evidence.get("origin_type") or "paper_book_reviewed_ocr",
+            "review_status": evidence.get("review_status") or "accepted",
+            "source_spans": evidence.get("source_spans") or [span],
+            "provenance": evidence.get("provenance") or {
+                "origin_type": evidence.get("origin_type") or "paper_book_reviewed_ocr",
+                "verification_status": evidence.get("verification_status") or "source_grounded",
+                "source_grounded": True,
+                "source_spans": [span],
+            },
+        })
+        ready.append(evidence)
+    return ready
+
+
+def _pdf_evidence_payload(evidence_id: str, pdf_page: int, printed_page: int, content: str = "") -> dict:
+    span = {
+        "source_id": "SRC-PDF",
+        "file_id": "FILE-PDF",
+        "source_file_sha256": "pdf-sha",
+        "locator": {"page_start": pdf_page, "page_end": pdf_page, "image_start": pdf_page, "image_end": pdf_page},
+    }
+    return {
+        "evidence_id": evidence_id,
+        "evidence_key": f"{evidence_id}-key",
+        "source_id": "SRC-PDF",
+        "subject": "408",
+        "chapter_id": "CH-PDF",
+        "chunk_id": f"CHUNK-{evidence_id}",
+        "origin_type": "pdf_page_ocr",
+        "verification_status": "reviewed",
+        "review_status": "accepted",
+        "source_grounded": True,
+        "pdf_page": pdf_page,
+        "printed_page": printed_page,
+        "mapping_status": "mapped",
+        "source_spans": [span],
+        "provenance": {"origin_type": "pdf_page_ocr", "verification_status": "reviewed", "source_grounded": True, "source_spans": [span]},
+        "content": content,
+    }
+
+
 def _write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -667,14 +727,7 @@ def test_pdf_printed_page_must_be_explicit_and_pdf_mapping_is_continuous(tmp_pat
     layout["evidence"].mkdir()
     source = {"source_id": "SRC-PDF", "subject": "408", "source_name": "PDF", "source_path": "book.pdf"}
     for pdf_page, printed_page in ((13, 1), (14, 2)):
-        (layout["evidence"] / f"EV-{pdf_page}.json").write_text(
-            __import__("json").dumps({
-                "evidence_id": f"EV-{pdf_page}", "source_id": "SRC-PDF", "subject": "408", "book_title": "PDF",
-                "origin_type": "pdf_page_ocr", "verification_status": "reviewed", "source_grounded": True,
-                "locator": {"page_start": pdf_page}, "content": f"{printed_page}\ntext",
-                "source_spans": [{"source_file_sha256": "pdf-sha"}],
-            }), encoding="utf-8"
-        )
+        _write_json(layout["evidence"] / f"EV-{pdf_page}.json", _pdf_evidence_payload(f"EV-{pdf_page}", pdf_page, printed_page, f"{printed_page}\ntext"))
     reviews = {page: {"printed_page": printed, "page_header_verified": True, "source_file_sha256": "pdf-sha"} for page, printed in ((13, 1), (14, 2))}
     records, review = page_locator._pdf_source_records(source, layout, reviews)
     assert not review
@@ -687,12 +740,7 @@ def test_pdf_printed_page_discontinuity_is_not_published(tmp_path: Path) -> None
     layout["evidence"].mkdir()
     source = {"source_id": "SRC-PDF", "subject": "408", "source_name": "PDF", "source_path": "book.pdf"}
     for pdf_page, printed_page in ((13, 1), (14, 9)):
-        (layout["evidence"] / f"EV-{pdf_page}.json").write_text(
-            __import__("json").dumps({
-                "evidence_id": f"EV-{pdf_page}", "source_id": "SRC-PDF", "origin_type": "pdf_page_ocr", "verification_status": "reviewed", "source_grounded": True,
-                "locator": {"page_start": pdf_page}, "content": str(printed_page), "source_spans": [{"source_file_sha256": "pdf-sha"}],
-            }), encoding="utf-8"
-        )
+        _write_json(layout["evidence"] / f"EV-{pdf_page}.json", _pdf_evidence_payload(f"EV-{pdf_page}", pdf_page, printed_page, str(printed_page)))
     reviews = {page: {"printed_page": printed, "page_header_verified": True, "source_file_sha256": "pdf-sha"} for page, printed in ((13, 1), (14, 9))}
     records, review = page_locator._pdf_source_records(source, layout, reviews)
     assert records == []
@@ -702,10 +750,7 @@ def test_pdf_printed_page_discontinuity_is_not_published(tmp_path: Path) -> None
 def test_pdf_page_without_header_verification_is_not_mapped(tmp_path: Path) -> None:
     layout = {"evidence": tmp_path / "evidence"}
     layout["evidence"].mkdir()
-    (layout["evidence"] / "EV-13.json").write_text(__import__("json").dumps({
-        "evidence_id": "EV-13", "source_id": "SRC-PDF", "origin_type": "pdf_page_ocr", "verification_status": "reviewed", "source_grounded": True,
-        "locator": {"page_start": 13}, "source_spans": [{"source_file_sha256": "pdf-sha"}],
-    }), encoding="utf-8")
+    _write_json(layout["evidence"] / "EV-13.json", _pdf_evidence_payload("EV-13", 13, 1))
     records, review = page_locator._pdf_source_records({"source_id": "SRC-PDF"}, layout, {13: {"printed_page": 1}})
     assert records == []
     assert review[0]["kind"] == "page-header-unverified"
@@ -733,7 +778,7 @@ def test_exercise_locator_links_question_to_multpage_answer(monkeypatch, tmp_pat
         16: "4\n答案续页",
     }
     for page, content in fixtures.items():
-        (layout["evidence"] / f"EV-{page}.json").write_text(__import__("json").dumps({"evidence_id": f"EV-{page}", "source_id": "SRC-PDF", "origin_type": "pdf_page_ocr", "verification_status": "reviewed", "source_grounded": True, "locator": {"page_start": page}, "content": content}), encoding="utf-8")
+        _write_json(layout["evidence"] / f"EV-{page}.json", _pdf_evidence_payload(f"EV-{page}", page, page - 2, content))
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
     payload = exercise_locator.build_exercise_locator_index()
     assert payload["summary"]["relation_count"] == 1
@@ -760,7 +805,7 @@ def test_worked_example_relation_links_p64_question_to_p65_solution() -> None:
         },
     ]
 
-    relations = exercise_locator.build_worked_example_relations(evidences)
+    relations = exercise_locator.build_worked_example_relations(_publication_ready_evidences(evidences))
 
     relation = next(item for item in relations if item["exercise_label"] == "例3.8")
     assert relation["relation_status"] == "exact"
@@ -780,7 +825,7 @@ def test_english_example_translation_is_an_exact_worked_example_relation() -> No
         "page_classification_refs": [{"book_id": "PDFOCR-SRC-ENG-0001", "book_title": "句句真研", "chapter_id": "ENG-1", "printed_page": 44, "source_image_path": "P44.png"}],
     }]
 
-    relations = exercise_locator.build_worked_example_relations(evidences)
+    relations = exercise_locator.build_worked_example_relations(_publication_ready_evidences(evidences))
 
     assert len(relations) == 1
     assert relations[0]["relation_status"] == "exact"
@@ -808,7 +853,7 @@ def test_plain_worked_example_relations_accept_integer_labels_and_restart_by_pag
         for page in (25, 30)
     ]
 
-    relations = exercise_locator.build_worked_example_relations(evidences)
+    relations = exercise_locator.build_worked_example_relations(_publication_ready_evidences(evidences))
 
     assert len(relations) == 2
     assert {item["relation_id"] for item in relations} == {
@@ -852,7 +897,7 @@ def test_worked_example_relations_do_not_pair_across_missing_printed_pages() -> 
         },
     ]
 
-    relations = exercise_locator.build_worked_example_relations(evidences)
+    relations = exercise_locator.build_worked_example_relations(_publication_ready_evidences(evidences))
 
     first = next(item for item in relations if item["exercise_label"] == "例1")
     second = next(item for item in relations if item["exercise_label"] == "例2")
@@ -882,7 +927,7 @@ def test_worked_example_answer_stops_before_following_theorem_proof() -> None:
         }
     ]
 
-    relations = exercise_locator.build_worked_example_relations(evidences)
+    relations = exercise_locator.build_worked_example_relations(_publication_ready_evidences(evidences))
 
     assert len(relations) == 1
     assert relations[0]["relation_status"] == "exact"
@@ -908,7 +953,7 @@ def test_worked_example_answer_stops_before_numbered_theory_paragraph() -> None:
         }
     ]
 
-    relations = exercise_locator.build_worked_example_relations(evidences)
+    relations = exercise_locator.build_worked_example_relations(_publication_ready_evidences(evidences))
 
     assert len(relations) == 1
     assert relations[0]["relation_status"] == "exact"
@@ -934,7 +979,7 @@ def test_unnumbered_worked_examples_receive_page_local_labels() -> None:
         }
     ]
 
-    relations = exercise_locator.build_worked_example_relations(evidences)
+    relations = exercise_locator.build_worked_example_relations(_publication_ready_evidences(evidences))
 
     assert [item["exercise_label"] for item in relations] == ["例（P8页内1）", "例（P8页内2）"]
     assert all(item["relation_status"] == "exact" for item in relations)
@@ -959,7 +1004,7 @@ def test_same_page_restarted_labels_are_exact_and_page_local() -> None:
         }
     ]
 
-    relations = exercise_locator.build_worked_example_relations(evidences)
+    relations = exercise_locator.build_worked_example_relations(_publication_ready_evidences(evidences))
 
     assert [item["exercise_label"] for item in relations] == ["例1", "例1"]
     assert [item["container_path"] for item in relations] == [[], ["题型四 无穷小的比较"]]
@@ -977,7 +1022,7 @@ def test_worked_example_container_path_resolves_same_page_restarted_label(monkey
         "content": "例1 第一题。\n解 第一解。\n# 题型四 无穷小的比较\n例1 第二题。\n解 第二解。",
         "page_classification_refs": [{"book_id": "tang-math1", "book_title": "汤家凤高数基础篇", "chapter_id": "CH1", "printed_page": 18, "source_image_path": "P18.jpg"}],
     }]
-    relations = exercise_locator.build_worked_example_relations(evidences)
+    relations = exercise_locator.build_worked_example_relations(_publication_ready_evidences(evidences))
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
     monkeypatch.setattr(exercise_locator, "exercise_locator_input_fingerprint", lambda _layout: "fresh")
     _write_json(layout["indexes"] / exercise_locator.EXERCISE_LOCATOR_INDEX_NAME, {"schema_version": "exercise-locator.v3", "input_fingerprint": "fresh", "relations": relations})
@@ -1005,7 +1050,7 @@ def test_exercise_locator_does_not_treat_summary_number_as_answer(monkeypatch, t
         14: "# 1.2.4 答案与解析\n# 二、综合应用题\n# 01.【解答】\n答案开始\n# 归纳总结\n# 2. 循环主体中的变量与循环条件无关",
     }
     for page, content in fixtures.items():
-        (layout["evidence"] / f"EV-{page}.json").write_text(__import__("json").dumps({"evidence_id": f"EV-{page}", "source_id": "SRC-PDF", "origin_type": "pdf_page_ocr", "verification_status": "reviewed", "source_grounded": True, "pdf_page": page, "printed_page": page - 2, "locator": {"page_start": page}, "content": content}), encoding="utf-8")
+        _write_json(layout["evidence"] / f"EV-{page}.json", _pdf_evidence_payload(f"EV-{page}", page, page - 2, content))
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
     payload = exercise_locator.build_exercise_locator_index()
     assert payload["summary"]["relation_count"] == 1

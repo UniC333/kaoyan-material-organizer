@@ -7,6 +7,7 @@ from typing import Any
 
 from common import ensure_kb_layout, kb_layout, load_json_or_default, now_iso, save_json
 from config import load_runtime_config
+from kaoyan_kb.domain.evidence_publication import is_publishable_source_evidence
 from kaoyan_kb.domain.index_freshness import directory_json_inputs, fingerprint_index_inputs
 
 
@@ -187,13 +188,9 @@ def _pdf_source_records(source: dict[str, Any], layout: dict[str, Path], approve
     evidence_by_pdf_page: dict[int, list[dict[str, Any]]] = {}
     for evidence_path in sorted(layout["evidence"].glob("*.json")):
         evidence = load_json_or_default(evidence_path, {})
-        if (
-            evidence.get("source_id") != source_id
-            or evidence.get("origin_type") != "pdf_page_ocr"
-            or evidence.get("verification_status") != "reviewed"
-            or not evidence.get("source_grounded")
-            or evidence.get("mapping_status") == "stale"
-        ):
+        if evidence.get("source_id") != source_id or evidence.get("origin_type") != "pdf_page_ocr":
+            continue
+        if not is_publishable_source_evidence(evidence):
             continue
         pdf_page = evidence_pdf_page(evidence)
         if not pdf_page:
@@ -360,14 +357,11 @@ def build_page_locator_index() -> dict[str, Any]:
     for evidence_path in sorted(layout["evidence"].glob("*.json")):
         evidence = load_json_or_default(evidence_path, {})
         evidence_id = str(evidence.get("evidence_id") or "").strip()
-        if (
-            not evidence_id
-            or evidence.get("verification_status") == "stale"
-            or evidence.get("mapping_status") == "stale"
-            # 多页章节提取仍可用于宽泛检索；但正式印刷页定位只能指向
-            # 经审核的单页 OCR，避免旧提取遮蔽当前页级证据并使按页回答歧义。
-            or evidence.get("origin_type") == "chunk_extract"
-        ):
+        if not evidence_id or not is_publishable_source_evidence(evidence):
+            continue
+        # 多页章节提取仍可用于宽泛检索；但正式印刷页定位只能指向
+        # 经审核的单页 OCR，避免旧提取遮蔽当前页级证据并使按页回答歧义。
+        if evidence.get("origin_type") == "chunk_extract":
             continue
         for ref in evidence_page_refs(evidence):
             if not isinstance(ref, dict) or not _is_formal_evidence_ref(ref):

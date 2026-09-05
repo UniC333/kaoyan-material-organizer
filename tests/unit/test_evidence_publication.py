@@ -13,6 +13,8 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import build_search_index
+import publish_canonical_cards
+from kaoyan_kb.domain import book_series, exercise_locator, page_locator
 from kaoyan_kb.domain import evidence_publication as publication
 from kaoyan_kb.domain import evidence_publication_repair as repair
 
@@ -78,6 +80,18 @@ def claim(claim_id: str, evidence_ids: list[str]) -> dict:
 
 def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def transaction_target_state(layout: dict[str, Path]) -> dict[Path, tuple[bool, bytes]]:
+    paths = [
+        *sorted(layout["evidence"].glob("*.json")),
+        *sorted(layout["claims"].glob("*.json")),
+        *(path for path, _group in repair._formal_index_paths(layout)),
+    ]
+    return {
+        path: (path.is_file(), path.read_bytes() if path.is_file() else b"")
+        for path in paths
+    }
 
 
 def layout_for(tmp_path: Path) -> dict[str, Path]:
@@ -151,6 +165,22 @@ def test_claim_requires_every_support_record_to_be_publishable() -> None:
     assert decision["publishable"] is False
     assert decision["valid_support_count"] == 1
     assert "non-publishable-claim-evidence" in decision["audit_reason_codes"]
+
+
+def test_repair_downgrades_mixed_claim_support(tmp_path: Path) -> None:
+    layout = layout_for(tmp_path)
+    valid = evidence("EV-VALID")
+    invalid = evidence("EV-PROFILE", origin_type="profile_hint")
+    write_json(layout["evidence"] / "EV-VALID.json", valid)
+    write_json(layout["evidence"] / "EV-PROFILE.json", invalid)
+    write_json(layout["claims"] / "CL-MIXED.json", claim("CL-MIXED", ["EV-VALID", "EV-PROFILE"]))
+
+    plan = repair.plan_publication_repairs(layout=layout)
+
+    assert [item["entity_id"] for item in plan["claim_updates"]] == ["CL-MIXED"]
+    assert plan["summary"]["claim_update_count"] == 1
+    mixed_after = next(item["after"] for item in plan["_write_items"] if item["after"].get("claim_id") == "CL-MIXED")
+    assert mixed_after["status"] == "needs_review"
 
 
 def test_build_index_excludes_ineligible_records_and_reports_reasons(tmp_path: Path) -> None:
@@ -236,14 +266,149 @@ def test_repair_preview_is_zero_write_and_apply_is_recoverable_and_index_consist
     recovery_path = Path(applied["recovery_manifest"])
     recovery = json.loads(recovery_path.read_text(encoding="utf-8"))
     assert recovery["recoverable"] is True
-    assert {item["entity_id"] for item in recovery["items"]} == {"EV-PDF", "EV-PROFILE", "CL-PROFILE"}
+    entity_items = [item for item in recovery["items"] if item["target_type"] == "entity"]
+    index_items = [item for item in recovery["items"] if item["target_type"] == "formal-index"]
+    assert {item["entity_id"] for item in entity_items} == {"EV-PDF", "EV-PROFILE", "CL-PROFILE"}
+    assert index_items
     assert json.loads((layout["evidence"] / "EV-PDF.json").read_text(encoding="utf-8"))["mapping_status"] == "mapped"
     assert json.loads((layout["evidence"] / "EV-PROFILE.json").read_text(encoding="utf-8"))["publication_status"] == "audit_only"
     assert json.loads((layout["claims"] / "CL-PROFILE.json").read_text(encoding="utf-8"))["status"] == "needs_review"
     documents = json.loads((layout["indexes"] / "search_documents.json").read_text(encoding="utf-8"))["documents"]
     assert {item["doc_id"] for item in documents} == {"evidence:EV-PDF"}
-    assert all("before" in item and item["before_sha256"] for item in recovery["items"])
+    assert all("before" in item and item["before_sha256"] for item in entity_items)
+    assert all("before_bytes_base64" in item for item in index_items)
 
     restored = repair.restore_publication_repair(layout=layout, recovery_manifest=recovery_path, apply=True)
     assert restored["mode"] == "restore"
     assert json.loads((layout["evidence"] / "EV-PDF.json").read_text(encoding="utf-8"))["mapping_status"] == "unmapped"
+
+
+def test_apply_requires_explicit_preview_fingerprint(tmp_path: Path) -> None:
+    layout = layout_for(tmp_path)
+    write_json(layout["evidence"] / "EV-PROFILE.json", evidence("EV-PROFILE", origin_type="profile_hint"))
+
+    with pytest.raises(ValueError, match="expected plan fingerprint"):
+        repair.repair_publication(layout=layout, apply=True)
+
+
+def test_entity_write_failure_rolls_back_entities_and_formal_indexes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    layout = layout_for(tmp_path)
+    write_json(layout["evidence"] / "EV-A.json", evidence("EV-A", origin_type="profile_hint"))
+    write_json(layout["evidence"] / "EV-B.json", evidence("EV-B", origin_type="profile_hint"))
+    page_index = layout["indexes"] / "page_locator_index.json"
+    page_index.write_bytes(b"original-page-index")
+    before = transaction_target_state(layout)
+    preview = repair.repair_publication(layout=layout, apply=False)
+    original_save_json = repair.save_json
+
+    def fail_second_entity(path: Path, payload: dict, **kwargs: object) -> bool:
+        if Path(path).name == "EV-B.json":
+            raise OSError("injected entity write failure")
+        return original_save_json(path, payload, **kwargs)
+
+    monkeypatch.setattr(repair, "save_json", fail_second_entity)
+    result = repair.repair_publication(
+        layout=layout,
+        apply=True,
+        expected_fingerprint=preview["input_fingerprint"],
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "rolled_back"
+    assert transaction_target_state(layout) == before
+    recovery = json.loads(Path(result["recovery_manifest"]).read_text(encoding="utf-8"))
+    assert recovery["status"] == "rolled_back"
+    assert recovery["failure"]["stage"] == "entity-write"
+    assert recovery["rollback"]["ok"] is True
+
+
+def test_later_index_refresh_failure_rolls_back_entities_and_new_index_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    layout = layout_for(tmp_path)
+    write_json(layout["evidence"] / "EV-PROFILE.json", evidence("EV-PROFILE", origin_type="profile_hint"))
+    existing_index = layout["indexes"] / "page_locator_index.json"
+    existing_index.write_bytes(b"original-page-index")
+    schema_targets = [path for path, group in repair._formal_index_paths(layout) if group == "runtime-schema"]
+    for schema_target in schema_targets[:2]:
+        schema_target.parent.mkdir(parents=True, exist_ok=True)
+    schema_targets[0].write_bytes(b"original-schema")
+    before = transaction_target_state(layout)
+    preview = repair.repair_publication(layout=layout, apply=False)
+
+    def refresh_with_later_failure(current_layout: dict[str, Path]) -> dict:
+        (current_layout["indexes"] / "page_locator_index.json").write_bytes(b"rewritten-page-index")
+        (current_layout["indexes"] / "search_documents.json").write_bytes(b"new-search-index")
+        schema_targets[0].write_bytes(b"rewritten-schema")
+        schema_targets[1].write_bytes(b"new-schema")
+        return {
+            "ok": False,
+            "steps": ["build_page_locator_index", "build_exercise_locator_index", "build_search_index", "build_book_series_indexes"],
+            "completed_steps": ["build_page_locator_index"],
+            "failed_steps": [{"step": "build_exercise_locator_index", "error": "injected later index failure"}],
+        }
+
+    monkeypatch.setattr(repair, "refresh_formal_indexes", refresh_with_later_failure)
+    result = repair.repair_publication(
+        layout=layout,
+        apply=True,
+        expected_fingerprint=preview["input_fingerprint"],
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "rolled_back"
+    assert transaction_target_state(layout) == before
+    recovery = json.loads(Path(result["recovery_manifest"]).read_text(encoding="utf-8"))
+    assert recovery["status"] == "rolled_back"
+    assert recovery["failure"]["stage"] == "index-refresh"
+    assert recovery["index_refresh"]["failed_steps"][0]["step"] == "build_exercise_locator_index"
+    assert recovery["rollback"]["ok"] is True
+    assert recovery["formal_index_item_count"] >= len(schema_targets)
+
+
+def test_locator_and_canonical_card_consumers_use_central_publication_gate(tmp_path: Path) -> None:
+    layout = layout_for(tmp_path)
+    valid = evidence("EV-VALID", origin_type="pdf_page_ocr", mapping_status="mapped", pdf_page=79, printed_page=67, source_id="SRC-PDF")
+    blocked = evidence("EV-BLOCKED", origin_type="pdf_page_ocr", mapping_status="mapped", pdf_page=80, printed_page=68, source_id="SRC-PDF")
+    blocked["review_status"] = "pending"
+    for payload, printed_page in ((valid, 67), (blocked, 68)):
+        payload["page_classification_refs"] = [{
+            "book_id": "book-1",
+            "book_title": "Book 1",
+            "chapter_id": "CH-1",
+            "printed_page": printed_page,
+        }]
+    write_json(layout["evidence"] / "EV-VALID.json", valid)
+    write_json(layout["evidence"] / "EV-BLOCKED.json", blocked)
+    records, _review = page_locator._pdf_source_records(
+        {"source_id": "SRC-PDF", "files": [{"sha256": "source-sha"}]},
+        {"evidence": layout["evidence"]},
+        {
+            79: {"printed_page": 67, "page_header_verified": True, "source_file_sha256": "source-sha"},
+            80: {"printed_page": 68, "page_header_verified": True, "source_file_sha256": "source-sha"},
+        },
+    )
+    assert [item["evidence_ids"] for item in records if item["evidence_ids"]] == [["EV-VALID"]]
+
+    records = exercise_locator._grounded_printed_page_records([valid, blocked])
+    assert [item["evidence_id"] for item in records] == ["EV-VALID"]
+    records = book_series._grounded_page_records([valid, blocked])
+    assert [item["evidence_id"] for item in records] == ["EV-VALID"]
+
+    write_json(layout["claims"] / "CL-VALID.json", claim("CL-VALID", ["EV-VALID"]))
+    write_json(layout["claims"] / "CL-BLOCKED.json", claim("CL-BLOCKED", ["EV-BLOCKED"]))
+    write_json(layout["indexes"] / "claim_registry.json", {"claims": [], "clusters": []})
+    grouped, _evidence_map = publish_canonical_cards.grouped_card_materials(layout, {"408"})
+    published_claim_ids = {
+        claim_item["claim_id"]
+        for bucket in grouped.values()
+        for cluster in bucket["ready_clusters"]
+        for claim_item in cluster["claims"]
+    }
+    assert published_claim_ids == {"CL-VALID"}
+    # A cluster's stored conclusion may depend on every member: filtering out
+    # one blocked member must not leave that old conclusion publishable.
+    write_json(layout["indexes"] / "claim_registry.json", {"clusters": [{
+        "subject": "408", "syllabus_node_id": "NODE-1", "cluster_status": "ready",
+        "claim_ids": ["CL-VALID", "CL-BLOCKED"], "canonical_text": "mixed conclusion",
+    }]})
+    grouped, _ = publish_canonical_cards.grouped_card_materials(layout, {"408"})
+    assert not grouped

@@ -13,6 +13,31 @@ from kaoyan_kb.domain import exercise_batch, exercise_locator
 import query_local_knowledge as query_module
 
 
+def _published_pdf_evidence(evidence_id: str, pdf_page: int, printed_page: int) -> dict:
+    span = {
+        "source_id": "SRC",
+        "file_id": "FILE-PDF",
+        "source_file_sha256": "pdf-sha",
+        "locator": {"page_start": pdf_page, "page_end": pdf_page, "image_start": pdf_page, "image_end": pdf_page},
+    }
+    return {
+        "evidence_id": evidence_id,
+        "evidence_key": f"{evidence_id}-key",
+        "source_id": "SRC",
+        "chapter_id": "CH-PDF",
+        "chunk_id": f"CHUNK-{evidence_id}",
+        "origin_type": "pdf_page_ocr",
+        "verification_status": "reviewed",
+        "review_status": "accepted",
+        "source_grounded": True,
+        "mapping_status": "mapped",
+        "pdf_page": pdf_page,
+        "printed_page": printed_page,
+        "source_spans": [span],
+        "provenance": {"origin_type": "pdf_page_ocr", "verification_status": "reviewed", "source_grounded": True, "source_spans": [span]},
+    }
+
+
 def test_parse_original_wrong_answer_batch_preserves_order_options_and_focus() -> None:
     parsed = exercise_batch.parse_exercise_batch_request(
         "刚刚做完了数据结构133～135页的选择，选错的选项有这些：1B,8D,10A,16A,18A,19C,25A,28B，另外，12和28两个题没理解透题意，着重多一点细节"
@@ -143,8 +168,8 @@ def test_relation_enrichment_requires_independent_printed_pages() -> None:
         "answer_pdf_pages": [147],
     }
     evidences = {
-        "EV-Q": {"evidence_id": "EV-Q", "source_id": "SRC", "pdf_page": 145, "printed_page": 133},
-        "EV-A": {"evidence_id": "EV-A", "source_id": "SRC", "pdf_page": 147, "printed_page": 135},
+        "EV-Q": _published_pdf_evidence("EV-Q", 145, 133),
+        "EV-A": _published_pdf_evidence("EV-A", 147, 135),
     }
 
     enriched = exercise_locator._with_relation_printed_pages(relation, evidences)

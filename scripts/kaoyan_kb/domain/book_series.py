@@ -7,6 +7,7 @@ from typing import Any
 
 from common import ensure_kb_layout, load_json_or_default, save_json
 from config import load_runtime_config
+from kaoyan_kb.domain.evidence_publication import is_publishable_source_evidence
 from kaoyan_kb.domain.exercise_locator import container_path_from_query, normalize_container_label, stable_container_label
 
 
@@ -262,7 +263,7 @@ def _grounded_page_records(evidences: list[dict[str, Any]]) -> list[dict[str, An
     records: list[dict[str, Any]] = []
     seen: set[tuple[str, str, int, str]] = set()
     for evidence in evidences:
-        if evidence.get("verification_status") != "source_grounded" or not bool(evidence.get("source_grounded")):
+        if not is_publishable_source_evidence(evidence):
             continue
         evidence_id = str(evidence.get("evidence_id") or "").strip()
         content = str(evidence.get("content") or "").strip()
@@ -689,7 +690,7 @@ def build_exercise_pair_index() -> dict[str, Any]:
     for evidence in all_evidences:
         key = str(evidence.get("exercise_key") or "")
         book_id = str(evidence.get("book_id") or "")
-        if not key or book_id not in volume_map or evidence.get("verification_status") != "source_grounded":
+        if not key or book_id not in volume_map or not is_publishable_source_evidence(evidence):
             continue
         series, volume = volume_map[book_id]
         item = grouped.setdefault(

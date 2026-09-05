@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import copy
+import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 from uuid import uuid4
@@ -19,6 +21,17 @@ from .evidence_publication import (
 
 REPAIR_SCHEMA_VERSION = "evidence-publication-recovery.v1"
 REPAIR_QUEUE_NAME = "evidence-publication-repair"
+
+FORMAL_INDEX_FILES = (
+    ("page-locator", "page_locator_index.json"),
+    ("exercise-locator", "exercise_locator_index.json"),
+    ("search-documents", "search_documents.json"),
+    ("search-inverted", "inverted_index.json"),
+    ("search-manifest", "search_manifest.json"),
+    ("book-series", "book_series_index.json"),
+    ("exercise-pairs", "exercise_pair_index.json"),
+)
+FORMAL_INDEX_QUEUE_DIRS = ("pdf-page-mapping", "exercise-locator")
 
 
 def _text(value: Any) -> str:
@@ -358,8 +371,7 @@ def plan_publication_repairs(
             continue
         decision = claim_publication_decision(payload, updated_evidence)
         support_count = int(decision.get("support_count", 0) or 0)
-        valid_support_count = int(decision.get("valid_support_count", 0) or 0)
-        if decision.get("publishable") or support_count <= 0 or valid_support_count > 0:
+        if decision.get("publishable") or support_count <= 0:
             continue
         if (
             _text(payload.get("status")) == "needs_review"
@@ -369,7 +381,7 @@ def plan_publication_repairs(
             continue
         after = copy.deepcopy(payload)
         reason_codes = ["accepted-claim-support-needs-review", *list(decision.get("reason_codes", []) or [])]
-        note = "accepted claim has no publishable supporting evidence; status set to needs_review."
+        note = "accepted claim has non-publishable supporting evidence; status set to needs_review."
         after["status"] = "needs_review"
         after["review_status"] = "needs_review"
         after["publication_status"] = "audit_only"
@@ -413,6 +425,182 @@ def _sha256_bytes(path: Path) -> str:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return ""
+
+
+def _atomic_write_bytes(path: Path, content: bytes) -> None:
+    """Write a byte-for-byte snapshot without going through JSON normalization."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.repair-tmp")
+    try:
+        with temporary.open("wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+
+
+def _write_recovery_manifest(path: Path, payload: Mapping[str, Any]) -> None:
+    """Persist audit metadata independently from entity-write fault injection."""
+    _atomic_write_bytes(
+        path,
+        json.dumps(dict(payload), ensure_ascii=False, indent=2).encode("utf-8"),
+    )
+
+
+def _known_source_ids(layout: Mapping[str, Path]) -> set[str]:
+    source_ids: set[str] = set()
+    for key in ("sources", "manifest_sources", "evidence"):
+        for path in _entity_files(layout, key):
+            payload = _load_object(path)
+            source_id = _text(payload.get("source_id"))
+            if source_id:
+                source_ids.add(source_id)
+    return source_ids
+
+
+def _formal_index_paths(layout: Mapping[str, Path]) -> list[tuple[Path, str]]:
+    """Return every file a formal index refresh is allowed to create or rewrite.
+
+    Index builders call ``ensure_kb_layout`` before building.  Its schema
+    bootstrap is therefore part of this transaction too, including newly
+    created schema files and the root schema-version record.
+    """
+    root = _path(layout, "root") or Path(".")
+    index_root = _path(layout, "indexes") or (root / "indexes")
+    paths: list[tuple[Path, str]] = [
+        (index_root / filename, group)
+        for group, filename in FORMAL_INDEX_FILES
+    ]
+    schema_root = _path(layout, "schemas") or (root / "schemas")
+    paths.append((root / "schema-version.json", "runtime-schema"))
+    from common import load_core_schema_templates
+
+    paths.extend(
+        (schema_root / name, "runtime-schema")
+        for name in sorted(load_core_schema_templates())
+    )
+
+    review_root = _path(layout, "review_queues") or (root / "review-queues")
+    source_ids = _known_source_ids(layout)
+    for queue_name in FORMAL_INDEX_QUEUE_DIRS:
+        queue_root = review_root / queue_name
+        existing = sorted(queue_root.glob("*.json")) if queue_root.is_dir() else []
+        paths.extend((path, f"review-queue:{queue_name}") for path in existing)
+        paths.extend(
+            (queue_root / f"{source_id}.json", f"review-queue:{queue_name}")
+            for source_id in sorted(source_ids)
+        )
+
+    deduplicated: dict[Path, str] = {}
+    for path, group in paths:
+        deduplicated.setdefault(path.resolve(), group)
+    return [(path, deduplicated[path]) for path in sorted(deduplicated)]
+
+
+def _target_snapshot(
+    *,
+    root: Path,
+    path: Path,
+    target_type: str,
+    target_group: str,
+    entity_payload: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    target = _safe_root_child(root, path)
+    if target.exists() and not target.is_file():
+        raise ValueError(f"repair target is not a regular file: {target}")
+    exists = target.is_file()
+    raw = target.read_bytes() if exists else b""
+    root_abs = root.resolve()
+    snapshot: dict[str, Any] = {
+        "target_type": target_type,
+        "target_group": target_group,
+        "path": str(target.relative_to(root_abs)) if target.is_relative_to(root_abs) else str(target),
+        "before_exists": exists,
+        "before_sha256": hashlib.sha256(raw).hexdigest() if exists else "",
+        "before_bytes_base64": base64.b64encode(raw).decode("ascii") if exists else "",
+    }
+    if target_type == "entity":
+        payload = dict(entity_payload or {})
+        snapshot.update(
+            {
+                "entity_type": target_group,
+                "entity_id": _text(payload.get("evidence_id") or payload.get("claim_id")),
+                "before": copy.deepcopy(payload),
+            }
+        )
+    return snapshot
+
+
+def _target_state(root: Path, snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    target = _safe_root_child(root, root / str(snapshot.get("path") or ""))
+    if target.exists() and not target.is_file():
+        raise ValueError(f"repair target is not a regular file: {target}")
+    exists = target.is_file()
+    raw = target.read_bytes() if exists else b""
+    return {
+        "exists": exists,
+        "sha256": hashlib.sha256(raw).hexdigest() if exists else "",
+    }
+
+
+def _restore_target_snapshot(root: Path, snapshot: Mapping[str, Any]) -> str:
+    target = _safe_root_child(root, root / str(snapshot.get("path") or ""))
+    before_exists = snapshot.get("before_exists")
+    if before_exists is None:
+        before_exists = bool(snapshot.get("before_sha256")) or snapshot.get("before") is not None
+    if not before_exists:
+        if target.exists() or target.is_symlink():
+            if not target.is_file() and not target.is_symlink():
+                raise ValueError(f"cannot remove non-file repair target: {target}")
+            target.unlink()
+        return "removed"
+
+    encoded = snapshot.get("before_bytes_base64")
+    if encoded is not None:
+        try:
+            raw = base64.b64decode(str(encoded), validate=True)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"invalid recovery byte image for {target}") from exc
+    elif snapshot.get("before") is not None:
+        raw = json.dumps(snapshot["before"], ensure_ascii=False, indent=2).encode("utf-8")
+    else:
+        raise ValueError(f"recovery manifest has no before-image for {target}")
+    _atomic_write_bytes(target, raw)
+    return "restored"
+
+
+def _rollback_target_snapshots(root: Path, snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+    restored = 0
+    removed = 0
+    errors: list[dict[str, str]] = []
+    for snapshot in reversed(snapshots):
+        try:
+            action = _restore_target_snapshot(root, snapshot)
+            if action == "removed":
+                removed += 1
+            else:
+                restored += 1
+        except BaseException as exc:
+            errors.append(
+                {
+                    "path": str(snapshot.get("path") or ""),
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    return {
+        "ok": not errors,
+        "restored_count": restored,
+        "removed_count": removed,
+        "errors": errors,
+    }
 
 
 def repair_input_fingerprint(
@@ -516,7 +704,7 @@ def refresh_formal_indexes(layout: Mapping[str, Path]) -> dict[str, Any]:
     if root is None:
         evidence_root = _path(layout, "evidence")
         root = evidence_root.parent if evidence_root is not None else Path(".")
-    scripts_root = Path(__file__).resolve().parents[2] / "scripts"
+    scripts_root = Path(__file__).resolve().parents[2]
     steps = [
         "build_page_locator_index.py",
         "build_exercise_locator_index.py",
@@ -535,7 +723,7 @@ def refresh_formal_indexes(layout: Mapping[str, Path]) -> dict[str, Any]:
                 env=env,
             )
             completed.append(name.removesuffix(".py"))
-        except Exception as exc:
+        except (Exception, SystemExit) as exc:
             failed.append({"step": name.removesuffix(".py"), "error": f"{type(exc).__name__}: {exc}"})
     return {
         "ok": not failed,
@@ -550,7 +738,7 @@ def apply_publication_repairs(
     layout: Mapping[str, Path],
     plan: dict[str, Any],
 ) -> dict[str, Any]:
-    """Apply one plan, first writing a full before-image recovery manifest."""
+    """Apply one plan as a transaction over entities and formal index outputs."""
     expected_fingerprint = _text(plan.get("input_fingerprint"))
     if not expected_fingerprint:
         raise ValueError("repair plan input fingerprint is required before --yes")
@@ -562,53 +750,134 @@ def apply_publication_repairs(
     if current_fingerprint != expected_fingerprint:
         raise ValueError("repair plan input fingerprint changed; rerun preview before --yes")
     items = list(plan.get("_write_items", []) or [])
-    recovery_path: Path | None = None
-    recovery: dict[str, Any] | None = None
-    if items:
-        recovery_path = _recovery_manifest_path(layout)
-        root = _path(layout, "root") or Path(".")
-        root_abs = root.resolve()
-        recovery_items = []
-        for item in items:
-            path = _safe_root_child(root, Path(item["path"]))
-            recovery_items.append(
-                {
-                    "entity_type": "evidence" if path.parent.name == "evidence" else "claim",
-                    "entity_id": _text(item["before"].get("evidence_id") or item["before"].get("claim_id")),
-                    "path": str(path.relative_to(root_abs)) if path.is_relative_to(root_abs) else str(path),
-                    "before_sha256": _sha256_bytes(path),
-                    "before": copy.deepcopy(item["before"]),
-                }
+    root = _path(layout, "root") or Path(".")
+    snapshots: list[dict[str, Any]] = []
+    seen_targets: set[Path] = set()
+    for item in items:
+        path = _safe_root_child(root, Path(item["path"]))
+        if path in seen_targets:
+            raise ValueError(f"duplicate repair target: {path}")
+        seen_targets.add(path)
+        before = item.get("before") if isinstance(item.get("before"), dict) else {}
+        target_group = "evidence" if before.get("evidence_id") else "claim"
+        snapshots.append(
+            _target_snapshot(
+                root=root,
+                path=path,
+                target_type="entity",
+                target_group=target_group,
+                entity_payload=before,
             )
-        recovery = {
+        )
+    for path, target_group in _formal_index_paths(layout):
+        safe_path = _safe_root_child(root, path)
+        if safe_path in seen_targets:
+            continue
+        seen_targets.add(safe_path)
+        snapshots.append(
+            _target_snapshot(
+                root=root,
+                path=safe_path,
+                target_type="formal-index",
+                target_group=target_group,
+            )
+        )
+
+    recovery_path = _recovery_manifest_path(layout)
+    recovery: dict[str, Any] = {
+        "schema_version": REPAIR_SCHEMA_VERSION,
+        "status": "prepared",
+        "transaction": "entities-and-formal-indexes",
+        "created_at": _now_iso(),
+        "input_fingerprint": expected_fingerprint,
+        "recoverable": True,
+        "item_count": len(snapshots),
+        "entity_item_count": sum(item["target_type"] == "entity" for item in snapshots),
+        "formal_index_item_count": sum(item["target_type"] == "formal-index" for item in snapshots),
+        "items": snapshots,
+    }
+    _write_recovery_manifest(recovery_path, recovery)
+
+    def failure_result(
+        *,
+        stage: str,
+        error: str,
+        index_result: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        rollback = _rollback_target_snapshots(root, snapshots)
+        recovery["status"] = "rolled_back" if rollback["ok"] else "rollback_failed"
+        recovery["rolled_back_at"] = _now_iso()
+        recovery["failure"] = {"stage": stage, "error": error}
+        recovery["rollback"] = rollback
+        if index_result is not None:
+            recovery["index_refresh"] = index_result
+        try:
+            _write_recovery_manifest(recovery_path, recovery)
+        except BaseException as manifest_exc:
+            recovery["manifest_update_error"] = f"{type(manifest_exc).__name__}: {manifest_exc}"
+        return {
             "schema_version": REPAIR_SCHEMA_VERSION,
-            "status": "prepared",
-            "created_at": _now_iso(),
-            "input_fingerprint": expected_fingerprint,
-            "recoverable": True,
-            "item_count": len(recovery_items),
-            "items": recovery_items,
+            "mode": "apply",
+            "ok": False,
+            "status": recovery["status"],
+            "error": f"publication repair rolled back after {stage} failure: {error}",
+            "failure": dict(recovery["failure"]),
+            "rollback": rollback,
+            "summary": dict(plan.get("summary") or {}),
+            "write_count": len(items),
+            "recovery_manifest": str(recovery_path),
+            "index_refresh": index_result,
         }
-        save_json(recovery_path, recovery, ignored_compare_keys=())
 
-        for item in items:
+    for item in items:
+        try:
             save_json(_safe_root_child(root, Path(item["path"])), item["after"], ignored_compare_keys=())
-        for recovery_item in recovery["items"]:
-            recovery_item["after_sha256"] = _sha256_bytes(root / recovery_item["path"])
+        except BaseException as exc:
+            return failure_result(
+                stage="entity-write",
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
-    index_result = refresh_formal_indexes(layout)
-    if recovery is not None and recovery_path is not None:
+    try:
+        index_result = refresh_formal_indexes(layout)
+    except BaseException as exc:
+        index_result = {
+            "ok": False,
+            "steps": [],
+            "completed_steps": [],
+            "failed_steps": [
+                {"step": "refresh_formal_indexes", "error": f"{type(exc).__name__}: {exc}"}
+            ],
+        }
+    if not isinstance(index_result, dict) or not index_result.get("ok", False):
+        detail = "formal index refresh returned failure"
+        if isinstance(index_result, dict) and index_result.get("failed_steps"):
+            detail = json.dumps(index_result["failed_steps"], ensure_ascii=False, sort_keys=True)
+        return failure_result(stage="index-refresh", error=detail, index_result=index_result if isinstance(index_result, dict) else None)
+
+    try:
+        for snapshot in snapshots:
+            after_state = _target_state(root, snapshot)
+            snapshot.update({"after_exists": after_state["exists"], "after_sha256": after_state["sha256"]})
         recovery["status"] = "applied"
         recovery["applied_at"] = _now_iso()
         recovery["index_refresh"] = index_result
-        save_json(recovery_path, recovery, ignored_compare_keys=())
+        _write_recovery_manifest(recovery_path, recovery)
+    except BaseException as exc:
+        return failure_result(
+            stage="recovery-finalize",
+            error=f"{type(exc).__name__}: {exc}",
+            index_result=index_result,
+        )
 
     return {
         "schema_version": REPAIR_SCHEMA_VERSION,
         "mode": "apply",
+        "ok": True,
+        "status": "applied",
         "summary": dict(plan.get("summary") or {}),
         "write_count": len(items),
-        "recovery_manifest": str(recovery_path) if recovery_path else "",
+        "recovery_manifest": str(recovery_path),
         "index_refresh": index_result,
     }
 
@@ -627,18 +896,21 @@ def restore_publication_repair(
     if not apply:
         return {"mode": "restore-preview", "write_count": len(items), "recovery_manifest": str(path)}
     for item in items:
-        target = _safe_root_child(root, root / str(item.get("path")))
+        target = _safe_root_child(root, root / str(item.get("path") or ""))
+        state = _target_state(root, item)
+        expected_after_exists = item.get("after_exists")
         expected_after = _text(item.get("after_sha256"))
-        if expected_after and _sha256_bytes(target) != expected_after:
+        if expected_after_exists is not None and state["exists"] != bool(expected_after_exists):
+            raise ValueError(f"recovery target changed after repair: {target}")
+        if expected_after and state["sha256"] != expected_after:
             raise ValueError(f"recovery target changed after repair: {target}")
     for item in items:
-        target = _safe_root_child(root, root / str(item.get("path")))
-        save_json(target, item.get("before") or {}, ignored_compare_keys=())
+        _restore_target_snapshot(root, item)
     index_result = refresh_formal_indexes(layout)
     payload["status"] = "restored"
     payload["restored_at"] = _now_iso()
     payload["index_refresh_after_restore"] = index_result
-    save_json(path, payload, ignored_compare_keys=())
+    _write_recovery_manifest(path, payload)
     return {
         "mode": "restore",
         "write_count": len(items),
@@ -661,6 +933,8 @@ def repair_publication(
     apply: bool = False,
     expected_fingerprint: str = "",
 ) -> dict[str, Any]:
+    if apply and not _text(expected_fingerprint):
+        raise ValueError("expected plan fingerprint is required before applying publication repairs")
     plan = plan_publication_repairs(layout=layout, subjects=subjects, evidence_ids=evidence_ids)
     if expected_fingerprint and expected_fingerprint != plan.get("input_fingerprint"):
         raise ValueError("requested plan fingerprint does not match current preview")

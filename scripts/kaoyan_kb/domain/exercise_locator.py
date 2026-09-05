@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import Any
 
 from common import ensure_kb_layout, load_json_or_default, now_iso, save_json
+from kaoyan_kb.domain.evidence_publication import is_publishable_source_evidence
 from kaoyan_kb.domain.index_freshness import directory_json_inputs, fingerprint_index_inputs
 
 
@@ -356,6 +357,7 @@ def _relation_printed_pages(
             for evidence_id in evidence_ids
             for evidence in [evidence_by_id.get(evidence_id, {})]
             if str(evidence.get("source_id") or "") == source_id
+            and is_publishable_source_evidence(evidence)
             and _evidence_pdf_page(evidence) == pdf_page
             and int(evidence.get("printed_page", 0) or 0) > 0
         }
@@ -396,7 +398,7 @@ def _grounded_printed_page_records(evidences: list[dict[str, Any]]) -> list[dict
     records: list[dict[str, Any]] = []
     seen: set[tuple[str, str, int, str]] = set()
     for evidence in evidences:
-        if not evidence.get("source_grounded") or evidence.get("verification_status") not in {"reviewed", "source_grounded"} or evidence.get("mapping_status") == "stale":
+        if not is_publishable_source_evidence(evidence):
             continue
         evidence_id = str(evidence.get("evidence_id") or "").strip()
         content = str(evidence.get("content") or "").strip()
@@ -621,7 +623,7 @@ def build_exercise_locator_index() -> dict[str, Any]:
         source_id = str(evidence.get("source_id") or "")
         if source_id not in sources or evidence.get("origin_type") != "pdf_page_ocr":
             continue
-        if evidence.get("verification_status") != "reviewed" or not evidence.get("source_grounded") or evidence.get("mapping_status") == "stale":
+        if not is_publishable_source_evidence(evidence):
             continue
         page = _evidence_pdf_page(evidence)
         if page:

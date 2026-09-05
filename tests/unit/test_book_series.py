@@ -13,6 +13,39 @@ from publish_book_ocr_evidence import collect_publication_items
 from publish_book_exercises import _effective_text
 
 
+def _publication_ready_evidences(evidences: list[dict]) -> list[dict]:
+    ready = []
+    for original in evidences:
+        evidence = dict(original)
+        evidence_id = str(evidence.get("evidence_id") or "TEST-EVIDENCE")
+        refs = [item for item in evidence.get("page_classification_refs", []) or [] if isinstance(item, dict)]
+        source_id = str(evidence.get("source_id") or f"SRC-{evidence_id}")
+        chapter_id = str(evidence.get("chapter_id") or (refs[0].get("chapter_id") if refs else "CH-TEST"))
+        span = {
+            "source_id": source_id,
+            "file_id": f"FILE-{evidence_id}",
+            "source_file_sha256": "test-source-sha",
+            "locator": {"page_start": 1, "page_end": 1, "image_start": 1, "image_end": 1},
+        }
+        evidence.update({
+            "evidence_key": evidence.get("evidence_key") or f"{evidence_id}-key",
+            "source_id": source_id,
+            "chapter_id": chapter_id,
+            "chunk_id": evidence.get("chunk_id") or f"CHUNK-{evidence_id}",
+            "origin_type": evidence.get("origin_type") or "paper_book_reviewed_ocr",
+            "review_status": evidence.get("review_status") or "accepted",
+            "source_spans": evidence.get("source_spans") or [span],
+            "provenance": evidence.get("provenance") or {
+                "origin_type": evidence.get("origin_type") or "paper_book_reviewed_ocr",
+                "verification_status": evidence.get("verification_status") or "source_grounded",
+                "source_grounded": True,
+                "source_spans": [span],
+            },
+        })
+        ready.append(evidence)
+    return ready
+
+
 SERIES_INDEX = {
     "series": [
         {
@@ -361,7 +394,7 @@ def test_same_book_worked_example_pairs_question_page_with_next_page_solution() 
         },
     ]
 
-    pairs = book_series.worked_example_pairs_from_evidence(evidences)
+    pairs = book_series.worked_example_pairs_from_evidence(_publication_ready_evidences(evidences))
 
     pair = next(item for item in pairs if item["exercise_label"] == "例3.8")
     assert pair["pair_status"] == "exact_pair"
@@ -391,7 +424,7 @@ def test_plain_handout_examples_pair_by_page_and_accept_proof_marker() -> None:
         }
     ]
 
-    pairs = book_series.worked_example_pairs_from_evidence(evidences)
+    pairs = book_series.worked_example_pairs_from_evidence(_publication_ready_evidences(evidences))
 
     assert [item["exercise_label"] for item in pairs] == ["例1", "例2"]
     assert all(item["pair_status"] == "exact_pair" for item in pairs)
@@ -423,7 +456,7 @@ def test_restarted_plain_example_number_is_distinguished_by_question_page() -> N
             }
         )
 
-    pairs = book_series.worked_example_pairs_from_evidence(evidences)
+    pairs = book_series.worked_example_pairs_from_evidence(_publication_ready_evidences(evidences))
 
     assert len(pairs) == 2
     assert {item["exercise_key"] for item in pairs} == {
@@ -455,7 +488,7 @@ def test_worked_example_pairs_do_not_cross_missing_printed_pages() -> None:
         },
     ]
 
-    pairs = book_series.worked_example_pairs_from_evidence(evidences)
+    pairs = book_series.worked_example_pairs_from_evidence(_publication_ready_evidences(evidences))
 
     p54 = next(item for item in pairs if item["exercise_label"] == "例1")
     p64 = next(item for item in pairs if item["exercise_label"] == "例2")
@@ -486,7 +519,7 @@ def test_worked_example_answer_stops_before_following_theory() -> None:
         },
     ]
 
-    pairs = book_series.worked_example_pairs_from_evidence(evidences)
+    pairs = book_series.worked_example_pairs_from_evidence(_publication_ready_evidences(evidences))
 
     assert all(item["pair_status"] == "exact_pair" for item in pairs)
     assert "理论证明" not in next(item for item in pairs if item["exercise_label"] == "例2")["solution"]["content"]

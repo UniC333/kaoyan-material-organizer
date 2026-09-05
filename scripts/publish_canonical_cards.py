@@ -15,6 +15,8 @@ from common import (
     is_owned_generated_markdown,
     load_all_json,
     load_json,
+    is_publishable_claim,
+    is_publishable_source_evidence,
     preferred_python_executable,
     resolve_subject,
     run_utf8_subprocess,
@@ -94,13 +96,17 @@ def grouped_card_materials(
             continue
         node_id = str(cluster.get("syllabus_node_id", ""))
         claim_ids = [str(item).strip() for item in cluster.get("claim_ids", []) if str(item).strip()]
-        claims = [claim_map[claim_id] for claim_id in claim_ids if claim_id in claim_map]
-        if not claims:
+        claims = [
+            claim_map[claim_id]
+            for claim_id in claim_ids
+            if claim_id in claim_map and is_publishable_claim(claim_map[claim_id], evidence_map)
+        ]
+        if not claims or len(claims) != len(claim_ids):
             continue
         refs = []
         for claim in claims:
             refs.extend(evidence_map[eid] for eid in claim.get("evidence_ids", []) if eid in evidence_map)
-        if not refs or not all(ref.get("source_grounded") for ref in refs):
+        if not refs or not all(is_publishable_source_evidence(ref) for ref in refs):
             continue
         cluster_copy = dict(cluster)
         cluster_copy["claims"] = claims
@@ -131,10 +137,10 @@ def grouped_card_materials(
             subject = str(claim.get("subject", ""))
             if subjects and subject not in subjects:
                 continue
-            if claim.get("status") != "accepted" or not claim.get("evidence_ids"):
+            if not is_publishable_claim(claim, evidence_map):
                 continue
             refs = [evidence_map[eid] for eid in claim.get("evidence_ids", []) if eid in evidence_map]
-            if not refs or not all(ref.get("source_grounded") for ref in refs):
+            if not refs or not all(is_publishable_source_evidence(ref) for ref in refs):
                 continue
             risks = [
                 item

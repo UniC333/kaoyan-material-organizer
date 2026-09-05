@@ -165,7 +165,9 @@ def main() -> int:
         if args.format == "json":
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         refresh = payload.get("index_refresh") if isinstance(payload, dict) else None
-        return 1 if args.yes and isinstance(refresh, dict) and not refresh.get("ok", True) else 0
+        failed = isinstance(payload, dict) and payload.get("ok") is False
+        failed = failed or (isinstance(refresh, dict) and not refresh.get("ok", True))
+        return 1 if args.yes and failed else 0
 
     layout = ensure_kb_layout()
 
