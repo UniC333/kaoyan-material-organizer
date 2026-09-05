@@ -152,7 +152,7 @@ def main() -> int:
         decision = evidence_publication_decision(evidence)
         evidence_decisions.append((evidence_id, decision))
         findings = _decision_findings(entity="evidence", entity_id=evidence_id, decision=decision)
-        errors.extend(findings)
+        errors.extend(item for item in findings if item["severity"] == "error")
         warnings.extend(item for item in findings if item["severity"] != "error")
 
     claim_index: dict[str, dict[str, Any]] = {}
@@ -163,7 +163,7 @@ def main() -> int:
         decision = claim_publication_decision(claim, evidence_index)
         claim_decisions.append((claim_id, decision))
         findings = _decision_findings(entity="claim", entity_id=claim_id, decision=decision)
-        errors.extend(findings)
+        errors.extend(item for item in findings if item["severity"] == "error")
         warnings.extend(item for item in findings if item["severity"] != "error")
 
     for conflict in load_all_json(layout["conflicts"]):
@@ -183,7 +183,7 @@ def main() -> int:
     summary = _summary(
         evidence_decisions=evidence_decisions,
         claim_decisions=claim_decisions,
-        findings=errors,
+        findings=[*errors, *warnings],
     )
     payload = {
         "ok": not errors,

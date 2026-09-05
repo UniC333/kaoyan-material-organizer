@@ -13,6 +13,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import build_search_index
+import lint_kb_entities
 import publish_canonical_cards
 from kaoyan_kb.domain import book_series, exercise_locator, page_locator
 from kaoyan_kb.domain import evidence_publication as publication
@@ -412,3 +413,23 @@ def test_locator_and_canonical_card_consumers_use_central_publication_gate(tmp_p
     }]})
     grouped, _ = publish_canonical_cards.grouped_card_materials(layout, {"408"})
     assert not grouped
+
+
+@pytest.mark.parametrize("malformed", [False, True])
+def test_lint_separates_retained_audit_warnings_from_structural_errors(monkeypatch, tmp_path, capsys, malformed):
+    layout = layout_for(tmp_path)
+    payload = evidence("EV-AUDIT", origin_type="profile_hint")
+    if malformed:
+        payload.pop("source_spans")
+    write_json(layout["evidence"] / "EV-AUDIT.json", payload)
+    monkeypatch.setattr(lint_kb_entities, "parse_args", lambda: Namespace(format="json"))
+    monkeypatch.setattr(lint_kb_entities, "ensure_kb_layout", lambda: layout)
+    assert lint_kb_entities.main() == int(malformed)
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is (not malformed)
+    assert all(item["severity"] == "error" for item in result["errors"])
+    assert all(item["severity"] == "warning" for item in result["warnings"])
+    assert result["error_count"] == len(result["errors"])
+    assert result["warning_count"] == len(result["warnings"])
+    assert result["summary"]["evidence"]["publishable_count"] == 0
+    assert (result["error_count"] > 0) is malformed
