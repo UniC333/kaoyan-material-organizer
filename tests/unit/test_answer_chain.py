@@ -1116,6 +1116,7 @@ def test_generic_answer_bundle_requires_same_book_relevance_and_dependency_citat
 def test_definition_generic_gate_requires_a_formal_statement_not_an_example_mention() -> None:
     def evidence(evidence_id: str, content: str) -> dict:
         return {
+            **_reviewed_page_content_evidence(),
             "evidence_id": evidence_id,
             "book_title": "李正元数一",
             "source_grounded": True,
@@ -1166,6 +1167,7 @@ def test_definition_generic_gate_requires_a_formal_statement_not_an_example_ment
 def test_compare_gate_requires_formal_same_book_coverage_for_each_topic() -> None:
     def evidence(evidence_id: str, content: str) -> dict:
         return {
+            **_reviewed_page_content_evidence(),
             "evidence_id": evidence_id,
             "book_title": "王道数据结构",
             "source_grounded": True,
