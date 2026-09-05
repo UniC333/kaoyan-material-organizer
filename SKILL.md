@@ -182,7 +182,7 @@ inspect -> map-pages -> OCR -> review -> classify -> publish -> query/ask
 - 原图是只读可信源，不通过移动文件表达书籍或章节归属。
 - OCR 输出在完成审核和证据门控前，不直接写入正式 evidence 或 claim。
 - OCR 置信度不等于章节分类置信度。
-- `book ocr-publish` 与 `book pdf-ocr-publish` 默认只生成零写入发布计划；执行必须显式使用 `--yes --plan-fingerprint <fingerprint>`。执行前会重新计算输入指纹，输入漂移、正式页码索引缺失/过期/冲突或任一复核门禁未通过时 fail-closed。
+- `book publish-exercises`、`book ocr-publish` 与 `book pdf-ocr-publish` 默认只生成零写入发布计划；执行必须显式使用 `--yes --plan-fingerprint <fingerprint>`。执行前会重新计算输入指纹，输入漂移、正式页码索引缺失/过期/冲突或任一复核门禁未通过时 fail-closed。习题发布预览不分配 evidence ID 或改写 `id_counters.json`；执行在事务快照内分配 ID、写 evidence 并刷新 page/exercise/search/book-series 索引，失败全部回滚。
 - 发布事务同时覆盖 evidence 与 page/exercise/search/book-series 索引；刷新失败必须回滚全部相关写入。PDF 发布还必须绑定注册 PDF SHA、当前 OCR 源图 SHA、request key、明确 `accepted` 页复核，以及独立的 `pdf_page` / `printed_page` 映射；`not-required` 页面不具备发布资格。
 - 发布完成后的验收必须重放原始自然语言 `query` / `ask` 请求；索引数量、覆盖率或通用测试不能单独证明学习问题闭环。旧的 `publish_full_pdf_ocr_evidence.py` 是显式失败的兼容 shim，不得作为旁路入口。
 - 人工文件、人工审核结果和人工考纲不得自动覆盖。

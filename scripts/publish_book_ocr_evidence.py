@@ -501,7 +501,8 @@ def publish(
     )
     if yes and not expected_plan_fingerprint:
         raise SystemExit("[ERROR] --yes requires --plan-fingerprint from a fresh zero-write preview")
-    require_matching_plan_fingerprint(expected_plan_fingerprint, plan["plan_fingerprint"])
+    if expected_plan_fingerprint:
+        require_matching_plan_fingerprint(expected_plan_fingerprint, plan["plan_fingerprint"])
     if not yes:
         return plan
     if not plan["can_execute"]:

@@ -133,7 +133,12 @@ $env:MISTRAL_API_KEY = "your-key"
 .\.venv\Scripts\python.exe scripts\kb.py book ocr --book-root <book-root> --stage basic --chapter-id <chapter-id> --dry-run --format json
 ```
 
-`--dry-run` 不访问远程 OCR，也不写 `page_ocr_status.json`。OCR、复核和分类完成后，先预览 `book publish-exercises`；只有追加 `--yes` 才会把审核通过的习题发布到 evidence。问答结果中的 `book_route` 和 `exercise_route` 分别说明书系识别及题目—题解配对状态。
+`--dry-run` 不访问远程 OCR，也不写 `page_ocr_status.json`。OCR、复核和分类完成后，先预览 `book publish-exercises`；执行时必须追加预览返回的 `--plan-fingerprint`，再使用 `--yes` 才会把审核通过的习题发布到 evidence。预览不分配 evidence ID，也不改写 `id_counters.json`；执行会在事务快照内分配 ID、写 evidence、刷新 page/exercise/search/book-series 四类索引，任何失败都会回滚。问答结果中的 `book_route` 和 `exercise_route` 分别说明书系识别及题目—题解配对状态。
+
+```powershell
+.\.venv\Scripts\python.exe scripts\kb.py book publish-exercises --book-root <book-root> --format json
+.\.venv\Scripts\python.exe scripts\kb.py book publish-exercises --book-root <book-root> --yes --plan-fingerprint <fingerprint> --format json
+```
 
 OCR 证据发布使用独立的零写入预览：
 

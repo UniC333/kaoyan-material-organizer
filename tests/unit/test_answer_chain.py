@@ -19,6 +19,7 @@ import doctor_ocr_env as doctor_module
 import kb as kb_module
 import lint_kb_entities as lint_module
 import publish_book_ocr_evidence as image_publish_module
+import publish_book_exercises as exercise_publish_module
 import publish_pdf_ocr_evidence as pdf_publish_module
 import publish_full_pdf_ocr_evidence as legacy_pdf_publish_module
 import query_local_knowledge as query_module
@@ -81,6 +82,26 @@ def test_pdf_ocr_publication_uses_accepted_review_overlay() -> None:
     }
 
     assert pdf_publish_module._reviewed_page_text(normalized, overlay) == "next[1]=1\nunchanged"
+
+
+def test_photo_exercise_effective_text_skips_ignored_blocks_and_blocks_explicit_pending() -> None:
+    normalized = {
+        "chunk_candidates": [
+            {"block_id": "formula", "block_type": "formula", "confidence": 1.0, "text": "被忽略公式"},
+            {"block_id": "plain", "block_type": "paragraph", "confidence": 1.0, "text": "普通正文"},
+        ]
+    }
+
+    text, blockers = exercise_publish_module._effective_text(
+        normalized,
+        {
+            "formula": {"review_status": "ignored"},
+            "plain": {"review_status": "pending"},
+        },
+    )
+
+    assert text == ""
+    assert blockers == ["plain"]
 
 
 def test_pdf_ocr_publication_keeps_printed_page_separate_from_pdf_page() -> None:
@@ -166,6 +187,206 @@ def test_image_publication_rolls_back_evidence_when_index_refresh_fails(monkeypa
     assert result["publish_status"] == "failed"
     assert result["rolled_back"] is True
     assert not (evidence_dir / "EV-MATH-000001.json").exists()
+
+
+def test_exercise_publication_preview_is_zero_write_and_stable(monkeypatch, tmp_path: Path) -> None:
+    book_root = tmp_path / "book"
+    metadata = book_root / "metadata"
+    kb_root = tmp_path / "kb"
+    ocr_root = tmp_path / "ocr"
+    metadata.mkdir(parents=True)
+    (kb_root / "indexes").mkdir(parents=True)
+    (kb_root / "manifests" / "sources").mkdir(parents=True)
+    image_path = book_root / "page.jpg"
+    image_path.write_bytes(b"photo-book-page")
+    from common import sha256_for_file
+
+    image_sha = sha256_for_file(image_path)
+    normalized_path = ocr_root / "normalized.json"
+    normalized_path.parent.mkdir(parents=True)
+    normalized_path.write_text(
+        json.dumps(
+            {
+                "request_key": "request-1",
+                "source_file_sha256": image_sha,
+                "chunk_candidates": [
+                    {"block_id": "b1", "block_type": "paragraph", "confidence": 1.0, "text": "选择题\n1. 题目"}
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (book_root / "book.yaml").write_text("subject: 数学\nbook_id: Q\n", encoding="utf-8")
+    (metadata / "page_assets.json").write_text(
+        json.dumps(
+            {
+                "book_id": "Q",
+                "items": [{"page_id": "PAGE-1", "source_image_path": str(image_path), "source_image_sha256": image_sha}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (metadata / "page_ocr_status.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "page_id": "PAGE-1",
+                        "status": "completed",
+                        "normalized_path": str(normalized_path),
+                        "request_key": "request-1",
+                        "source_image_path": str(image_path),
+                        "source_image_sha256": image_sha,
+                        "printed_page": 1,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (metadata / "page_classifications.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "page_id": "PAGE-1",
+                        "classification_status": "confirmed",
+                        "chapter_id": "SERIES-B-CALC-1",
+                        "chapter_title": "第一章",
+                        "printed_page": 1,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (kb_root / "manifests" / "sources" / "SRC-1.json").write_text(
+        json.dumps(
+            {
+                "source_id": "SRC-1",
+                "source_path": str(book_root),
+                "material_type": "chapter-photo",
+                "status": "active",
+                "files": [{"file_id": "FILE-1", "absolute_path": str(image_path), "sha256": image_sha}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (kb_root / "indexes" / "book_series_index.json").write_text(
+        json.dumps(
+            {
+                "series": [
+                    {
+                        "series_id": "SERIES",
+                        "subject": "数学",
+                        "volumes": [{"book_id": "Q", "title": "题目册", "role": "question_book"}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime = SimpleNamespace(
+        paper_book_metadata_dir="metadata",
+        kb_root=kb_root,
+        ocr_cache_root=ocr_root,
+    )
+    monkeypatch.setattr(exercise_publish_module, "load_runtime_config", lambda: runtime)
+    monkeypatch.setattr(
+        exercise_publish_module,
+        "allocate_kb_id",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("preview allocated an evidence id")),
+    )
+
+    first = exercise_publish_module.build_publication_plan(book_root=book_root)
+    second = exercise_publish_module.build_publication_plan(book_root=book_root)
+
+    assert first["can_execute"] is True
+    assert first["plan_fingerprint"] == second["plan_fingerprint"]
+    assert any(item["label"] == "source-image/PAGE-1" and item["sha256"] == image_sha for item in first["inputs"])
+    assert not (kb_root / "indexes" / "id_counters.json").exists()
+
+
+def test_exercise_publication_requires_matching_plan_fingerprint(monkeypatch, tmp_path: Path) -> None:
+    runtime = SimpleNamespace(kb_root=tmp_path)
+    layout = {"evidence": tmp_path / "evidence"}
+    layout["evidence"].mkdir()
+    plan = {"plan_fingerprint": "new-fp", "can_execute": True, "preview_only": True}
+    monkeypatch.setattr(exercise_publish_module, "_prepare_plan", lambda **_: (plan, [], {}, runtime, layout))
+
+    with pytest.raises(SystemExit, match="requires --plan-fingerprint"):
+        exercise_publish_module.publish_exercises(book_root=tmp_path, yes=True)
+    with pytest.raises(SystemExit, match="fingerprint changed"):
+        exercise_publish_module.publish_exercises(book_root=tmp_path, yes=True, expected_plan_fingerprint="old-fp")
+
+
+def test_publication_fingerprint_helper_rejects_missing_expected_value() -> None:
+    from publication_support import require_matching_plan_fingerprint
+
+    with pytest.raises(SystemExit, match="requires --plan-fingerprint"):
+        require_matching_plan_fingerprint(None, "actual-fp")
+
+
+def test_exercise_publication_rolls_back_evidence_and_indexes_when_refresh_fails(monkeypatch, tmp_path: Path) -> None:
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    index_path = tmp_path / "indexes" / "page_locator_index.json"
+    index_path.parent.mkdir()
+    index_path.write_text("before", encoding="utf-8")
+    runtime = SimpleNamespace(kb_root=tmp_path)
+    layout = {"evidence": evidence_dir}
+    plan = {"plan_fingerprint": "preview-fp", "can_execute": True, "preview_only": True}
+    monkeypatch.setattr(
+        exercise_publish_module,
+        "_prepare_plan",
+        lambda **_: (plan, [{"evidence_key": "exercise-key"}], {}, runtime, layout),
+    )
+    monkeypatch.setattr(
+        exercise_publish_module,
+        "_build_evidence",
+        lambda **_: {"evidence_id": "EV-MATH-000001", "evidence_key": "exercise-key"},
+    )
+    monkeypatch.setattr(exercise_publish_module, "ensure_kb_layout", lambda: layout)
+
+    def fail_after_index_write() -> None:
+        index_path.write_text("after", encoding="utf-8")
+        raise SystemExit("refresh failed")
+
+    monkeypatch.setattr(exercise_publish_module, "refresh_query_indexes", fail_after_index_write)
+
+    result = exercise_publish_module.publish_exercises(
+        book_root=tmp_path,
+        yes=True,
+        expected_plan_fingerprint="preview-fp",
+    )
+
+    assert result["publish_status"] == "failed"
+    assert result["rolled_back"] is True
+    assert not (evidence_dir / "EV-MATH-000001.json").exists()
+    assert index_path.read_text(encoding="utf-8") == "before"
+
+
+@pytest.mark.parametrize("publish_status", ["failed", "blocked"])
+def test_exercise_publisher_main_returns_nonzero_for_failed_or_yes_blocked(
+    monkeypatch, tmp_path: Path, publish_status: str
+) -> None:
+    monkeypatch.setattr(
+        exercise_publish_module,
+        "parse_args",
+        lambda: SimpleNamespace(
+            book_root=str(tmp_path),
+            yes=True,
+            plan_fingerprint="fp",
+            format="quiet",
+        ),
+    )
+    monkeypatch.setattr(
+        exercise_publish_module,
+        "publish_exercises",
+        lambda **_: {"publish_status": publish_status},
+    )
+
+    assert exercise_publish_module.main() == 2
 
 
 def test_pdf_publication_rejects_not_required_page_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -257,6 +478,11 @@ def test_help_exposes_the_single_full_publication_chain() -> None:
     )
     assert parsed.yes is True
     assert parsed.plan_fingerprint == "fp"
+    exercise_parsed = kb_module.build_parser().parse_args(
+        ["book", "publish-exercises", "--book-root", "book", "--yes", "--plan-fingerprint", "exercise-fp"]
+    )
+    assert exercise_parsed.yes is True
+    assert exercise_parsed.plan_fingerprint == "exercise-fp"
 
 
 def test_pdf_publication_plan_binds_report_artifact_review_and_current_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

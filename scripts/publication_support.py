@@ -112,7 +112,9 @@ class FileTransaction:
 
 
 def require_matching_plan_fingerprint(expected: str | None, actual: str) -> None:
-    if expected and expected != actual:
+    if not expected:
+        raise SystemExit("[ERROR] --yes requires --plan-fingerprint from a fresh zero-write preview")
+    if expected != actual:
         raise SystemExit(
             "[ERROR] publication plan fingerprint changed; inputs changed after preview, regenerate the plan"
         )

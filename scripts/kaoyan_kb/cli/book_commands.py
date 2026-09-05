@@ -24,7 +24,14 @@ def add_book_commands(subparsers: argparse._SubParsersAction, *, formatter_class
         item.add_argument("--format", choices=("json", "quiet"), default="json"); return item
     inspect = path("inspect", dry=True); inspect.add_argument("--min-width", type=int); inspect.add_argument("--min-height", type=int); inspect.add_argument("--blur-threshold", type=float); inspect.add_argument("--phash-distance", type=int)
     path("map-pages", dry=True); path("classify"); path("register-photo-source")
-    publish_exercises = path("publish-exercises"); publish_exercises.add_argument("--yes", action="store_true")
+    publish_exercises = path("publish-exercises")
+    publish_exercises.description = (
+        "Preview or publish reviewed photo-book exercises. Workflow: inspect -> map-pages -> OCR -> "
+        "review -> classify -> publish -> query/ask. Default is zero-write; --yes requires the "
+        "unchanged --plan-fingerprint from preview."
+    )
+    publish_exercises.add_argument("--yes", action="store_true", help="execute the reviewed plan and refresh all retrieval indexes")
+    publish_exercises.add_argument("--plan-fingerprint", help="fingerprint from preview; reject execution after input drift")
     chapters = path("generate-chapters"); chapters.add_argument("--context-json", required=True); chapters.add_argument("--plan-json", required=True)
     pdf = command("register-pdf-source"); pdf.add_argument("--subject", required=True); pdf.add_argument("--book-title", required=True); pdf.add_argument("--pdf-path", required=True); pdf.add_argument("--edition", default=""); pdf.add_argument("--format", choices=("json", "quiet"), default="json")
     parallel = command("link-parallel-sources"); parallel.add_argument("--subject", required=True); parallel.add_argument("--book-title", required=True); parallel.add_argument("--image-book-root", required=True); parallel.add_argument("--pdf-source-id", default=""); parallel.add_argument("--context-root", default=""); parallel.add_argument("--format", choices=("json", "quiet"), default="json")
@@ -93,6 +100,7 @@ def dispatch_book(args: argparse.Namespace, run_script: Callable[..., str]) -> s
     if c == "publish-exercises":
         forwarded = _format(args, "--book-root", args.book_root)
         if args.yes: forwarded.append("--yes")
+        if args.plan_fingerprint: forwarded.extend(["--plan-fingerprint", args.plan_fingerprint])
         return run_script("publish_book_exercises.py", *forwarded)
     if c == "generate-chapters": return run_script("generate_book_chapters.py", *_format(args, "--book-root", args.book_root, "--context-json", args.context_json, "--plan-json", args.plan_json))
     if c == "register-pdf-source": return run_script("register_pdf_book_source.py", *_format(args, "--subject", args.subject, "--book-title", args.book_title, "--pdf-path", args.pdf_path, "--edition", args.edition))
