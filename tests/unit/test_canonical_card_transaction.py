@@ -78,3 +78,32 @@ def test_success_publishes_card_and_index(monkeypatch, tmp_path):
     index = json.loads((layout["indexes"] / "canonical_cards.json").read_text(encoding="utf-8"))
     assert index["count"] == 1
     assert index["items"][0]["card_path"] == str(path)
+
+
+def test_failure_after_deletion_restores_deleted_card_and_index(monkeypatch, tmp_path):
+    _, layout, new_card = setup_cards(monkeypatch, tmp_path)
+    new_card.parent.mkdir(parents=True)
+    old_card = new_card.with_name("old.md")
+    old_bytes = b"owned old card\r\n"
+    old_card.write_bytes(old_bytes)
+    index = layout["indexes"] / "canonical_cards.json"
+    index.parent.mkdir(parents=True)
+    index_bytes = b'{"count": 0, "items": []}\r\n'
+    index.write_bytes(index_bytes)
+    monkeypatch.setattr(cards, "is_owned_generated_markdown", lambda *args: True)
+    unlink = Path.unlink
+    failed = False
+
+    def fail_after_delete(path, *args, **kwargs):
+        nonlocal failed
+        unlink(path, *args, **kwargs)
+        if path == old_card and not failed:
+            failed = True
+            raise OSError("delete failure")
+
+    monkeypatch.setattr(Path, "unlink", fail_after_delete)
+    with pytest.raises(OSError, match="delete failure"):
+        cards.main()
+    assert old_card.read_bytes() == old_bytes
+    assert index.read_bytes() == index_bytes
+    assert not new_card.exists()
