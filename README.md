@@ -10,6 +10,7 @@
 
 - 注册教材、PDF 与纸质书照片，并保留来源和内容哈希。
 - 按 `inspect -> map-pages -> OCR -> review -> classify -> publish -> query/ask` 处理纸质教材与 PDF。
+- `book pdf-ocr-approve-mapping-interval` 与 `book pdf-ocr-apply-outline` 默认只预览；人工复核后用同一组参数加 `--yes --plan-fingerprint <预览指纹>` 执行。输入变化会拒绝执行，任一写入失败会恢复本次涉及的映射、分类及审计文件。
 - 将证据关联到考纲、知识点和可复用知识卡。
 - 在本地知识库中检索和提问，输出带来源的回答。
 - 根据学习记录、错题和薄弱点生成复习与学习建议。

@@ -180,6 +180,7 @@ inspect -> map-pages -> OCR -> review -> classify -> publish -> query/ask
 ```
 
 - 原图是只读可信源，不通过移动文件表达书籍或章节归属。
+- PDF 连续映射审批和目录分类入口同样默认零写预览；执行须携带 `--yes --plan-fingerprint <预览指纹>`，只对本次映射/分类/审计目标建立事务，任一写入失败恢复全部目标。预览不构成人工复核。
 - OCR 输出在完成审核和证据门控前，不直接写入正式 evidence 或 claim。
 - OCR 置信度不等于章节分类置信度。
 - `book publish-exercises`、`book ocr-publish` 与 `book pdf-ocr-publish` 默认只生成零写入发布计划；执行必须显式使用 `--yes --plan-fingerprint <fingerprint>`。执行前会重新计算输入指纹，输入漂移、正式页码索引缺失/过期/冲突或任一复核门禁未通过时 fail-closed。习题发布预览不分配 evidence ID 或改写 `id_counters.json`；执行在事务快照内分配 ID、写 evidence 并刷新 page/exercise/search/book-series 索引，失败全部回滚。

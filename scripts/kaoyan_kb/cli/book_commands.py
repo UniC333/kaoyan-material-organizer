@@ -69,7 +69,9 @@ def add_book_commands(subparsers: argparse._SubParsersAction, *, formatter_class
     page_review = command("pdf-ocr-page-review"); page_review.add_argument("--pdf-source-id", required=True); page_review.add_argument("--pdf-page", required=True, type=int); page_review.add_argument("--printed-page", type=int); page_review.add_argument("--page-header-confirmed", action="store_true"); page_review.add_argument("--review-status", choices=("pending", "accepted", "rejected"), required=True); page_review.add_argument("--request-key", default=""); page_review.add_argument("--source-image-sha256", default=""); page_review.add_argument("--note", default=""); page_review.add_argument("--format", choices=("json", "quiet"), default="json")
     mapping_candidates = command("pdf-ocr-map-candidates"); mapping_candidates.add_argument("--subject", required=True); mapping_candidates.add_argument("--book-title", required=True); mapping_candidates.add_argument("--pdf-source-id", required=True); mapping_candidates.add_argument("--report-path", default=""); mapping_candidates.add_argument("--format", choices=("json", "quiet"), default="json")
     mapping_interval = command("pdf-ocr-approve-mapping-interval"); mapping_interval.add_argument("--pdf-source-id", required=True); mapping_interval.add_argument("--pdf-start", type=int, required=True); mapping_interval.add_argument("--pdf-end", type=int, required=True); mapping_interval.add_argument("--printed-start", type=int, required=True); mapping_interval.add_argument("--printed-end", type=int, required=True); mapping_interval.add_argument("--visual-review-note", required=True); mapping_interval.add_argument("--yes", action="store_true"); mapping_interval.add_argument("--format", choices=("json", "quiet"), default="json")
+    mapping_interval.add_argument("--plan-fingerprint")
     outline = command("pdf-ocr-apply-outline"); outline.add_argument("--subject", required=True); outline.add_argument("--book-title", required=True); outline.add_argument("--pdf-source-id", required=True); outline.add_argument("--outline-json", required=True); outline.add_argument("--yes", action="store_true"); outline.add_argument("--format", choices=("json", "quiet"), default="json")
+    outline.add_argument("--plan-fingerprint")
     coverage = command("exercise-coverage"); coverage.add_argument("--subject", required=True); coverage.add_argument("--book-title", required=True)
     coverage_source = coverage.add_mutually_exclusive_group(); coverage_source.add_argument("--source-id", default=""); coverage_source.add_argument("--pdf-source-id", default="", help="compatibility alias for --source-id")
     coverage.add_argument("--chapter-number", type=int); coverage.add_argument("--verify-query-ask", action="store_true"); coverage.add_argument("--expected-relations", type=int); coverage.add_argument("--require-complete", action="store_true"); coverage.add_argument("--format", choices=("json", "quiet"), default="json")
@@ -169,10 +171,12 @@ def dispatch_book(args: argparse.Namespace, run_script: Callable[..., str]) -> s
         return run_script("build_pdf_page_mapping_candidates.py", *forwarded)
     if c == "pdf-ocr-approve-mapping-interval":
         forwarded = _format(args, "--pdf-source-id", args.pdf_source_id, "--pdf-start", str(args.pdf_start), "--pdf-end", str(args.pdf_end), "--printed-start", str(args.printed_start), "--printed-end", str(args.printed_end), "--visual-review-note", args.visual_review_note)
+        if args.plan_fingerprint: forwarded.extend(["--plan-fingerprint", args.plan_fingerprint])
         if args.yes: forwarded.append("--yes")
         return run_script("approve_pdf_page_mapping_interval.py", *forwarded)
     if c == "pdf-ocr-apply-outline":
         forwarded = _format(args, "--subject", args.subject, "--book-title", args.book_title, "--pdf-source-id", args.pdf_source_id, "--outline-json", args.outline_json)
+        if args.plan_fingerprint: forwarded.extend(["--plan-fingerprint", args.plan_fingerprint])
         if args.yes: forwarded.append("--yes")
         return run_script("apply_pdf_ocr_outline.py", *forwarded)
     if c == "exercise-coverage":

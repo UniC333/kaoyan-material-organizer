@@ -8,11 +8,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import ensure_kb_layout, load_json_or_default, now_iso, sanitize_name, save_json
+from common import kb_layout, load_json_or_default, now_iso, sanitize_name, save_json
+from publication_support import FileTransaction, file_input, publication_plan_fingerprint, require_matching_plan_fingerprint
 
 
-def apply_outline(*, subject: str, book_title: str, pdf_source_id: str, outline_path: Path) -> dict[str, Any]:
-    layout = ensure_kb_layout()
+def apply_outline(*, subject: str, book_title: str, pdf_source_id: str, outline_path: Path,
+                  yes: bool = False, expected_plan_fingerprint: str | None = None) -> dict[str, Any]:
+    layout = kb_layout()
     source = load_json_or_default(layout["sources"] / f"{pdf_source_id}.json", {})
     files = [item for item in source.get("files", []) or [] if isinstance(item, dict)]
     source_sha = str((files[0] if files else {}).get("sha256") or "")
@@ -23,15 +25,33 @@ def apply_outline(*, subject: str, book_title: str, pdf_source_id: str, outline_
     starts.sort(key=lambda item: int(item["printed_page_start"]))
     if not starts:
         raise SystemExit("[ERROR] outline has no valid entries")
+    if len({int(item["printed_page_start"]) for item in starts}) != len(starts):
+        raise SystemExit("[ERROR] duplicate outline page starts")
     review_path = layout["review_queues"] / "pdf-page-review" / f"{pdf_source_id}.json"
-    reviews = [item for item in load_json_or_default(review_path, {}).get("items", []) if isinstance(item, dict) and item.get("review_status") == "accepted" and item.get("page_header_verified") and item.get("source_file_sha256") == source_sha]
+    review_payload = load_json_or_default(review_path, {})
+    all_reviews = [item for item in review_payload.get("items", []) if isinstance(item, dict)]
+    if review_payload.get("source_id") != pdf_source_id:
+        raise SystemExit("[ERROR] page review source does not match the outline")
+    if len({item.get("pdf_page") for item in all_reviews}) != len(all_reviews):
+        raise SystemExit("[ERROR] duplicate or conflicting PDF page reviews")
+    reviews = [item for item in all_reviews if item.get("review_status") == "accepted" and item.get("page_header_verified") and item.get("source_file_sha256") == source_sha]
     if not reviews:
         raise SystemExit("[ERROR] no formally mapped PDF pages available for classification")
-    bridge = load_json_or_default(layout["indexes"] / "pdf_ocr_review_status" / f"{subject.lower()}-{sanitize_name(book_title)}.json", {})
-    classifications_path = Path(str(bridge.get("page_classifications_path") or ""))
-    definitions_path = Path(str(bridge.get("chapter_definitions_path") or ""))
-    if not classifications_path or not definitions_path:
+    if any(not isinstance(item.get(key), int) or isinstance(item.get(key), bool) or item[key] < 1
+           for item in reviews for key in ("pdf_page", "printed_page")):
+        raise SystemExit("[ERROR] formal reviews require independent positive page numbers")
+    if len({item["printed_page"] for item in reviews}) != len(reviews):
+        raise SystemExit("[ERROR] conflicting printed-page mappings")
+    bridge_path = layout["indexes"] / "pdf_ocr_review_status" / f"{subject.lower()}-{sanitize_name(book_title)}.json"
+    bridge = load_json_or_default(bridge_path, {})
+    classification_name = str(bridge.get("page_classifications_path") or "").strip()
+    definition_name = str(bridge.get("chapter_definitions_path") or "").strip()
+    if not classification_name or not definition_name:
         raise SystemExit("[ERROR] create the PDF review-status bridge before applying the outline")
+    classifications_path = Path(classification_name).resolve()
+    definitions_path = Path(definition_name).resolve()
+    if classifications_path == definitions_path or any(path.is_dir() for path in (classifications_path, definitions_path)):
+        raise SystemExit("[ERROR] classification and definition targets must be distinct files")
     now = now_iso()
     items: list[dict[str, Any]] = []
     chapters: dict[str, dict[str, Any]] = {}
@@ -72,12 +92,36 @@ def apply_outline(*, subject: str, book_title: str, pdf_source_id: str, outline_
         if section and section not in definition["sections"]:
             definition["sections"].append(section)
     payload = {"book_id": f"PDFOCR-{pdf_source_id}", "created_at": now, "updated_at": now, "items": items, "summary": {"confirmed_count": len(items), "candidate_count": 0, "conflict_count": 0, "unassigned_count": 0}}
-    save_json(classifications_path, payload, ignored_compare_keys=())
-    save_json(definitions_path, {"book_id": f"PDFOCR-{pdf_source_id}", "created_at": now, "updated_at": now, "items": sorted(chapters.values(), key=lambda item: (int(item["page_start"]), item["chapter_id"]))}, ignored_compare_keys=())
+    definitions = {"book_id": f"PDFOCR-{pdf_source_id}", "created_at": now, "updated_at": now, "items": sorted(chapters.values(), key=lambda item: (int(item["page_start"]), item["chapter_id"]))}
     audit = {"pdf_source_id": pdf_source_id, "source_file_sha256": source_sha, "outline_path": str(outline_path), "classification_status": "confirmed", "mapped_page_count": len(items), "unmapped_pages_remain_unclassified": True, "approved_at": now}
     audit_path = layout["indexes"] / "pdf_ocr_outline_approvals" / f"{pdf_source_id}.json"
-    save_json(audit_path, audit, ignored_compare_keys=())
-    return {**audit, "page_classifications_path": str(classifications_path), "chapter_definitions_path": str(definitions_path), "audit_path": str(audit_path)}
+    targets = [classifications_path, definitions_path, audit_path]
+    if len({path.resolve() for path in targets}) != len(targets):
+        raise SystemExit("[ERROR] outline targets overlap")
+    plan = {
+        "publication_kind": "pdf-contents-outline",
+        "arguments": {"subject": subject, "book_title": book_title, "source_id": pdf_source_id,
+                      "outline_path": str(outline_path.resolve())},
+        "inputs": [file_input(label, path) for label, path in (
+            ("source", layout["sources"] / f"{pdf_source_id}.json"), ("outline", outline_path),
+            ("reviews", review_path), ("bridge", bridge_path), ("classifications", classifications_path),
+            ("definitions", definitions_path), ("audit", audit_path))],
+        "writes": {"paths": [str(path) for path in targets]},
+    }
+    fingerprint = publication_plan_fingerprint(plan)
+    if yes or expected_plan_fingerprint:
+        require_matching_plan_fingerprint(expected_plan_fingerprint, fingerprint)
+    if yes:
+        transaction = FileTransaction(targets)
+        try:
+            for path, value in zip(targets, (payload, definitions, audit)):
+                save_json(path, value, ignored_compare_keys=())
+        except BaseException:
+            transaction.restore()
+            raise
+        transaction.commit()
+    return {**audit, **plan, "preview_only": not yes, "plan_fingerprint": fingerprint,
+            "page_classifications_path": str(classifications_path), "chapter_definitions_path": str(definitions_path), "audit_path": str(audit_path)}
 
 
 def main() -> int:
@@ -87,11 +131,10 @@ def main() -> int:
     parser.add_argument("--pdf-source-id", required=True)
     parser.add_argument("--outline-json", required=True)
     parser.add_argument("--yes", action="store_true")
+    parser.add_argument("--plan-fingerprint")
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
     args = parser.parse_args()
-    if not args.yes:
-        raise SystemExit("[ERROR] outline application writes formal classifications; repeat with --yes")
-    payload = apply_outline(subject=args.subject, book_title=args.book_title, pdf_source_id=args.pdf_source_id, outline_path=Path(args.outline_json))
+    payload = apply_outline(subject=args.subject, book_title=args.book_title, pdf_source_id=args.pdf_source_id, outline_path=Path(args.outline_json), yes=args.yes, expected_plan_fingerprint=args.plan_fingerprint)
     if args.format == "json": print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
