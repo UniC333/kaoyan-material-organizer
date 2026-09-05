@@ -11,7 +11,7 @@ from typing import Any
 
 from common import (
     default_vault_root_arg,
-    ensure_kb_layout,
+    kb_layout,
     is_owned_generated_markdown,
     load_all_json,
     load_json,
@@ -25,6 +25,7 @@ from common import (
     validate_entity_contract,
     wrap_generated_markdown,
 )
+from publication_support import FileTransaction
 
 HIGH_RISK_TYPES = {"missing_condition", "true_conflict"}
 CARD_DIRNAME = "20_考点主卡"
@@ -244,8 +245,8 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = parse_args()
-    execute = args.yes or args.force
-    layout = ensure_kb_layout()
+    execute = (args.yes or args.force) and not args.dry_run
+    layout = kb_layout()
     vault_root = Path(args.vault_root)
     selected_subjects = {resolve_subject(item)[0] for item in args.subject} if args.subject else set()
     grouped_materials, _ = grouped_card_materials(layout, selected_subjects)
@@ -314,13 +315,23 @@ def main() -> int:
     if execute and not args.no_backup:
         backup_snapshot_id = create_backup()
     if execute:
-        for item in published_current:
-            card_path = Path(item["card_path"])
-            card_path.parent.mkdir(parents=True, exist_ok=True)
-            save_text(card_path, str(item["_rendered"]))
-        save_json(index_path, {"count": len(merged), "items": merged})
-        for path in planned_deletes:
-            Path(path).unlink(missing_ok=True)
+        transaction = FileTransaction([
+            index_path,
+            *(Path(item["card_path"]) for item in published_current),
+            *(Path(path) for path in planned_deletes),
+        ])
+        try:
+            for item in published_current:
+                card_path = Path(item["card_path"])
+                card_path.parent.mkdir(parents=True, exist_ok=True)
+                save_text(card_path, str(item["_rendered"]))
+            save_json(index_path, {"count": len(merged), "items": merged})
+            for path in planned_deletes:
+                Path(path).unlink(missing_ok=True)
+        except BaseException:
+            transaction.restore()
+            raise
+        transaction.commit()
 
     if args.format == "json":
         print(
