@@ -475,18 +475,68 @@ def evidence_excerpt(evidence: dict, question: str) -> tuple[int, str]:
 
 
 def formal_topic_excerpt(evidence: dict, topic: str) -> tuple[int, str]:
-    """Choose a formal, topic-specific sentence for a comparison answer."""
+    """Choose a formal, topic-specific passage instead of a page-level mention."""
     normalized_topic = re.sub(r"\s+", "", str(topic or "")).lower()
     if not normalized_topic or not evidence_has_formal_topic_statement(evidence, [normalized_topic]):
         return 0, ""
+    raw_lines = [re.sub(r"\s+", " ", str(line)).strip() for line in str(evidence.get("content") or "").splitlines()]
     candidates: list[tuple[int, str]] = []
     rejected = ("例", "例如", "解", "证明", "证法", "由", "利用", "根据", "题型", "方法", "考点追踪")
-    for raw_line in str(evidence.get("content") or "").splitlines():
-        line = re.sub(r"\s+", " ", str(raw_line)).strip()
+
+    def compact_line(value: str) -> str:
+        return re.sub(r"\s+", "", value.lstrip("#>*- 【[（(")).lower()
+
+    def is_rejected(compact: str) -> bool:
+        return (
+            compact.startswith(rejected)
+            or "应用" in compact
+            or "用法" in compact
+            or any(marker in compact for marker in ("（ ）", "()", "选项", "真题", "选择题", "试编写", "下列"))
+        )
+
+    def is_formal(compact: str, *, require_topic: bool = False) -> bool:
+        if not compact or (require_topic and normalized_topic not in compact) or is_rejected(compact):
+            return False
+        direct = re.search(
+            re.escape(normalized_topic)
+            + r"(?:[（(][^）)]{0,12}[）)]|的(?:定义|概念|特点|特性|核心规则))?(?:是|为|指|叫做|称为|定义为)",
+            compact,
+        )
+        condition = (
+            ("设" in compact and "则" in compact)
+            or ("若" in compact and "则" in compact)
+            or ("如果" in compact and "则" in compact)
+            or ("对任意" in compact and ("存在" in compact or "则" in compact))
+            or ("对于" in compact and ("存在" in compact or "则" in compact or "满足" in compact))
+        )
+        return bool(direct or condition or ("定义" in compact and ("是" in compact or "为" in compact)))
+
+    def formula_line(compact: str) -> bool:
+        return not is_rejected(compact) and any(marker in compact for marker in ("=", "\\in", "\\le", "\\ge", "\\forall", "\\exists"))
+
+    for index, line in enumerate(raw_lines):
         compact = re.sub(r"\s+", "", line.lstrip("#>*- 【[（(")).lower()
-        if normalized_topic not in compact or line.startswith(("#", "![")):
+        if normalized_topic not in compact or line.startswith("![") or is_rejected(compact):
             continue
-        if compact.startswith(rejected) or "应用" in compact or "用法" in compact:
+
+        heading_like = line.startswith("#") or len(compact) <= 16
+        if heading_like:
+            for following_index in range(index + 1, min(len(raw_lines), index + 6)):
+                following = raw_lines[following_index]
+                following_compact = compact_line(following)
+                if not (is_formal(following_compact) or formula_line(following_compact)):
+                    continue
+                passage = [line, following]
+                for formula in raw_lines[following_index + 1 : following_index + 3]:
+                    formula_compact = compact_line(formula)
+                    if formula.startswith("#") or is_rejected(formula_compact):
+                        break
+                    if formula_line(formula_compact):
+                        passage.append(formula)
+                candidates.append((170 if len(passage) > 2 else 150, "：".join(passage[:2]) + ("\n" + "\n".join(passage[2:]) if len(passage) > 2 else "")))
+                break
+
+        if not is_formal(compact, require_topic=True):
             continue
         score = 10
         if re.search(
@@ -527,6 +577,26 @@ def generic_compare_conclusion(result: dict) -> str:
     return "；".join(dedupe(chunks))
 
 
+def generic_definition_conclusion(result: dict) -> str:
+    """Build a definition conclusion from the formal passage, not page mentions."""
+    if request_kind_for_payload(result) != "generic" or str(result.get("intent") or "") != "define":
+        return ""
+    terms = [str(item).strip() for item in (dict(result.get("generic_gate") or {}).get("topic_terms") or []) if str(item).strip()]
+    chunks: list[str] = []
+    for term in terms:
+        candidates = []
+        for evidence in result.get("evidence_hits", []) or []:
+            score, text = formal_topic_excerpt(evidence, term)
+            if text:
+                candidates.append((score, text, str(evidence.get("title") or "")))
+        if not candidates:
+            return ""
+        candidates.sort(key=lambda item: (-item[0], len(item[1]), item[2]))
+        _, text, title = candidates[0]
+        chunks.append(f"{text}（来源：{title}）" if title else text)
+    return "；".join(dedupe(chunks))
+
+
 def direct_conclusion(result: dict) -> str:
     exercise = dict(result.get("exercise_route") or {})
     if exercise.get("match_status") == "exact_exercise":
@@ -539,6 +609,9 @@ def direct_conclusion(result: dict) -> str:
     compare_conclusion = generic_compare_conclusion(result)
     if compare_conclusion:
         return compare_conclusion
+    definition_conclusion = generic_definition_conclusion(result)
+    if definition_conclusion:
+        return definition_conclusion
     anchor_snippets = page_anchor_snippets(result)
     if anchor_snippets:
         return anchor_snippets[0]

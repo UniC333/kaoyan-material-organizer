@@ -1164,6 +1164,39 @@ def test_definition_generic_gate_requires_a_formal_statement_not_an_example_ment
     assert exact["dependency_evidence_ids"] == ["EV-LI-TAYLOR-FORMAL"]
 
 
+def test_definition_conclusion_prefers_formal_heading_and_formula_on_a_mixed_page() -> None:
+    result = _result(answer_mode="accepted_evidence")
+    result.update(
+        query="泰勒公式是什么",
+        request_resolution={"source_request_kind": "generic"},
+        generic_gate={
+            "status": "exact",
+            "book_title": "李正元数一",
+            "topic_terms": ["泰勒公式"],
+            "dependency_evidence_ids": ["EV-LI-TAYLOR-MIXED"],
+            "relevance_ok": True,
+            "same_book_ok": True,
+        },
+        evidence_hits=[
+            {
+                "evidence_id": "EV-LI-TAYLOR-MIXED",
+                "title": "P105 泰勒公式",
+                "content": (
+                    "### 泰勒公式\n"
+                    "$$f(x)=f(x_0)+f'(x_0)(x-x_0)+R_n$$\n"
+                    "【证法二】在 x_0=c=(a+b)/2 处 f(x) 展成泰勒公式。"
+                ),
+            }
+        ],
+    )
+
+    conclusion = answer_module.direct_conclusion(result)
+
+    assert "泰勒公式" in conclusion
+    assert "f(x)=f(x_0)" in conclusion
+    assert "证法二" not in conclusion
+
+
 def test_compare_gate_requires_formal_same_book_coverage_for_each_topic() -> None:
     def evidence(evidence_id: str, content: str) -> dict:
         return {
@@ -1180,6 +1213,8 @@ def test_compare_gate_requires_formal_same_book_coverage_for_each_topic() -> Non
     queue = evidence("EV-QUEUE-FORMAL", "# 队列的定义\n队列是先进先出的线性表。")
 
     assert query_module.compare_parts("栈和队列的区别") == ["栈", "队列"]
+    assert query_module.compare_parts("栈和队列有什么区别") == ["栈", "队列"]
+    assert query_module.generic_topic_terms("栈和队列有什么区别", "compare") == ["栈", "队列"]
     blocked = query_module.build_generic_gate(
         answer_mode="accepted_evidence",
         book_title="王道数据结构",

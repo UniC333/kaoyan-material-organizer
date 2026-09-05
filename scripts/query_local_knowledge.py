@@ -1265,6 +1265,11 @@ def evidence_has_formal_topic_statement(evidence: dict[str, Any], topic_terms: l
         )
         return direct_definition or condition_statement or labeled_definition
 
+    def has_formula_statement(compact: str) -> bool:
+        return not rejected_line(compact) and any(
+            marker in compact for marker in ("=", "\\in", "\\le", "\\ge", "\\forall", "\\exists")
+        )
+
     for index, raw_line in enumerate(raw_lines):
         compact = compact_line(raw_line)
         if not any(term in compact for term in terms):
@@ -1280,7 +1285,7 @@ def evidence_has_formal_topic_statement(evidence: dict[str, Any], topic_terms: l
         # “设……则……” from the same page.
         heading_like = raw_line.startswith("#") or len(compact) <= 16
         if heading_like and any(
-            has_formal_statement(compact_line(candidate))
+            has_formal_statement(compact_line(candidate)) or has_formula_statement(compact_line(candidate))
             for candidate in raw_lines[index + 1 : index + 6]
         ):
             return True
