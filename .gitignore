@@ -40,6 +40,12 @@ __pycache__/
 /docs/
 /examples/
 /references/
+!/references/
+/references/*
+!/references/textbook-qa.md
+!/references/material-intake.md
+!/references/learning-closure.md
+!/references/adaptive-review.md
 /reports/
 /tasks/
 /tests/
