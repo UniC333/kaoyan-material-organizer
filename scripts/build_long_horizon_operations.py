@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from build_tutoring_feedback_loop import ARTIFACT_JSON as FEEDBACK_LOOP_JSON
+from kaoyan_kb.domain.artifact_support import load_overrides as _load_overrides
 from common import INDEX_DIRNAME, default_vault_root_arg, save_json, save_text
 
 ARTIFACT_JSON = "39_r19_long_horizon_operations.json"
@@ -37,16 +38,6 @@ def _load_feedback_loop(index_root: Path) -> dict[str, Any]:
     if not path.exists():
         raise SystemExit("missing tutoring feedback loop artifact; run build_tutoring_feedback_loop.py first")
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _load_overrides(path: str | None) -> dict[str, Any]:
-    if not path:
-        return {"manual_locks": [], "operator_overrides": []}
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    return {
-        "manual_locks": list(payload.get("manual_locks", [])),
-        "operator_overrides": list(payload.get("operator_overrides", [])),
-    }
 
 
 def _manual_lock_map(overrides: dict[str, Any]) -> dict[str, dict[str, Any]]:

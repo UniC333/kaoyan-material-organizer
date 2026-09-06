@@ -12,6 +12,7 @@ from typing import Any
 
 from PIL import Image
 
+from kaoyan_kb.domain.pdf_sources import resolve_pdf_source_id as _resolve_pdf_source_id
 from common import ensure_kb_layout, load_all_json, load_json_or_default, now_iso, run_utf8_subprocess, sanitize_name, save_json, sha256_for_file
 from config import load_runtime_config
 from ocr_document import run_ocr_for_file
@@ -33,24 +34,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dpi", type=int, default=200)
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
     return parser
-
-
-def _resolve_pdf_source_id(subject: str, book_title: str, layout: dict[str, Path], explicit: str) -> str:
-    if explicit:
-        return explicit
-    candidates = []
-    for payload in load_all_json(layout["sources"]):
-        if payload.get("subject") != subject:
-            continue
-        if payload.get("material_type") != "book-pdf":
-            continue
-        if payload.get("source_name") != book_title:
-            continue
-        candidates.append(payload)
-    if not candidates:
-        raise SystemExit(f"[ERROR] no registered book-pdf source found for {subject} / {book_title}")
-    candidates.sort(key=lambda item: str(item.get("updated_at") or ""))
-    return str(candidates[-1]["source_id"])
 
 
 def _resolve_pdf_path(source_id: str, layout: dict[str, Path]) -> Path:

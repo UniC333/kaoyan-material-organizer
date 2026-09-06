@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from kaoyan_kb.storage.snapshot_support import create_backup as create_snapshot_backup
 from common import ensure_kb_layout, now_iso, preferred_python_executable, resolve_subject, run_utf8_subprocess, runtime_subprocess_env, save_json
 
 
@@ -52,14 +53,7 @@ def script_path(name: str) -> Path:
 
 
 def create_backup() -> str:
-    completed = run_utf8_subprocess(
-        [preferred_python_executable(), str(script_path("create_snapshot.py")), "--format", "json"],
-        command_label="python:create_snapshot.py",
-        check=True,
-        env=runtime_subprocess_env(),
-    )
-    payload = json.loads(completed.stdout)
-    return str(payload.get("snapshot_id", ""))
+    return create_snapshot_backup(script_path("create_snapshot.py"))
 
 
 def definitions_root_from_arg(raw: str | None) -> Path:

@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from kaoyan_kb.storage.snapshot_support import create_backup as create_snapshot_backup
 from common import (
     clear_kb_business_data,
     current_vault_root,
@@ -50,14 +51,7 @@ def run_script(name: str, *args: str) -> None:
 
 
 def create_backup() -> str:
-    completed = run_utf8_subprocess(
-        [preferred_python_executable(), str(script_path("create_snapshot.py")), "--format", "json"],
-        command_label="python:create_snapshot.py",
-        check=True,
-        env=runtime_subprocess_env(),
-    )
-    payload = json.loads(completed.stdout)
-    return str(payload.get("snapshot_id", ""))
+    return create_snapshot_backup(script_path("create_snapshot.py"))
 
 
 def cleanup_subject_data(subjects: list[str], *, execute: bool) -> dict[str, int]:

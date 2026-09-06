@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from build_review_followups import ARTIFACT_JSON as REVIEW_FOLLOWUPS_JSON
+from kaoyan_kb.domain.artifact_support import load_overrides as _load_overrides
 from common import INDEX_DIRNAME, default_vault_root_arg, save_json, save_text
 
 ARTIFACT_JSON = "29_r17_weekly_orchestration.json"
@@ -37,16 +38,6 @@ def _load_review_followups(index_root: Path) -> dict[str, Any]:
     if not path.exists():
         raise SystemExit("missing review followups artifact; run build_review_followups.py first")
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _load_overrides(path: str | None) -> dict[str, Any]:
-    if not path:
-        return {"manual_locks": [], "operator_overrides": []}
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    return {
-        "manual_locks": list(payload.get("manual_locks", [])),
-        "operator_overrides": list(payload.get("operator_overrides", [])),
-    }
 
 
 def _manual_lock_map(overrides: dict[str, Any]) -> dict[str, dict[str, Any]]:

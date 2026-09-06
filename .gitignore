@@ -67,3 +67,5 @@ __pycache__/
 !/tests/integration/test_exact_page_query.py
 !/tests/integration/test_cross_cwd_cli.py
 !/tests/integration/test_adaptive_review_cli.py
+
+!/tests/unit/test_refactor_helpers.py

@@ -201,6 +201,19 @@ OCR 证据发布使用独立的零写入预览：
 .\.venv\Scripts\python.exe scripts\kb.py learner review-followups --plan-date 2026-08-12 --time-budget-minutes 20 --max-items 3 --format json
 ```
 
+### learner 日常入口与阶段产物
+
+日常教学使用 `query/ask`、学习续接、`learner review-followups`、`exercise`、`distill` 与 `closure`。下列阶段链保留为显式 CLI 能力，不要求普通讲题逐层生成或读取；调用前须准备对应输入。生成器会保存派生文件，不能把它们当成普通零写入查询。
+
+| 入口组（`learner` 下） | 主要输入 | 输出 | 仓库内下游消费者 |
+| --- | --- | --- | --- |
+| `orchestration-context`、`daily-card`、`review-followups`、`weekly-orchestration`、`teacher-loop-artifact`（R17） | 学习上下文、复习事件及日/周安排 | 日/周派生视图、`30_r17_teacher_loop_acceptance_artifact.json` | R18 coaching context 与阶段验收 |
+| `adaptive-coaching-context`、`adaptive-coaching-packet`、`coaching-feedback-loop`、`closed-loop-operations`、`adaptive-coaching-artifact`（R18） | R17 产物及 coaching 反馈 | context/packet/feedback/operations、`35_r18_adaptive_coaching_acceptance_artifact.json` | R19 longitudinal context 与阶段验收 |
+| `longitudinal-tutoring-context`、`tutoring-strategy-packet`、`tutoring-feedback-loop`、`long-horizon-operations`、`longitudinal-tutoring-artifact`（R19） | R18 产物与持续辅导反馈 | context/strategy/feedback/operations、`40_r19_longitudinal_tutoring_acceptance_artifact.json` | R20 trigger 与阶段验收 |
+| `autonomous-trigger-contract`、`autonomous-action-plan`、`autonomous-governance-ledger`、`autonomous-tutoring-artifact`（R20） | R19 产物及治理输入 | trigger/action/governance、`44_r20_autonomous_tutoring_acceptance_artifact.json` | 显式 CLI 调用者；未据此推断外部使用情况 |
+
+这些阶段产物及其 Markdown 视图保留既有名称与契约，不替代当前任务、专题锚点或学习记录，也不自动授予行动或写入权限。
+
 ## 数据与隐私
 
 - 原始资料保留在使用者自己的目录中，不通过移动原文件表达章节归属。

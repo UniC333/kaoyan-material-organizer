@@ -12,6 +12,7 @@ from build_r17_teacher_loop_artifact import ARTIFACT_JSON as R17_TEACHER_LOOP_JS
 from build_review_followups import ARTIFACT_JSON as REVIEW_FOLLOWUPS_JSON
 from build_study_orchestration_context import ARTIFACT_JSON as ORCHESTRATION_CONTEXT_JSON
 from build_weekly_orchestration import ARTIFACT_JSON as WEEKLY_ORCHESTRATION_JSON
+from kaoyan_kb.domain.artifact_support import dedupe_strings as _dedupe_strings, load_required_artifact as _load_artifact
 from common import INDEX_DIRNAME, default_vault_root_arg, load_json_or_default, save_json, save_text
 
 ARTIFACT_JSON = "31_r18_adaptive_coaching_context.json"
@@ -34,25 +35,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stale-signal-days", type=int, default=21)
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
     return parser.parse_args()
-
-
-def _load_artifact(index_root: Path, filename: str) -> dict[str, Any]:
-    payload = load_json_or_default(index_root / filename, {})
-    if not payload:
-        raise SystemExit(f"missing required artifact: {filename}")
-    return payload
-
-
-def _dedupe_strings(items: list[str]) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        text = str(item).strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
-    return result
 
 
 def _question_map(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

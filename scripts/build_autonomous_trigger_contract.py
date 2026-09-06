@@ -11,6 +11,7 @@ from build_long_horizon_operations import ARTIFACT_JSON as LONG_HORIZON_OPERATIO
 from build_r19_longitudinal_tutoring_artifact import ARTIFACT_JSON as R19_ACCEPTANCE_JSON
 from build_tutoring_feedback_loop import ARTIFACT_JSON as TUTORING_FEEDBACK_JSON
 from build_tutoring_strategy_packet import ARTIFACT_JSON as STRATEGY_PACKET_JSON
+from kaoyan_kb.domain.artifact_support import dedupe_strings as _dedupe_strings, load_required_artifact as _load_artifact
 from common import INDEX_DIRNAME, default_vault_root_arg, load_json_or_default, save_json, save_text
 
 ARTIFACT_JSON = "41_r20_autonomous_trigger_contract.json"
@@ -32,25 +33,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plan-date", required=True)
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
     return parser.parse_args()
-
-
-def _load_artifact(index_root: Path, filename: str) -> dict[str, Any]:
-    payload = load_json_or_default(index_root / filename, {})
-    if not payload:
-        raise SystemExit(f"missing required artifact: {filename}")
-    return payload
-
-
-def _dedupe_strings(items: list[str]) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        text = str(item).strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        result.append(text)
-    return result
 
 
 def _strategy_map(strategy_packet: dict[str, Any]) -> dict[str, dict[str, Any]]:

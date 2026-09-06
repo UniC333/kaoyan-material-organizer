@@ -5,6 +5,7 @@ import argparse
 import re
 from pathlib import Path
 
+from kaoyan_kb.domain.chapter_text import clean_chapter_title, clean_section_name
 from common import ensure_learning_dirs, is_placeholder, load_json, markdown_list, normalize_context, save_json, vault_root_from_context_path
 
 STRUCTURE_MD = "02_章节结构索引.md"
@@ -58,25 +59,6 @@ def text_needs_refresh(text: str) -> bool:
 
 def chunk_plan_map(chunk_plan: dict) -> dict[str, dict]:
     return {chunk.get("chunk_id", ""): chunk for chunk in chunk_plan.get("chunks", []) if chunk.get("chunk_id")}
-
-
-def clean_chapter_title(title: str) -> str:
-    value = str(title or "").strip()
-    value = value.replace("图片批次验收", "").replace("图片批次", "").strip()
-    return value or "本章"
-
-
-def clean_section_name(section: str, chapter_title: str) -> str:
-    value = str(section or "").strip()
-    if not value:
-        return clean_chapter_title(chapter_title)
-    value = value.replace("待细化", "").strip(" -+")
-    value = value.replace("题目段", "题型训练")
-    value = value.replace("解析段", "题解与解析")
-    value = re.sub(r"\s+", " ", value).strip(" -+")
-    if value.endswith("图片批次"):
-        value = value[:-4].strip()
-    return value or clean_chapter_title(chapter_title)
 
 
 def infer_usage(chunk: dict, plan_chunk: dict) -> str:

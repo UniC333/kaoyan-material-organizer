@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -27,3 +28,13 @@ def dedupe_strings(items: list[str]) -> list[str]:
         seen.add(text)
         result.append(text)
     return result
+
+
+def load_overrides(path: str | None) -> dict[str, Any]:
+    if not path:
+        return {"manual_locks": [], "operator_overrides": []}
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    return {
+        "manual_locks": list(payload.get("manual_locks", [])),
+        "operator_overrides": list(payload.get("operator_overrides", [])),
+    }

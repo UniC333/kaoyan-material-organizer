@@ -5,6 +5,7 @@ import argparse
 import re
 from pathlib import Path
 
+from kaoyan_kb.domain.chapter_text import clean_chapter_title, clean_section_name
 from common import (
     build_provenance_record,
     build_source_span,
@@ -89,30 +90,11 @@ def text_needs_refresh(value: str) -> bool:
     return any(token in text for token in WEAK_TEXT_SNIPPETS)
 
 
-def clean_chapter_title(title: str) -> str:
-    value = str(title or "").strip()
-    value = value.replace("图片批次验收", "").replace("图片批次", "").strip()
-    return value or "本章"
-
-
 def chapter_topic_base(chapter_title: str) -> str:
     title = clean_chapter_title(chapter_title)
     title = re.sub(r"^第[0-9一二三四五六七八九十百零两]+章", "", title).strip()
     title = re.sub(r"\s+", " ", title).strip(" ：:-")
     return title or clean_chapter_title(chapter_title)
-
-
-def clean_section_name(section: str, chapter_title: str) -> str:
-    value = str(section or "").strip()
-    if not value:
-        return clean_chapter_title(chapter_title)
-    value = value.replace("待细化", "").strip(" -+")
-    value = value.replace("题目段", "题型训练")
-    value = value.replace("解析段", "题解与解析")
-    value = re.sub(r"\s+", " ", value).strip(" -+")
-    if value.endswith("图片批次"):
-        value = value[:-4].strip()
-    return value or clean_chapter_title(chapter_title)
 
 
 def section_name_needs_refresh(section: str, chapter_title: str) -> bool:

@@ -4,6 +4,29 @@ import argparse
 from collections.abc import Callable
 
 
+# name, script, requires plan date, extra argparse options
+ARTIFACT_COMMANDS = (
+    ('orchestration-context', 'build_study_orchestration_context.py', False, (("--as-of", {}), ("--freshness-days", {"type": int, "default": 14}))),
+    ('daily-card', 'build_daily_study_card.py', True, ()),
+    ('review-followups', 'build_review_followups.py', True, (("--time-budget-minutes", {"type": int, "default": 20}), ("--max-items", {"type": int, "default": 3}))),
+    ('weekly-orchestration', 'build_weekly_orchestration.py', True, (("--override-json", {}),)),
+    ('teacher-loop-artifact', 'build_r17_teacher_loop_artifact.py', True, ()),
+    ('adaptive-coaching-context', 'build_adaptive_coaching_context.py', True, (("--stale-signal-days", {"type": int, "default": 21}),)),
+    ('adaptive-coaching-packet', 'build_adaptive_coaching_packet.py', True, ()),
+    ('coaching-feedback-loop', 'build_coaching_feedback_loop.py', True, ()),
+    ('closed-loop-operations', 'build_closed_loop_operations.py', True, (("--override-json", {}),)),
+    ('adaptive-coaching-artifact', 'build_r18_adaptive_coaching_artifact.py', True, ()),
+    ('longitudinal-tutoring-context', 'build_longitudinal_tutoring_context.py', True, (("--stale-cycle-days", {"type": int, "default": 14}),)),
+    ('tutoring-strategy-packet', 'build_tutoring_strategy_packet.py', True, ()),
+    ('tutoring-feedback-loop', 'build_tutoring_feedback_loop.py', True, ()),
+    ('long-horizon-operations', 'build_long_horizon_operations.py', True, (("--override-json", {}),)),
+    ('longitudinal-tutoring-artifact', 'build_r19_longitudinal_tutoring_artifact.py', True, ()),
+    ('autonomous-trigger-contract', 'build_autonomous_trigger_contract.py', True, ()),
+    ('autonomous-action-plan', 'build_autonomous_action_plan.py', True, ()),
+    ('autonomous-governance-ledger', 'build_autonomous_governance_ledger.py', True, (("--governance-json", {}),)),
+    ('autonomous-tutoring-artifact', 'build_r20_autonomous_tutoring_artifact.py', True, ()),
+)
+
 def add_learner_commands(subparsers: argparse._SubParsersAction, *, formatter_class: type[argparse.HelpFormatter] | None = None) -> None:
     opts = {} if formatter_class is None else {"formatter_class": formatter_class}
     learner = subparsers.add_parser("learner", help="build learner-layer artifacts and tutoring packets", description="Build learner-layer artifacts and tutoring packets.", **opts)
@@ -20,28 +43,8 @@ def add_learner_commands(subparsers: argparse._SubParsersAction, *, formatter_cl
         item.add_argument("--format", choices=("json", "quiet"), default="json")
         return item
 
-    artifact("orchestration-context", date=False, extra=(("--as-of", {}), ("--freshness-days", {"type": int, "default": 14})))
-    artifact("daily-card")
-    artifact(
-        "review-followups",
-        extra=(("--time-budget-minutes", {"type": int, "default": 20}), ("--max-items", {"type": int, "default": 3})),
-    )
-    artifact("weekly-orchestration", extra=(("--override-json", {}),))
-    artifact("teacher-loop-artifact")
-    artifact("adaptive-coaching-context", extra=(("--stale-signal-days", {"type": int, "default": 21}),))
-    artifact("adaptive-coaching-packet")
-    artifact("coaching-feedback-loop")
-    artifact("closed-loop-operations", extra=(("--override-json", {}),))
-    artifact("adaptive-coaching-artifact")
-    artifact("longitudinal-tutoring-context", extra=(("--stale-cycle-days", {"type": int, "default": 14}),))
-    artifact("tutoring-strategy-packet")
-    artifact("tutoring-feedback-loop")
-    artifact("long-horizon-operations", extra=(("--override-json", {}),))
-    artifact("longitudinal-tutoring-artifact")
-    artifact("autonomous-trigger-contract")
-    artifact("autonomous-action-plan")
-    artifact("autonomous-governance-ledger", extra=(("--governance-json", {}),))
-    artifact("autonomous-tutoring-artifact")
+    for name, _script, date, extra in ARTIFACT_COMMANDS:
+        artifact(name, date=date, extra=extra)
 
     distill = commands.add_parser("distill")
     distill_commands = distill.add_subparsers(dest="distill_command", required=True)
@@ -155,27 +158,8 @@ def dispatch_learner(args: argparse.Namespace, run_script: Callable[..., str], e
             forwarded.extend(["--as-of", args.as_of])
         return run_script("build_study_orchestration_context.py", *forwarded)
 
-    scripts = {
-        "daily-card": "build_daily_study_card.py",
-        "review-followups": "build_review_followups.py",
-        "weekly-orchestration": "build_weekly_orchestration.py",
-        "teacher-loop-artifact": "build_r17_teacher_loop_artifact.py",
-        "adaptive-coaching-context": "build_adaptive_coaching_context.py",
-        "adaptive-coaching-packet": "build_adaptive_coaching_packet.py",
-        "coaching-feedback-loop": "build_coaching_feedback_loop.py",
-        "closed-loop-operations": "build_closed_loop_operations.py",
-        "adaptive-coaching-artifact": "build_r18_adaptive_coaching_artifact.py",
-        "longitudinal-tutoring-context": "build_longitudinal_tutoring_context.py",
-        "tutoring-strategy-packet": "build_tutoring_strategy_packet.py",
-        "tutoring-feedback-loop": "build_tutoring_feedback_loop.py",
-        "long-horizon-operations": "build_long_horizon_operations.py",
-        "longitudinal-tutoring-artifact": "build_r19_longitudinal_tutoring_artifact.py",
-        "autonomous-trigger-contract": "build_autonomous_trigger_contract.py",
-        "autonomous-action-plan": "build_autonomous_action_plan.py",
-        "autonomous-governance-ledger": "build_autonomous_governance_ledger.py",
-        "autonomous-tutoring-artifact": "build_r20_autonomous_tutoring_artifact.py",
-    }
-    script = scripts.get(command)
+    specification = next((item for item in ARTIFACT_COMMANDS if item[0] == command), None)
+    script = specification[1] if specification else None
     if script is None:
         return None
     extra = ["--plan-date", args.plan_date]
