@@ -3,19 +3,19 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_daily_study_card import ARTIFACT_JSON as DAILY_CARD_JSON
-from build_r17_teacher_loop_artifact import ARTIFACT_JSON as R17_TEACHER_LOOP_JSON
-from build_review_followups import ARTIFACT_JSON as REVIEW_FOLLOWUPS_JSON
-from build_study_orchestration_context import ARTIFACT_JSON as ORCHESTRATION_CONTEXT_JSON
-from build_weekly_orchestration import ARTIFACT_JSON as WEEKLY_ORCHESTRATION_JSON
+from kaoyan_kb.domain.learner_artifact_files import DAILY_STUDY_CARD as DAILY_CARD_JSON
+from kaoyan_kb.domain.learner_artifact_files import R17_TEACHER_LOOP_ARTIFACT as R17_TEACHER_LOOP_JSON
+from kaoyan_kb.domain.learner_artifact_files import REVIEW_FOLLOWUPS as REVIEW_FOLLOWUPS_JSON
+from kaoyan_kb.domain.learner_artifact_files import STUDY_ORCHESTRATION_CONTEXT as ORCHESTRATION_CONTEXT_JSON
+from kaoyan_kb.domain.learner_artifact_files import WEEKLY_ORCHESTRATION as WEEKLY_ORCHESTRATION_JSON
 from kaoyan_kb.domain.artifact_support import dedupe_strings as _dedupe_strings, load_required_artifact as _load_artifact
-from common import INDEX_DIRNAME, default_vault_root_arg, load_json_or_default, save_json, save_text
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg
 
-ARTIFACT_JSON = "31_r18_adaptive_coaching_context.json"
+from kaoyan_kb.domain.learner_artifact_files import ADAPTIVE_COACHING_CONTEXT as ARTIFACT_JSON
 ARTIFACT_MD = "31_r18_adaptive_coaching_context.md"
 ARTIFACT_ID = "r18-adaptive-coaching-context"
 ARTIFACT_CONTRACT_VERSION = "r18.adaptive-coaching-context.v1"
@@ -289,25 +289,15 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, plan_date=args.plan_date, stale_signal_days=max(1, args.stale_signal_days))
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "plan_date": payload["plan_date"],
-        "priority_budget": payload["priority_budget"],
-        "intervention_eligibility_summary": payload["intervention_eligibility_summary"],
-        "readiness_status": payload["readiness_status"],
-        "post_r18_t02_successor": payload["post_r18_t02_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, plan_date=args.plan_date, stale_signal_days=max(1, args.stale_signal_days)),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'plan_date', 'priority_budget', 'intervention_eligibility_summary',
+            'readiness_status', 'post_r18_t02_successor',
+        ),
+    )
 
 
 if __name__ == "__main__":

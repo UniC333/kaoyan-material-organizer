@@ -2,21 +2,21 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_adaptive_coaching_context import ARTIFACT_JSON as ADAPTIVE_CONTEXT_JSON
-from build_adaptive_coaching_packet import ARTIFACT_JSON as ADAPTIVE_PACKET_JSON
-from build_closed_loop_operations import ARTIFACT_JSON as CLOSED_LOOP_JSON
-from build_coaching_feedback_loop import ARTIFACT_JSON as FEEDBACK_LOOP_JSON
-from common import INDEX_DIRNAME, default_vault_root_arg, load_json_or_default, save_json, save_text
+from kaoyan_kb.domain.learner_artifact_files import ADAPTIVE_COACHING_CONTEXT as ADAPTIVE_CONTEXT_JSON
+from kaoyan_kb.domain.learner_artifact_files import ADAPTIVE_COACHING_PACKET as ADAPTIVE_PACKET_JSON
+from kaoyan_kb.domain.learner_artifact_files import CLOSED_LOOP_OPERATIONS as CLOSED_LOOP_JSON
+from kaoyan_kb.domain.learner_artifact_files import COACHING_FEEDBACK_LOOP as FEEDBACK_LOOP_JSON
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg
+from kaoyan_kb.domain.artifact_support import render_acceptance_markdown
 from kaoyan_kb.domain.artifact_support import dedupe_strings as _dedupe_strings
 from kaoyan_kb.domain.artifact_support import load_required_artifact as _load_artifact
 from kaoyan_kb.domain.artifact_support import status_from_readiness as _status_from_readiness
 
-ARTIFACT_JSON = "35_r18_adaptive_coaching_acceptance_artifact.json"
+from kaoyan_kb.domain.learner_artifact_files import R18_ADAPTIVE_COACHING_ARTIFACT as ARTIFACT_JSON
 ARTIFACT_MD = "35_r18_adaptive_coaching_acceptance_artifact.md"
 ARTIFACT_ID = "r18-adaptive-coaching-acceptance"
 ARTIFACT_CONTRACT_VERSION = "r18.adaptive-coaching-acceptance.v1"
@@ -140,57 +140,30 @@ def build_payload(index_root: Path, plan_date: str) -> dict[str, Any]:
 
 
 def render_markdown(payload: dict[str, Any]) -> str:
-    coaching_summary = dict(payload.get("coaching_summary", {}))
-    packet_readiness = dict(payload.get("packet_readiness", {}))
-    feedback_loop_status = dict(payload.get("feedback_loop_status", {}))
-    cadence_safety_status = dict(payload.get("cadence_safety_status", {}))
-    successor = dict(payload.get("post_r18_successor", {}))
-    lines = [
-        "# R18-T06 adaptive coaching acceptance artifact",
-        "",
-        f"- artifact_id: {payload.get('artifact_id', '')}",
-        f"- plan_date: {payload.get('plan_date', '')}",
-        f"- readiness_status: {payload.get('readiness_status', '')}",
-        "",
-        "## Acceptance summary",
-        "",
-        f"- coaching_summary_status: {coaching_summary.get('status', '')}",
-        f"- packet_readiness_status: {packet_readiness.get('status', '')}",
-        f"- feedback_loop_status: {feedback_loop_status.get('status', '')}",
-        f"- cadence_safety_status: {cadence_safety_status.get('status', '')}",
-        "",
-        "## Post-R18 successor",
-        "",
-        f"- track_id: {successor.get('track_id', '')}",
-        f"- machine_readable_entry_point: {successor.get('machine_readable_entry_point', '')}",
-        "",
-    ]
-    return "\n".join(lines)
+    return render_acceptance_markdown(
+        payload,
+        title='# R18-T06 adaptive coaching acceptance artifact', summary_title='## Acceptance summary',
+        summary_fields=(
+            ('coaching_summary_status', 'coaching_summary', 'status'),
+            ('packet_readiness_status', 'packet_readiness', 'status'),
+            ('feedback_loop_status', 'feedback_loop_status', 'status'),
+            ('cadence_safety_status', 'cadence_safety_status', 'status'),
+        ),
+        successor_key='post_r18_successor', successor_title='## Post-R18 successor',
+    )
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, args.plan_date)
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "plan_date": payload["plan_date"],
-        "coaching_summary": payload["coaching_summary"],
-        "packet_readiness": payload["packet_readiness"],
-        "feedback_loop_status": payload["feedback_loop_status"],
-        "cadence_safety_status": payload["cadence_safety_status"],
-        "remaining_gaps": payload["remaining_gaps"],
-        "readiness_status": payload["readiness_status"],
-        "post_r18_successor": payload["post_r18_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, args.plan_date),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'plan_date', 'coaching_summary', 'packet_readiness',
+            'feedback_loop_status', 'cadence_safety_status', 'remaining_gaps', 'readiness_status',
+            'post_r18_successor',
+        ),
+    )
 
 
 if __name__ == "__main__":

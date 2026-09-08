@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_autonomous_trigger_contract import ARTIFACT_JSON as TRIGGER_CONTRACT_JSON
-from common import INDEX_DIRNAME, default_vault_root_arg, load_json_or_default, save_json, save_text
+from kaoyan_kb.domain.learner_artifact_files import AUTONOMOUS_TRIGGER_CONTRACT as TRIGGER_CONTRACT_JSON
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg, load_json_or_default
 
-ARTIFACT_JSON = "42_r20_autonomous_action_plan.json"
+from kaoyan_kb.domain.learner_artifact_files import AUTONOMOUS_ACTION_PLAN as ARTIFACT_JSON
 ARTIFACT_MD = "42_r20_autonomous_action_plan.md"
 ARTIFACT_ID = "r20-autonomous-action-plan"
 ARTIFACT_CONTRACT_VERSION = "r20.autonomous-action-plan.v1"
@@ -201,29 +200,16 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, args.plan_date)
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "action_plan_id": payload["action_plan_id"],
-        "plan_date": payload["plan_date"],
-        "action_planning_policy": payload["action_planning_policy"],
-        "auto_executable_actions": payload["auto_executable_actions"],
-        "approval_required_actions": payload["approval_required_actions"],
-        "review_only_actions": payload["review_only_actions"],
-        "blocked_actions": payload["blocked_actions"],
-        "readiness_status": payload["readiness_status"],
-        "post_r20_t03_successor": payload["post_r20_t03_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, args.plan_date),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'action_plan_id', 'plan_date', 'action_planning_policy',
+            'auto_executable_actions', 'approval_required_actions', 'review_only_actions',
+            'blocked_actions', 'readiness_status', 'post_r20_t03_successor',
+        ),
+    )
 
 
 if __name__ == "__main__":

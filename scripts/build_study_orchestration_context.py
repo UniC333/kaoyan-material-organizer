@@ -14,7 +14,7 @@ from build_r16_formal_usable_artifact import ARTIFACT_JSON as R16_T06_ARTIFACT_J
 from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, learner_file_map, load_json_or_default, save_json, save_text
 from learner_events import load_events
 
-ARTIFACT_JSON = "26_r17_study_orchestration_context.json"
+from kaoyan_kb.domain.learner_artifact_files import STUDY_ORCHESTRATION_CONTEXT as ARTIFACT_JSON
 ARTIFACT_MD = "26_r17_study_orchestration_context.md"
 ARTIFACT_ID = "r17-study-orchestration-context"
 ARTIFACT_CONTRACT_VERSION = "r17.orchestration-context.v1"

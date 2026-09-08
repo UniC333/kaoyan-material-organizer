@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_longitudinal_tutoring_context import ARTIFACT_JSON as LONGITUDINAL_CONTEXT_JSON
-from common import INDEX_DIRNAME, default_vault_root_arg, save_json, save_text
+from kaoyan_kb.domain.learner_artifact_files import LONGITUDINAL_TUTORING_CONTEXT as LONGITUDINAL_CONTEXT_JSON
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg
 
-ARTIFACT_JSON = "37_r19_tutoring_strategy_packet.json"
+from kaoyan_kb.domain.learner_artifact_files import TUTORING_STRATEGY_PACKET as ARTIFACT_JSON
 ARTIFACT_MD = "37_r19_tutoring_strategy_packet.md"
 ARTIFACT_ID = "r19-tutoring-strategy-packet"
 ARTIFACT_CONTRACT_VERSION = "r19.tutoring-strategy-packet.v1"
@@ -190,28 +190,16 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, args.plan_date)
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "strategy_packet_id": payload["strategy_packet_id"],
-        "plan_date": payload["plan_date"],
-        "recommended_strategies": payload["recommended_strategies"],
-        "review_needed_strategies": payload["review_needed_strategies"],
-        "blocked_strategies": payload["blocked_strategies"],
-        "out_of_scope_strategies": payload["out_of_scope_strategies"],
-        "readiness_status": payload["readiness_status"],
-        "post_r19_t03_successor": payload["post_r19_t03_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, args.plan_date),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'strategy_packet_id', 'plan_date', 'recommended_strategies',
+            'review_needed_strategies', 'blocked_strategies', 'out_of_scope_strategies',
+            'readiness_status', 'post_r19_t03_successor',
+        ),
+    )
 
 
 if __name__ == "__main__":

@@ -2,20 +2,20 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_autonomous_action_plan import ARTIFACT_JSON as ACTION_PLAN_JSON
-from build_autonomous_governance_ledger import ARTIFACT_JSON as GOVERNANCE_LEDGER_JSON
-from build_autonomous_trigger_contract import ARTIFACT_JSON as TRIGGER_CONTRACT_JSON
-from common import INDEX_DIRNAME, default_vault_root_arg, load_json_or_default, save_json, save_text
+from kaoyan_kb.domain.learner_artifact_files import AUTONOMOUS_ACTION_PLAN as ACTION_PLAN_JSON
+from kaoyan_kb.domain.learner_artifact_files import AUTONOMOUS_GOVERNANCE_LEDGER as GOVERNANCE_LEDGER_JSON
+from kaoyan_kb.domain.learner_artifact_files import AUTONOMOUS_TRIGGER_CONTRACT as TRIGGER_CONTRACT_JSON
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg
+from kaoyan_kb.domain.artifact_support import render_acceptance_markdown
 from kaoyan_kb.domain.artifact_support import dedupe_strings as _dedupe_strings
 from kaoyan_kb.domain.artifact_support import load_required_artifact as _load_artifact
 from kaoyan_kb.domain.artifact_support import status_from_readiness as _status_from_readiness
 
-ARTIFACT_JSON = "44_r20_autonomous_tutoring_acceptance_artifact.json"
+from kaoyan_kb.domain.learner_artifact_files import R20_AUTONOMOUS_TUTORING_ARTIFACT as ARTIFACT_JSON
 ARTIFACT_MD = "44_r20_autonomous_tutoring_acceptance_artifact.md"
 ARTIFACT_ID = "r20-autonomous-tutoring-acceptance"
 ARTIFACT_CONTRACT_VERSION = "r20.autonomous-tutoring-acceptance.v1"
@@ -124,54 +124,28 @@ def build_payload(index_root: Path, plan_date: str) -> dict[str, Any]:
 
 
 def render_markdown(payload: dict[str, Any]) -> str:
-    initiative_readiness = dict(payload.get("initiative_readiness", {}))
-    action_plan_readiness = dict(payload.get("action_plan_readiness", {}))
-    governance_readiness = dict(payload.get("governance_readiness", {}))
-    successor = dict(payload.get("post_r20_successor", {}))
-    lines = [
-        "# R20-T05 autonomous tutoring acceptance artifact",
-        "",
-        f"- artifact_id: {payload.get('artifact_id', '')}",
-        f"- plan_date: {payload.get('plan_date', '')}",
-        f"- readiness_status: {payload.get('readiness_status', '')}",
-        "",
-        "## Acceptance summary",
-        "",
-        f"- initiative_readiness_status: {initiative_readiness.get('status', '')}",
-        f"- action_plan_readiness_status: {action_plan_readiness.get('status', '')}",
-        f"- governance_readiness_status: {governance_readiness.get('status', '')}",
-        "",
-        "## Post-R20 successor",
-        "",
-        f"- track_id: {successor.get('track_id', '')}",
-        f"- machine_readable_entry_point: {successor.get('machine_readable_entry_point', '')}",
-        "",
-    ]
-    return "\n".join(lines)
+    return render_acceptance_markdown(
+        payload,
+        title='# R20-T05 autonomous tutoring acceptance artifact', summary_title='## Acceptance summary',
+        summary_fields=(
+            ('initiative_readiness_status', 'initiative_readiness', 'status'),
+            ('action_plan_readiness_status', 'action_plan_readiness', 'status'),
+            ('governance_readiness_status', 'governance_readiness', 'status'),
+        ),
+        successor_key='post_r20_successor', successor_title='## Post-R20 successor',
+    )
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, args.plan_date)
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "plan_date": payload["plan_date"],
-        "initiative_readiness": payload["initiative_readiness"],
-        "action_plan_readiness": payload["action_plan_readiness"],
-        "governance_readiness": payload["governance_readiness"],
-        "remaining_gaps": payload["remaining_gaps"],
-        "readiness_status": payload["readiness_status"],
-        "post_r20_successor": payload["post_r20_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, args.plan_date),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'plan_date', 'initiative_readiness', 'action_plan_readiness',
+            'governance_readiness', 'remaining_gaps', 'readiness_status', 'post_r20_successor',
+        ),
+    )
 
 
 if __name__ == "__main__":

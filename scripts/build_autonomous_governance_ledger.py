@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_autonomous_action_plan import ARTIFACT_JSON as ACTION_PLAN_JSON
-from common import INDEX_DIRNAME, default_vault_root_arg, load_json_or_default, save_json, save_text
+from kaoyan_kb.domain.learner_artifact_files import AUTONOMOUS_ACTION_PLAN as ACTION_PLAN_JSON
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg, load_json_or_default
 
-ARTIFACT_JSON = "43_r20_autonomous_governance_ledger.json"
+from kaoyan_kb.domain.learner_artifact_files import AUTONOMOUS_GOVERNANCE_LEDGER as ARTIFACT_JSON
 ARTIFACT_MD = "43_r20_autonomous_governance_ledger.md"
 ARTIFACT_ID = "r20-autonomous-governance-ledger"
 ARTIFACT_CONTRACT_VERSION = "r20.autonomous-governance-ledger.v1"
@@ -256,30 +256,17 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, args.plan_date, args.governance_json)
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "governance_ledger_id": payload["governance_ledger_id"],
-        "plan_date": payload["plan_date"],
-        "policy_adjustment_policy": payload["policy_adjustment_policy"],
-        "strategy_drift_entries": payload["strategy_drift_entries"],
-        "false_positive_entries": payload["false_positive_entries"],
-        "over_intervention_entries": payload["over_intervention_entries"],
-        "human_rollback_entries": payload["human_rollback_entries"],
-        "policy_adjustment_trace": payload["policy_adjustment_trace"],
-        "readiness_status": payload["readiness_status"],
-        "post_r20_t04_successor": payload["post_r20_t04_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, args.plan_date, args.governance_json),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'governance_ledger_id', 'plan_date', 'policy_adjustment_policy',
+            'strategy_drift_entries', 'false_positive_entries', 'over_intervention_entries',
+            'human_rollback_entries', 'policy_adjustment_trace', 'readiness_status',
+            'post_r20_t04_successor',
+        ),
+    )
 
 
 if __name__ == "__main__":

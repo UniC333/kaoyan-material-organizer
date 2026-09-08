@@ -3,15 +3,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_coaching_feedback_loop import ARTIFACT_JSON as FEEDBACK_LOOP_JSON
+from kaoyan_kb.domain.learner_artifact_files import COACHING_FEEDBACK_LOOP as FEEDBACK_LOOP_JSON
 from kaoyan_kb.domain.artifact_support import load_overrides as _load_overrides
-from common import INDEX_DIRNAME, default_vault_root_arg, save_json, save_text
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg
 
-ARTIFACT_JSON = "34_r18_closed_loop_operations.json"
+from kaoyan_kb.domain.learner_artifact_files import CLOSED_LOOP_OPERATIONS as ARTIFACT_JSON
 ARTIFACT_MD = "34_r18_closed_loop_operations.md"
 ARTIFACT_ID = "r18-closed-loop-operations"
 ARTIFACT_CONTRACT_VERSION = "r18.closed-loop-operations.v1"
@@ -226,28 +226,16 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, args.plan_date, args.override_json)
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "plan_date": payload["plan_date"],
-        "operator_override_policy": payload["operator_override_policy"],
-        "auto_adjustable_operations": payload["auto_adjustable_operations"],
-        "operator_overrides": payload["operator_overrides"],
-        "locked_manual_edits": payload["locked_manual_edits"],
-        "scope_blocked_operations": payload["scope_blocked_operations"],
-        "readiness_status": payload["readiness_status"],
-        "post_r18_t05_successor": payload["post_r18_t05_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, args.plan_date, args.override_json),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'plan_date', 'operator_override_policy', 'auto_adjustable_operations',
+            'operator_overrides', 'locked_manual_edits', 'scope_blocked_operations',
+            'readiness_status', 'post_r18_t05_successor',
+        ),
+    )
 
 
 if __name__ == "__main__":

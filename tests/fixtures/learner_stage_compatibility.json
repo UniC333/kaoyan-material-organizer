@@ -1,0 +1,1040 @@
+{
+  "baseline_commit": "ef7872f",
+  "input": {
+    "readiness_status": "not-ready",
+    "remaining_gaps": [
+      "same",
+      "same"
+    ],
+    "artifact_contract_version": "fixture.v1"
+  },
+  "stages": {
+    "build_daily_study_card": {
+      "kwargs": {
+        "plan_date": "2026-09-08"
+      },
+      "json_filename": "27_r17_daily_study_card.json",
+      "markdown_filename": "27_r17_daily_study_card.md",
+      "payload": {
+        "artifact_contract_version": "r17.daily-study-card.v1",
+        "artifact_id": "r17-daily-study-card",
+        "plan_date": "2026-09-08",
+        "scope": "learner-day context -> daily recommendation -> study card packaging boundary",
+        "input_contract_refs": [
+          {
+            "name": "r17_t02_orchestration_context",
+            "version": "fixture.v1"
+          }
+        ],
+        "recommended_actions": [],
+        "review_needed_actions": [],
+        "blocked_actions": [],
+        "out_of_scope_actions": [],
+        "remaining_gaps": [
+          "same",
+          "same",
+          "No recommended action is currently available for the plan date."
+        ],
+        "readiness_status": "not-ready-for-r17-t04",
+        "post_r17_t03_successor": {
+          "track_id": "R17-T04",
+          "title": "review loop, weak-point follow-up, and explanation boundary",
+          "scope": "daily study card -> review loop -> explanation refs",
+          "machine_readable_entry_point": "R17-T04 -> M8-T04",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R17-T03 daily study card\n\n- artifact_id: r17-daily-study-card\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r17-t04\n\n## Action summary\n\n- recommended_actions: 0\n- review_needed_actions: 0\n- blocked_actions: 0\n- out_of_scope_actions: 0\n\n## Post-R17-T03 successor\n\n- track_id: R17-T04\n- machine_readable_entry_point: R17-T04 -> M8-T04\n",
+      "stdout": "{\n  \"artifact_id\": \"r17-daily-study-card\",\n  \"plan_date\": \"2026-09-08\",\n  \"recommended_actions\": [],\n  \"review_needed_actions\": [],\n  \"blocked_actions\": [],\n  \"out_of_scope_actions\": [],\n  \"readiness_status\": \"not-ready-for-r17-t04\",\n  \"post_r17_t03_successor\": {\n    \"track_id\": \"R17-T04\",\n    \"title\": \"review loop, weak-point follow-up, and explanation boundary\",\n    \"scope\": \"daily study card -> review loop -> explanation refs\",\n    \"machine_readable_entry_point\": \"R17-T04 -> M8-T04\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_review_followups": {
+      "kwargs": {
+        "plan_date": "2026-09-08",
+        "events": [],
+        "time_budget_minutes": 20,
+        "max_items": 3
+      },
+      "json_filename": "28_r17_review_followups.json",
+      "markdown_filename": "28_r17_review_followups.md",
+      "payload": {
+        "artifact_contract_version": "r17.review-followups.v2",
+        "artifact_id": "r17-review-followups",
+        "plan_date": "2026-09-08",
+        "scope": "daily recommendation -> review loop -> explanation and follow-up boundary",
+        "input_contract_refs": [
+          {
+            "name": "r17_t03_daily_study_card",
+            "version": "fixture.v1"
+          }
+        ],
+        "formal_follow_ups": [],
+        "review_only_insights": [],
+        "blocked_follow_ups": [],
+        "scheduled_reviews": {
+          "plan_date": "2026-09-08",
+          "time_budget_minutes": 20,
+          "max_items": 3,
+          "status": "nothing_due",
+          "estimated_minutes": 0,
+          "selected": [],
+          "deferred": [],
+          "due_count": 0,
+          "next_due_date": "",
+          "fluency_counts": {
+            "very_fluent": 0,
+            "fairly_fluent": 0,
+            "not_fluent": 0,
+            "needs_remediation": 0
+          }
+        },
+        "review_checkin": {
+          "plan_date": "2026-09-08",
+          "completed_today": 0,
+          "completed_items_last_7_days": 0,
+          "completed_days_last_7_days": 0,
+          "recent_completion_dates": [],
+          "streak_is_mastery_evidence": false,
+          "missed_day_penalty": false,
+          "completion_requires_exercise_event": true,
+          "query_marks_completed": false,
+          "no_due_status": "无需复习",
+          "overdue_policy": "bounded_roll_forward"
+        },
+        "fact_writeback_allowed": false,
+        "remaining_gaps": [
+          "same",
+          "same"
+        ],
+        "readiness_status": "not-ready-for-r17-t05",
+        "post_r17_t04_successor": {
+          "track_id": "R17-T05",
+          "title": "weekly orchestration, schedule adjustment, and human override boundary",
+          "scope": "review follow-ups -> weekly orchestration -> override policy",
+          "machine_readable_entry_point": "R17-T05 -> M8-T05",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R17-T04 review follow-ups\n\n- artifact_id: r17-review-followups\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r17-t05\n\n## Follow-up summary\n\n- formal_follow_ups: 0\n- review_only_insights: 0\n- blocked_follow_ups: 0\n- scheduled_reviews: 0\n\n## Post-R17-T04 successor\n\n- track_id: R17-T05\n- machine_readable_entry_point: R17-T05 -> M8-T05\n",
+      "stdout": "{\n  \"artifact_id\": \"r17-review-followups\",\n  \"plan_date\": \"2026-09-08\",\n  \"formal_follow_ups\": [],\n  \"review_only_insights\": [],\n  \"blocked_follow_ups\": [],\n  \"scheduled_reviews\": {\n    \"plan_date\": \"2026-09-08\",\n    \"time_budget_minutes\": 20,\n    \"max_items\": 3,\n    \"status\": \"nothing_due\",\n    \"estimated_minutes\": 0,\n    \"selected\": [],\n    \"deferred\": [],\n    \"due_count\": 0,\n    \"next_due_date\": \"\",\n    \"fluency_counts\": {\n      \"very_fluent\": 0,\n      \"fairly_fluent\": 0,\n      \"not_fluent\": 0,\n      \"needs_remediation\": 0\n    }\n  },\n  \"review_checkin\": {\n    \"plan_date\": \"2026-09-08\",\n    \"completed_today\": 0,\n    \"completed_items_last_7_days\": 0,\n    \"completed_days_last_7_days\": 0,\n    \"recent_completion_dates\": [],\n    \"streak_is_mastery_evidence\": false,\n    \"missed_day_penalty\": false,\n    \"completion_requires_exercise_event\": true,\n    \"query_marks_completed\": false,\n    \"no_due_status\": \"无需复习\",\n    \"overdue_policy\": \"bounded_roll_forward\"\n  },\n  \"fact_writeback_allowed\": false,\n  \"readiness_status\": \"not-ready-for-r17-t05\",\n  \"post_r17_t04_successor\": {\n    \"track_id\": \"R17-T05\",\n    \"title\": \"weekly orchestration, schedule adjustment, and human override boundary\",\n    \"scope\": \"review follow-ups -> weekly orchestration -> override policy\",\n    \"machine_readable_entry_point\": \"R17-T05 -> M8-T05\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_weekly_orchestration": {
+      "kwargs": {
+        "plan_date": "2026-09-08",
+        "override_json": null
+      },
+      "json_filename": "29_r17_weekly_orchestration.json",
+      "markdown_filename": "29_r17_weekly_orchestration.md",
+      "payload": {
+        "artifact_contract_version": "r17.weekly-orchestration.v1",
+        "artifact_id": "r17-weekly-orchestration",
+        "plan_date": "2026-09-08",
+        "scope": "review follow-ups -> weekly orchestration -> operator override safety boundary",
+        "input_contract_refs": [
+          {
+            "name": "r17_t04_review_followups",
+            "version": "fixture.v1"
+          }
+        ],
+        "operator_override_policy": {
+          "preserve_human_owned_edits": true,
+          "fact_writeback_allowed": false,
+          "override_source": "optional_override_json"
+        },
+        "auto_reschedulable_actions": [],
+        "operator_overrides": [],
+        "locked_manual_edits": [],
+        "scope_blocked_actions": [],
+        "remaining_gaps": [
+          "same",
+          "same"
+        ],
+        "readiness_status": "ready-for-r17-t06",
+        "post_r17_t05_successor": {
+          "track_id": "R17-T06",
+          "title": "teacher-loop intake acceptance artifact and post-R17 successor preparation",
+          "scope": "weekly orchestration -> override safety -> teacher-loop intake acceptance",
+          "machine_readable_entry_point": "R17-T06 -> M8-T06",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R17-T05 weekly orchestration\n\n- artifact_id: r17-weekly-orchestration\n- plan_date: 2026-09-08\n- readiness_status: ready-for-r17-t06\n\n## Weekly summary\n\n- auto_reschedulable_actions: 0\n- operator_overrides: 0\n- locked_manual_edits: 0\n- scope_blocked_actions: 0\n\n## Post-R17-T05 successor\n\n- track_id: R17-T06\n- machine_readable_entry_point: R17-T06 -> M8-T06\n",
+      "stdout": "{\n  \"artifact_id\": \"r17-weekly-orchestration\",\n  \"plan_date\": \"2026-09-08\",\n  \"operator_override_policy\": {\n    \"preserve_human_owned_edits\": true,\n    \"fact_writeback_allowed\": false,\n    \"override_source\": \"optional_override_json\"\n  },\n  \"auto_reschedulable_actions\": [],\n  \"operator_overrides\": [],\n  \"locked_manual_edits\": [],\n  \"scope_blocked_actions\": [],\n  \"readiness_status\": \"ready-for-r17-t06\",\n  \"post_r17_t05_successor\": {\n    \"track_id\": \"R17-T06\",\n    \"title\": \"teacher-loop intake acceptance artifact and post-R17 successor preparation\",\n    \"scope\": \"weekly orchestration -> override safety -> teacher-loop intake acceptance\",\n    \"machine_readable_entry_point\": \"R17-T06 -> M8-T06\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_r17_teacher_loop_artifact": {
+      "kwargs": {
+        "plan_date": "2026-09-08"
+      },
+      "json_filename": "30_r17_teacher_loop_acceptance_artifact.json",
+      "markdown_filename": "30_r17_teacher_loop_acceptance_artifact.md",
+      "payload": {
+        "artifact_contract_version": "r17.teacher-loop-intake.v1",
+        "artifact_id": "r17-teacher-loop-intake-acceptance",
+        "plan_date": "2026-09-08",
+        "scope": "orchestration input -> daily recommendation -> review loop -> override safety -> teacher-loop intake acceptance",
+        "input_contract_refs": [
+          {
+            "name": "r17_t02_orchestration_context",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r17_t03_daily_study_card",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r17_t04_review_followups",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r17_t05_weekly_orchestration",
+            "version": "fixture.v1"
+          }
+        ],
+        "orchestration_summary": {
+          "input_status": "not-yet-accepted",
+          "as_of": "",
+          "freshness_window_days": 0,
+          "recommendation_input_count": 0,
+          "recommended_action_candidates": 0,
+          "review_needed_candidates": 0,
+          "blocked_action_candidates": 0
+        },
+        "daily_card_readiness": {
+          "status": "not-yet-accepted",
+          "recommended_actions": 0,
+          "review_needed_actions": 0,
+          "blocked_actions": 0,
+          "out_of_scope_actions": 0
+        },
+        "review_loop_status": {
+          "status": "not-yet-accepted",
+          "formal_follow_ups": 0,
+          "review_only_insights": 0,
+          "blocked_follow_ups": 0,
+          "fact_writeback_allowed": false
+        },
+        "override_safety_status": {
+          "status": "not-yet-accepted",
+          "preserve_human_owned_edits": false,
+          "fact_writeback_allowed": false,
+          "auto_reschedulable_actions": 0,
+          "operator_overrides": 0,
+          "locked_manual_edits": 0,
+          "scope_blocked_actions": 0
+        },
+        "remaining_gaps": [
+          "same",
+          "teacher-loop intake readiness is limited to the current formal scope and current learner-input chain, not full adaptive coaching.",
+          "Post-R17 work still needs adaptive coaching and closed-loop study operations instead of reopening orchestration intake."
+        ],
+        "readiness_status": "not-ready-for-r18-t01",
+        "post_r17_successor": {
+          "track_id": "R18-T01",
+          "title": "adaptive coaching and closed-loop study operations reset",
+          "scope": "teacher-loop intake -> adaptive coaching -> closed-loop study operations",
+          "machine_readable_entry_point": "R18-T01 -> M9-T01",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R17-T06 teacher-loop intake acceptance artifact\n\n- artifact_id: r17-teacher-loop-intake-acceptance\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r18-t01\n\n## Intake summary\n\n- orchestration_input_status: not-yet-accepted\n- daily_card_status: not-yet-accepted\n- review_loop_status: not-yet-accepted\n- override_safety_status: not-yet-accepted\n\n## Post-R17 successor\n\n- track_id: R18-T01\n- machine_readable_entry_point: R18-T01 -> M9-T01\n",
+      "stdout": "{\n  \"artifact_id\": \"r17-teacher-loop-intake-acceptance\",\n  \"plan_date\": \"2026-09-08\",\n  \"orchestration_summary\": {\n    \"input_status\": \"not-yet-accepted\",\n    \"as_of\": \"\",\n    \"freshness_window_days\": 0,\n    \"recommendation_input_count\": 0,\n    \"recommended_action_candidates\": 0,\n    \"review_needed_candidates\": 0,\n    \"blocked_action_candidates\": 0\n  },\n  \"daily_card_readiness\": {\n    \"status\": \"not-yet-accepted\",\n    \"recommended_actions\": 0,\n    \"review_needed_actions\": 0,\n    \"blocked_actions\": 0,\n    \"out_of_scope_actions\": 0\n  },\n  \"review_loop_status\": {\n    \"status\": \"not-yet-accepted\",\n    \"formal_follow_ups\": 0,\n    \"review_only_insights\": 0,\n    \"blocked_follow_ups\": 0,\n    \"fact_writeback_allowed\": false\n  },\n  \"override_safety_status\": {\n    \"status\": \"not-yet-accepted\",\n    \"preserve_human_owned_edits\": false,\n    \"fact_writeback_allowed\": false,\n    \"auto_reschedulable_actions\": 0,\n    \"operator_overrides\": 0,\n    \"locked_manual_edits\": 0,\n    \"scope_blocked_actions\": 0\n  },\n  \"remaining_gaps\": [\n    \"same\",\n    \"teacher-loop intake readiness is limited to the current formal scope and current learner-input chain, not full adaptive coaching.\",\n    \"Post-R17 work still needs adaptive coaching and closed-loop study operations instead of reopening orchestration intake.\"\n  ],\n  \"readiness_status\": \"not-ready-for-r18-t01\",\n  \"post_r17_successor\": {\n    \"track_id\": \"R18-T01\",\n    \"title\": \"adaptive coaching and closed-loop study operations reset\",\n    \"scope\": \"teacher-loop intake -> adaptive coaching -> closed-loop study operations\",\n    \"machine_readable_entry_point\": \"R18-T01 -> M9-T01\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_adaptive_coaching_context": {
+      "kwargs": {
+        "plan_date": "2026-09-08",
+        "stale_signal_days": 21
+      },
+      "json_filename": "31_r18_adaptive_coaching_context.json",
+      "markdown_filename": "31_r18_adaptive_coaching_context.md",
+      "payload": {
+        "artifact_contract_version": "r18.adaptive-coaching-context.v1",
+        "artifact_id": "r18-adaptive-coaching-context",
+        "plan_date": "2026-09-08",
+        "scope": "teacher-loop intake -> adaptive context -> intervention eligibility boundary",
+        "input_contract_refs": [
+          {
+            "name": "r17_t06_teacher_loop_acceptance_artifact",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r17_t02_orchestration_context",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r17_t03_daily_study_card",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r17_t04_review_followups",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r17_t05_weekly_orchestration",
+            "version": "fixture.v1"
+          }
+        ],
+        "coach_context_contract_version": "r18.adaptive-coaching-context.v1",
+        "source_scope": {
+          "in_scope_subjects": [],
+          "out_of_scope_subjects": []
+        },
+        "teacher_loop_refs": {
+          "teacher_loop_artifact_id": "",
+          "teacher_loop_readiness_status": "not-ready",
+          "orchestration_summary_status": "",
+          "override_safety_status": ""
+        },
+        "priority_budget": {
+          "recommended_budget": 0,
+          "review_budget": 0,
+          "blocked_budget": 0,
+          "operator_override_count": 0,
+          "manual_lock_count": 0
+        },
+        "stale_signal_window": {
+          "window_days": 21,
+          "stale_signal_count": 0
+        },
+        "formal_inputs": {},
+        "adaptive_context": {
+          "plan_date": "2026-09-08",
+          "intervention_inputs": []
+        },
+        "intervention_eligibility_summary": {
+          "eligible_count": 0,
+          "stale_count": 0,
+          "review_only_count": 0,
+          "blocked_count": 0,
+          "out_of_scope_count": 0
+        },
+        "remaining_gaps": [
+          "same",
+          "Adaptive coaching context is limited to current teacher-loop outputs and does not yet package intervention actions."
+        ],
+        "readiness_status": "not-ready-for-r18-t03",
+        "post_r18_t02_successor": {
+          "track_id": "R18-T03",
+          "title": "adaptive coaching packet and action-priority packaging boundary",
+          "scope": "coach-input -> adaptive context -> intervention packet packaging",
+          "machine_readable_entry_point": "R18-T03 -> M9-T03",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R18-T02 adaptive coaching context\n\n- artifact_id: r18-adaptive-coaching-context\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r18-t03\n\n## Teacher-loop refs\n\n- teacher_loop_artifact_id: \n- override_safety_status: \n\n## Intervention eligibility summary\n\n- eligible_count: 0\n- stale_count: 0\n- review_only_count: 0\n- blocked_count: 0\n- out_of_scope_count: 0\n\n## Post-R18-T02 successor\n\n- track_id: R18-T03\n- machine_readable_entry_point: R18-T03 -> M9-T03\n",
+      "stdout": "{\n  \"artifact_id\": \"r18-adaptive-coaching-context\",\n  \"plan_date\": \"2026-09-08\",\n  \"priority_budget\": {\n    \"recommended_budget\": 0,\n    \"review_budget\": 0,\n    \"blocked_budget\": 0,\n    \"operator_override_count\": 0,\n    \"manual_lock_count\": 0\n  },\n  \"intervention_eligibility_summary\": {\n    \"eligible_count\": 0,\n    \"stale_count\": 0,\n    \"review_only_count\": 0,\n    \"blocked_count\": 0,\n    \"out_of_scope_count\": 0\n  },\n  \"readiness_status\": \"not-ready-for-r18-t03\",\n  \"post_r18_t02_successor\": {\n    \"track_id\": \"R18-T03\",\n    \"title\": \"adaptive coaching packet and action-priority packaging boundary\",\n    \"scope\": \"coach-input -> adaptive context -> intervention packet packaging\",\n    \"machine_readable_entry_point\": \"R18-T03 -> M9-T03\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_adaptive_coaching_packet": {
+      "kwargs": {
+        "plan_date": "2026-09-08"
+      },
+      "json_filename": "32_r18_adaptive_coaching_packet.json",
+      "markdown_filename": "32_r18_adaptive_coaching_packet.md",
+      "payload": {
+        "artifact_contract_version": "r18.adaptive-coaching-packet.v1",
+        "artifact_id": "r18-adaptive-coaching-packet",
+        "coach_packet_id": "r18-coach-packet-2026-09-08",
+        "plan_date": "2026-09-08",
+        "scope": "adaptive coaching context -> intervention packaging -> action-priority boundary",
+        "input_contract_refs": [
+          {
+            "name": "r18_t02_adaptive_coaching_context",
+            "version": "fixture.v1"
+          }
+        ],
+        "recommended_interventions": [],
+        "review_needed_interventions": [],
+        "blocked_interventions": [],
+        "out_of_scope_interventions": [],
+        "remaining_gaps": [
+          "same",
+          "same",
+          "No recommended intervention is currently available for the plan date."
+        ],
+        "readiness_status": "not-ready-for-r18-t04",
+        "post_r18_t03_successor": {
+          "track_id": "R18-T04",
+          "title": "post-action feedback intake and intervention traceability boundary",
+          "scope": "adaptive coaching packet -> intervention traceability -> feedback intake",
+          "machine_readable_entry_point": "R18-T04 -> M9-T04",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R18-T03 adaptive coaching packet\n\n- artifact_id: r18-adaptive-coaching-packet\n- coach_packet_id: r18-coach-packet-2026-09-08\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r18-t04\n\n## Intervention summary\n\n- recommended_interventions: 0\n- review_needed_interventions: 0\n- blocked_interventions: 0\n- out_of_scope_interventions: 0\n\n## Post-R18-T03 successor\n\n- track_id: R18-T04\n- machine_readable_entry_point: R18-T04 -> M9-T04\n",
+      "stdout": "{\n  \"artifact_id\": \"r18-adaptive-coaching-packet\",\n  \"coach_packet_id\": \"r18-coach-packet-2026-09-08\",\n  \"plan_date\": \"2026-09-08\",\n  \"recommended_interventions\": [],\n  \"review_needed_interventions\": [],\n  \"blocked_interventions\": [],\n  \"out_of_scope_interventions\": [],\n  \"readiness_status\": \"not-ready-for-r18-t04\",\n  \"post_r18_t03_successor\": {\n    \"track_id\": \"R18-T04\",\n    \"title\": \"post-action feedback intake and intervention traceability boundary\",\n    \"scope\": \"adaptive coaching packet -> intervention traceability -> feedback intake\",\n    \"machine_readable_entry_point\": \"R18-T04 -> M9-T04\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_coaching_feedback_loop": {
+      "kwargs": {
+        "plan_date": "2026-09-08"
+      },
+      "json_filename": "33_r18_coaching_feedback_loop.json",
+      "markdown_filename": "33_r18_coaching_feedback_loop.md",
+      "payload": {
+        "artifact_contract_version": "r18.coaching-feedback-loop.v1",
+        "artifact_id": "r18-coaching-feedback-loop",
+        "plan_date": "2026-09-08",
+        "scope": "adaptive coaching packet -> post-action feedback intake -> intervention traceability boundary",
+        "input_contract_refs": [
+          {
+            "name": "r18_t03_adaptive_coaching_packet",
+            "version": "fixture.v1"
+          }
+        ],
+        "formal_feedback_intake": [],
+        "review_only_feedback": [],
+        "out_of_scope_feedback": [],
+        "blocked_follow_ups": [],
+        "coach_outcome_log": [],
+        "fact_writeback_allowed": false,
+        "remaining_gaps": [
+          "same",
+          "same",
+          "No formal feedback intake is currently linked to the adaptive coaching packet."
+        ],
+        "readiness_status": "not-ready-for-r18-t05",
+        "post_r18_t04_successor": {
+          "track_id": "R18-T05",
+          "title": "closed-loop study operations, cadence adjustment, and human override boundary",
+          "scope": "feedback intake -> cadence adjustment -> closed-loop study operations",
+          "machine_readable_entry_point": "R18-T05 -> M9-T05",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R18-T04 coaching feedback loop\n\n- artifact_id: r18-coaching-feedback-loop\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r18-t05\n\n## Feedback summary\n\n- formal_feedback_intake: 0\n- review_only_feedback: 0\n- out_of_scope_feedback: 0\n- blocked_follow_ups: 0\n\n## Post-R18-T04 successor\n\n- track_id: R18-T05\n- machine_readable_entry_point: R18-T05 -> M9-T05\n",
+      "stdout": "{\n  \"artifact_id\": \"r18-coaching-feedback-loop\",\n  \"plan_date\": \"2026-09-08\",\n  \"formal_feedback_intake\": [],\n  \"review_only_feedback\": [],\n  \"out_of_scope_feedback\": [],\n  \"blocked_follow_ups\": [],\n  \"coach_outcome_log\": [],\n  \"fact_writeback_allowed\": false,\n  \"readiness_status\": \"not-ready-for-r18-t05\",\n  \"post_r18_t04_successor\": {\n    \"track_id\": \"R18-T05\",\n    \"title\": \"closed-loop study operations, cadence adjustment, and human override boundary\",\n    \"scope\": \"feedback intake -> cadence adjustment -> closed-loop study operations\",\n    \"machine_readable_entry_point\": \"R18-T05 -> M9-T05\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_closed_loop_operations": {
+      "kwargs": {
+        "plan_date": "2026-09-08",
+        "override_json": null
+      },
+      "json_filename": "34_r18_closed_loop_operations.json",
+      "markdown_filename": "34_r18_closed_loop_operations.md",
+      "payload": {
+        "artifact_contract_version": "r18.closed-loop-operations.v1",
+        "artifact_id": "r18-closed-loop-operations",
+        "plan_date": "2026-09-08",
+        "scope": "coaching feedback loop -> cadence adjustment -> operator override safety boundary",
+        "input_contract_refs": [
+          {
+            "name": "r18_t04_coaching_feedback_loop",
+            "version": "fixture.v1"
+          }
+        ],
+        "operator_override_policy": {
+          "preserve_human_owned_edits": true,
+          "fact_writeback_allowed": false,
+          "override_source": "optional_override_json"
+        },
+        "auto_adjustable_operations": [],
+        "operator_overrides": [],
+        "locked_manual_edits": [],
+        "scope_blocked_operations": [],
+        "remaining_gaps": [
+          "same",
+          "same"
+        ],
+        "readiness_status": "ready-for-r18-t06",
+        "post_r18_t05_successor": {
+          "track_id": "R18-T06",
+          "title": "adaptive-coaching acceptance artifact and post-R18 successor preparation",
+          "scope": "closed-loop operations -> cadence safety -> adaptive-coaching acceptance",
+          "machine_readable_entry_point": "R18-T06 -> M9-T06",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R18-T05 closed-loop operations\n\n- artifact_id: r18-closed-loop-operations\n- plan_date: 2026-09-08\n- readiness_status: ready-for-r18-t06\n\n## Closed-loop summary\n\n- auto_adjustable_operations: 0\n- operator_overrides: 0\n- locked_manual_edits: 0\n- scope_blocked_operations: 0\n\n## Post-R18-T05 successor\n\n- track_id: R18-T06\n- machine_readable_entry_point: R18-T06 -> M9-T06\n",
+      "stdout": "{\n  \"artifact_id\": \"r18-closed-loop-operations\",\n  \"plan_date\": \"2026-09-08\",\n  \"operator_override_policy\": {\n    \"preserve_human_owned_edits\": true,\n    \"fact_writeback_allowed\": false,\n    \"override_source\": \"optional_override_json\"\n  },\n  \"auto_adjustable_operations\": [],\n  \"operator_overrides\": [],\n  \"locked_manual_edits\": [],\n  \"scope_blocked_operations\": [],\n  \"readiness_status\": \"ready-for-r18-t06\",\n  \"post_r18_t05_successor\": {\n    \"track_id\": \"R18-T06\",\n    \"title\": \"adaptive-coaching acceptance artifact and post-R18 successor preparation\",\n    \"scope\": \"closed-loop operations -> cadence safety -> adaptive-coaching acceptance\",\n    \"machine_readable_entry_point\": \"R18-T06 -> M9-T06\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_r18_adaptive_coaching_artifact": {
+      "kwargs": {
+        "plan_date": "2026-09-08"
+      },
+      "json_filename": "35_r18_adaptive_coaching_acceptance_artifact.json",
+      "markdown_filename": "35_r18_adaptive_coaching_acceptance_artifact.md",
+      "payload": {
+        "artifact_contract_version": "r18.adaptive-coaching-acceptance.v1",
+        "artifact_id": "r18-adaptive-coaching-acceptance",
+        "plan_date": "2026-09-08",
+        "scope": "coach-input -> coaching packet -> feedback absorption -> cadence safety -> adaptive-coaching acceptance",
+        "input_contract_refs": [
+          {
+            "name": "r18_t02_adaptive_coaching_context",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r18_t03_adaptive_coaching_packet",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r18_t04_coaching_feedback_loop",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r18_t05_closed_loop_operations",
+            "version": "fixture.v1"
+          }
+        ],
+        "coaching_summary": {
+          "status": "not-yet-accepted",
+          "eligible_interventions": 0,
+          "review_only_or_stale_signals": 0,
+          "blocked_or_out_of_scope_signals": 0,
+          "in_scope_subjects": [],
+          "out_of_scope_subjects": []
+        },
+        "packet_readiness": {
+          "status": "not-yet-accepted",
+          "recommended_interventions": 0,
+          "review_needed_interventions": 0,
+          "blocked_interventions": 0,
+          "out_of_scope_interventions": 0
+        },
+        "feedback_loop_status": {
+          "status": "not-yet-accepted",
+          "formal_feedback_intake": 0,
+          "review_only_feedback": 0,
+          "out_of_scope_feedback": 0,
+          "blocked_follow_ups": 0,
+          "fact_writeback_allowed": false
+        },
+        "cadence_safety_status": {
+          "status": "not-yet-accepted",
+          "preserve_human_owned_edits": false,
+          "fact_writeback_allowed": false,
+          "auto_adjustable_operations": 0,
+          "operator_overrides": 0,
+          "locked_manual_edits": 0,
+          "scope_blocked_operations": 0
+        },
+        "remaining_gaps": [
+          "same",
+          "Adaptive-coaching ready only covers the current formal scope and current intake chain, not a finished all-subject longitudinal tutoring system.",
+          "Post-R18 work still needs longitudinal tutoring and goal-adaptation implementation on top of the accepted adaptive-coaching loop."
+        ],
+        "readiness_status": "not-ready-for-r19-t01",
+        "post_r18_successor": {
+          "track_id": "R19-T01",
+          "title": "longitudinal tutoring and goal-adaptation reset",
+          "scope": "adaptive coaching -> longitudinal tutoring -> goal-adaptation",
+          "machine_readable_entry_point": "R19-T01 -> M10-T01",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R18-T06 adaptive coaching acceptance artifact\n\n- artifact_id: r18-adaptive-coaching-acceptance\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r19-t01\n\n## Acceptance summary\n\n- coaching_summary_status: not-yet-accepted\n- packet_readiness_status: not-yet-accepted\n- feedback_loop_status: not-yet-accepted\n- cadence_safety_status: not-yet-accepted\n\n## Post-R18 successor\n\n- track_id: R19-T01\n- machine_readable_entry_point: R19-T01 -> M10-T01\n",
+      "stdout": "{\n  \"artifact_id\": \"r18-adaptive-coaching-acceptance\",\n  \"plan_date\": \"2026-09-08\",\n  \"coaching_summary\": {\n    \"status\": \"not-yet-accepted\",\n    \"eligible_interventions\": 0,\n    \"review_only_or_stale_signals\": 0,\n    \"blocked_or_out_of_scope_signals\": 0,\n    \"in_scope_subjects\": [],\n    \"out_of_scope_subjects\": []\n  },\n  \"packet_readiness\": {\n    \"status\": \"not-yet-accepted\",\n    \"recommended_interventions\": 0,\n    \"review_needed_interventions\": 0,\n    \"blocked_interventions\": 0,\n    \"out_of_scope_interventions\": 0\n  },\n  \"feedback_loop_status\": {\n    \"status\": \"not-yet-accepted\",\n    \"formal_feedback_intake\": 0,\n    \"review_only_feedback\": 0,\n    \"out_of_scope_feedback\": 0,\n    \"blocked_follow_ups\": 0,\n    \"fact_writeback_allowed\": false\n  },\n  \"cadence_safety_status\": {\n    \"status\": \"not-yet-accepted\",\n    \"preserve_human_owned_edits\": false,\n    \"fact_writeback_allowed\": false,\n    \"auto_adjustable_operations\": 0,\n    \"operator_overrides\": 0,\n    \"locked_manual_edits\": 0,\n    \"scope_blocked_operations\": 0\n  },\n  \"remaining_gaps\": [\n    \"same\",\n    \"Adaptive-coaching ready only covers the current formal scope and current intake chain, not a finished all-subject longitudinal tutoring system.\",\n    \"Post-R18 work still needs longitudinal tutoring and goal-adaptation implementation on top of the accepted adaptive-coaching loop.\"\n  ],\n  \"readiness_status\": \"not-ready-for-r19-t01\",\n  \"post_r18_successor\": {\n    \"track_id\": \"R19-T01\",\n    \"title\": \"longitudinal tutoring and goal-adaptation reset\",\n    \"scope\": \"adaptive coaching -> longitudinal tutoring -> goal-adaptation\",\n    \"machine_readable_entry_point\": \"R19-T01 -> M10-T01\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_longitudinal_tutoring_context": {
+      "kwargs": {
+        "plan_date": "2026-09-08",
+        "stale_cycle_days": 14
+      },
+      "json_filename": "36_r19_longitudinal_tutoring_context.json",
+      "markdown_filename": "36_r19_longitudinal_tutoring_context.md",
+      "payload": {
+        "artifact_contract_version": "r19.longitudinal-tutoring-context.v1",
+        "artifact_id": "r19-longitudinal-tutoring-context",
+        "plan_date": "2026-09-08",
+        "scope": "adaptive-coaching acceptance -> long-horizon learner profile -> goal-adaptation eligibility boundary",
+        "input_contract_refs": [
+          {
+            "name": "r17_t06_teacher_loop_acceptance_artifact",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r18_t02_adaptive_coaching_context",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r18_t04_coaching_feedback_loop",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r18_t05_closed_loop_operations",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r18_t06_adaptive_coaching_acceptance_artifact",
+            "version": "fixture.v1"
+          }
+        ],
+        "longitudinal_profile_contract_version": "r19.longitudinal-tutoring-context.v1",
+        "source_scope": {},
+        "adaptive_coaching_refs": {
+          "teacher_loop_artifact_id": "",
+          "adaptive_acceptance_artifact_id": "",
+          "adaptive_readiness_status": "not-ready",
+          "feedback_loop_artifact_id": "",
+          "closed_loop_artifact_id": ""
+        },
+        "stale_cycle_window": {
+          "window_days": 14,
+          "stale_cycle_count": 0
+        },
+        "milestone_drift_signals": [],
+        "long_horizon_profile": {
+          "current_stage": "longitudinal_tutoring",
+          "long_horizon_window_days": 14,
+          "teacher_loop_readiness_status": "not-ready",
+          "adaptive_readiness_status": "not-ready",
+          "eligible_goal_adjustment_count": 0,
+          "stale_cycle_count": 0,
+          "review_only_count": 0,
+          "blocked_count": 0,
+          "out_of_scope_count": 0
+        },
+        "longitudinal_context": {
+          "plan_date": "2026-09-08",
+          "goal_adjustment_inputs": []
+        },
+        "goal_adaptation_eligibility_summary": {
+          "eligible_count": 0,
+          "stale_cycle_count": 0,
+          "review_only_count": 0,
+          "blocked_count": 0,
+          "out_of_scope_count": 0
+        },
+        "remaining_gaps": [
+          "same",
+          "Longitudinal tutoring context only defines long-horizon inputs and eligibility; strategy packaging, multi-cycle feedback, and goal-adjustment governance still belong to later R19 tasks."
+        ],
+        "readiness_status": "not-ready-for-r19-t03",
+        "post_r19_t02_successor": {
+          "track_id": "R19-T03",
+          "title": "tutoring strategy packet and phase-priority packaging boundary",
+          "scope": "longitudinal tutoring context -> tutoring strategy packet -> phase priority",
+          "machine_readable_entry_point": "R19-T03 -> M10-T03",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R19-T02 longitudinal tutoring context\n\n- artifact_id: r19-longitudinal-tutoring-context\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r19-t03\n\n## Long-horizon profile\n\n- current_stage: longitudinal_tutoring\n- long_horizon_window_days: 14\n- eligible_goal_adjustment_count: 0\n- stale_cycle_count: 0\n- review_only_count: 0\n- blocked_count: 0\n- out_of_scope_count: 0\n\n## Post-R19-T02 successor\n\n- track_id: R19-T03\n- machine_readable_entry_point: R19-T03 -> M10-T03\n",
+      "stdout": "{\n  \"artifact_id\": \"r19-longitudinal-tutoring-context\",\n  \"plan_date\": \"2026-09-08\",\n  \"long_horizon_profile\": {\n    \"current_stage\": \"longitudinal_tutoring\",\n    \"long_horizon_window_days\": 14,\n    \"teacher_loop_readiness_status\": \"not-ready\",\n    \"adaptive_readiness_status\": \"not-ready\",\n    \"eligible_goal_adjustment_count\": 0,\n    \"stale_cycle_count\": 0,\n    \"review_only_count\": 0,\n    \"blocked_count\": 0,\n    \"out_of_scope_count\": 0\n  },\n  \"goal_adaptation_eligibility_summary\": {\n    \"eligible_count\": 0,\n    \"stale_cycle_count\": 0,\n    \"review_only_count\": 0,\n    \"blocked_count\": 0,\n    \"out_of_scope_count\": 0\n  },\n  \"readiness_status\": \"not-ready-for-r19-t03\",\n  \"post_r19_t02_successor\": {\n    \"track_id\": \"R19-T03\",\n    \"title\": \"tutoring strategy packet and phase-priority packaging boundary\",\n    \"scope\": \"longitudinal tutoring context -> tutoring strategy packet -> phase priority\",\n    \"machine_readable_entry_point\": \"R19-T03 -> M10-T03\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_tutoring_strategy_packet": {
+      "kwargs": {
+        "plan_date": "2026-09-08"
+      },
+      "json_filename": "37_r19_tutoring_strategy_packet.json",
+      "markdown_filename": "37_r19_tutoring_strategy_packet.md",
+      "payload": {
+        "artifact_contract_version": "r19.tutoring-strategy-packet.v1",
+        "artifact_id": "r19-tutoring-strategy-packet",
+        "strategy_packet_id": "r19-strategy-packet-2026-09-08",
+        "plan_date": "2026-09-08",
+        "scope": "longitudinal tutoring context -> tutoring strategy packaging -> phase-priority boundary",
+        "input_contract_refs": [
+          {
+            "name": "r19_t02_longitudinal_tutoring_context",
+            "version": "fixture.v1"
+          }
+        ],
+        "recommended_strategies": [],
+        "review_needed_strategies": [],
+        "blocked_strategies": [],
+        "out_of_scope_strategies": [],
+        "remaining_gaps": [
+          "same",
+          "same",
+          "No recommended long-horizon strategy is currently available for the plan date."
+        ],
+        "readiness_status": "not-ready-for-r19-t04",
+        "post_r19_t03_successor": {
+          "track_id": "R19-T04",
+          "title": "multi-cycle feedback intake and tutoring traceability boundary",
+          "scope": "tutoring strategy packet -> cycle feedback -> tutoring traceability",
+          "machine_readable_entry_point": "R19-T04 -> M10-T04",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R19-T03 tutoring strategy packet\n\n- artifact_id: r19-tutoring-strategy-packet\n- strategy_packet_id: r19-strategy-packet-2026-09-08\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r19-t04\n\n## Strategy summary\n\n- recommended_strategies: 0\n- review_needed_strategies: 0\n- blocked_strategies: 0\n- out_of_scope_strategies: 0\n\n## Post-R19-T03 successor\n\n- track_id: R19-T04\n- machine_readable_entry_point: R19-T04 -> M10-T04\n",
+      "stdout": "{\n  \"artifact_id\": \"r19-tutoring-strategy-packet\",\n  \"strategy_packet_id\": \"r19-strategy-packet-2026-09-08\",\n  \"plan_date\": \"2026-09-08\",\n  \"recommended_strategies\": [],\n  \"review_needed_strategies\": [],\n  \"blocked_strategies\": [],\n  \"out_of_scope_strategies\": [],\n  \"readiness_status\": \"not-ready-for-r19-t04\",\n  \"post_r19_t03_successor\": {\n    \"track_id\": \"R19-T04\",\n    \"title\": \"multi-cycle feedback intake and tutoring traceability boundary\",\n    \"scope\": \"tutoring strategy packet -> cycle feedback -> tutoring traceability\",\n    \"machine_readable_entry_point\": \"R19-T04 -> M10-T04\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_tutoring_feedback_loop": {
+      "kwargs": {
+        "plan_date": "2026-09-08"
+      },
+      "json_filename": "38_r19_tutoring_feedback_loop.json",
+      "markdown_filename": "38_r19_tutoring_feedback_loop.md",
+      "payload": {
+        "artifact_contract_version": "r19.tutoring-feedback-loop.v1",
+        "artifact_id": "r19-tutoring-feedback-loop",
+        "plan_date": "2026-09-08",
+        "scope": "tutoring strategy packet -> multi-cycle feedback intake -> tutoring traceability boundary",
+        "input_contract_refs": [
+          {
+            "name": "r19_t03_tutoring_strategy_packet",
+            "version": "fixture.v1"
+          }
+        ],
+        "formal_cycle_feedback": [],
+        "review_only_feedback": [],
+        "out_of_scope_feedback": [],
+        "blocked_follow_ups": [],
+        "goal_progress_log": [],
+        "fact_writeback_allowed": false,
+        "remaining_gaps": [
+          "same",
+          "same",
+          "No formal multi-cycle feedback is currently linked to the tutoring strategy packet."
+        ],
+        "readiness_status": "not-ready-for-r19-t05",
+        "post_r19_t04_successor": {
+          "track_id": "R19-T05",
+          "title": "long-horizon study operations, goal-adjustment governance, and human override boundary",
+          "scope": "cycle feedback -> goal-adjustment governance -> long-horizon operations",
+          "machine_readable_entry_point": "R19-T05 -> M10-T05",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R19-T04 tutoring feedback loop\n\n- artifact_id: r19-tutoring-feedback-loop\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r19-t05\n\n## Feedback summary\n\n- formal_cycle_feedback: 0\n- review_only_feedback: 0\n- out_of_scope_feedback: 0\n- blocked_follow_ups: 0\n\n## Post-R19-T04 successor\n\n- track_id: R19-T05\n- machine_readable_entry_point: R19-T05 -> M10-T05\n",
+      "stdout": "{\n  \"artifact_id\": \"r19-tutoring-feedback-loop\",\n  \"plan_date\": \"2026-09-08\",\n  \"formal_cycle_feedback\": [],\n  \"review_only_feedback\": [],\n  \"out_of_scope_feedback\": [],\n  \"blocked_follow_ups\": [],\n  \"goal_progress_log\": [],\n  \"fact_writeback_allowed\": false,\n  \"readiness_status\": \"not-ready-for-r19-t05\",\n  \"post_r19_t04_successor\": {\n    \"track_id\": \"R19-T05\",\n    \"title\": \"long-horizon study operations, goal-adjustment governance, and human override boundary\",\n    \"scope\": \"cycle feedback -> goal-adjustment governance -> long-horizon operations\",\n    \"machine_readable_entry_point\": \"R19-T05 -> M10-T05\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_long_horizon_operations": {
+      "kwargs": {
+        "plan_date": "2026-09-08",
+        "override_json": null
+      },
+      "json_filename": "39_r19_long_horizon_operations.json",
+      "markdown_filename": "39_r19_long_horizon_operations.md",
+      "payload": {
+        "artifact_contract_version": "r19.long-horizon-operations.v1",
+        "artifact_id": "r19-long-horizon-operations",
+        "plan_date": "2026-09-08",
+        "scope": "tutoring feedback loop -> goal-adjustment governance -> long-horizon study operations boundary",
+        "input_contract_refs": [
+          {
+            "name": "r19_t04_tutoring_feedback_loop",
+            "version": "fixture.v1"
+          }
+        ],
+        "goal_adjustment_policy": {
+          "preserve_human_owned_edits": true,
+          "fact_writeback_allowed": false,
+          "override_source": "optional_override_json"
+        },
+        "long_horizon_operations": [],
+        "operator_overrides": [],
+        "locked_manual_edits": [],
+        "scope_blocked_operations": [],
+        "remaining_gaps": [
+          "same",
+          "same"
+        ],
+        "readiness_status": "ready-for-r19-t06",
+        "post_r19_t05_successor": {
+          "track_id": "R19-T06",
+          "title": "longitudinal-tutoring acceptance artifact and post-R19 successor preparation",
+          "scope": "goal-adjustment governance -> long-horizon operations -> longitudinal tutoring acceptance",
+          "machine_readable_entry_point": "R19-T06 -> M10-T06",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R19-T05 long-horizon operations\n\n- artifact_id: r19-long-horizon-operations\n- plan_date: 2026-09-08\n- readiness_status: ready-for-r19-t06\n\n## Goal-adjustment summary\n\n- long_horizon_operations: 0\n- operator_overrides: 0\n- locked_manual_edits: 0\n- scope_blocked_operations: 0\n\n## Post-R19-T05 successor\n\n- track_id: R19-T06\n- machine_readable_entry_point: R19-T06 -> M10-T06\n",
+      "stdout": "{\n  \"artifact_id\": \"r19-long-horizon-operations\",\n  \"plan_date\": \"2026-09-08\",\n  \"goal_adjustment_policy\": {\n    \"preserve_human_owned_edits\": true,\n    \"fact_writeback_allowed\": false,\n    \"override_source\": \"optional_override_json\"\n  },\n  \"long_horizon_operations\": [],\n  \"operator_overrides\": [],\n  \"locked_manual_edits\": [],\n  \"scope_blocked_operations\": [],\n  \"readiness_status\": \"ready-for-r19-t06\",\n  \"post_r19_t05_successor\": {\n    \"track_id\": \"R19-T06\",\n    \"title\": \"longitudinal-tutoring acceptance artifact and post-R19 successor preparation\",\n    \"scope\": \"goal-adjustment governance -> long-horizon operations -> longitudinal tutoring acceptance\",\n    \"machine_readable_entry_point\": \"R19-T06 -> M10-T06\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_r19_longitudinal_tutoring_artifact": {
+      "kwargs": {
+        "plan_date": "2026-09-08"
+      },
+      "json_filename": "40_r19_longitudinal_tutoring_acceptance_artifact.json",
+      "markdown_filename": "40_r19_longitudinal_tutoring_acceptance_artifact.md",
+      "payload": {
+        "artifact_contract_version": "r19.longitudinal-tutoring-acceptance.v1",
+        "artifact_id": "r19-longitudinal-tutoring-acceptance",
+        "plan_date": "2026-09-08",
+        "scope": "long-horizon profile -> strategy packet -> cycle feedback -> goal-adjustment safety -> longitudinal tutoring acceptance",
+        "input_contract_refs": [
+          {
+            "name": "r19_t02_longitudinal_tutoring_context",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r19_t03_tutoring_strategy_packet",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r19_t04_tutoring_feedback_loop",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r19_t05_long_horizon_operations",
+            "version": "fixture.v1"
+          }
+        ],
+        "tutoring_summary": {
+          "status": "not-yet-accepted",
+          "eligible_long_horizon_signals": 0,
+          "review_only_or_stale_signals": 0,
+          "blocked_or_out_of_scope_signals": 0,
+          "in_scope_subjects": [],
+          "out_of_scope_subjects": []
+        },
+        "strategy_readiness": {
+          "status": "not-yet-accepted",
+          "recommended_strategies": 0,
+          "review_needed_strategies": 0,
+          "blocked_strategies": 0,
+          "out_of_scope_strategies": 0
+        },
+        "cycle_feedback_status": {
+          "status": "not-yet-accepted",
+          "formal_cycle_feedback": 0,
+          "review_only_feedback": 0,
+          "out_of_scope_feedback": 0,
+          "blocked_follow_ups": 0,
+          "fact_writeback_allowed": false
+        },
+        "goal_adjustment_safety_status": {
+          "status": "not-yet-accepted",
+          "preserve_human_owned_edits": false,
+          "fact_writeback_allowed": false,
+          "long_horizon_operations": 0,
+          "operator_overrides": 0,
+          "locked_manual_edits": 0,
+          "scope_blocked_operations": 0
+        },
+        "remaining_gaps": [
+          "same",
+          "Longitudinal-tutoring acceptance still only covers the current formal scope and current intake chain, not a finished all-subject autonomous tutoring system.",
+          "Post-R19 work still needs autonomous tutoring and self-evolving study governance implementation on top of the accepted longitudinal-tutoring loop."
+        ],
+        "readiness_status": "not-ready-for-r20-t01",
+        "post_r19_successor": {
+          "track_id": "R20-T01",
+          "title": "autonomous tutoring and self-evolving study governance reset",
+          "scope": "longitudinal tutoring -> autonomous tutoring -> self-evolving study governance",
+          "machine_readable_entry_point": "R20-T01 -> M11-T01",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R19-T06 longitudinal tutoring acceptance artifact\n\n- artifact_id: r19-longitudinal-tutoring-acceptance\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r20-t01\n\n## Acceptance summary\n\n- tutoring_summary_status: not-yet-accepted\n- strategy_readiness_status: not-yet-accepted\n- cycle_feedback_status: not-yet-accepted\n- goal_adjustment_safety_status: not-yet-accepted\n\n## Post-R19 successor\n\n- track_id: R20-T01\n- machine_readable_entry_point: R20-T01 -> M11-T01\n",
+      "stdout": "{\n  \"artifact_id\": \"r19-longitudinal-tutoring-acceptance\",\n  \"plan_date\": \"2026-09-08\",\n  \"tutoring_summary\": {\n    \"status\": \"not-yet-accepted\",\n    \"eligible_long_horizon_signals\": 0,\n    \"review_only_or_stale_signals\": 0,\n    \"blocked_or_out_of_scope_signals\": 0,\n    \"in_scope_subjects\": [],\n    \"out_of_scope_subjects\": []\n  },\n  \"strategy_readiness\": {\n    \"status\": \"not-yet-accepted\",\n    \"recommended_strategies\": 0,\n    \"review_needed_strategies\": 0,\n    \"blocked_strategies\": 0,\n    \"out_of_scope_strategies\": 0\n  },\n  \"cycle_feedback_status\": {\n    \"status\": \"not-yet-accepted\",\n    \"formal_cycle_feedback\": 0,\n    \"review_only_feedback\": 0,\n    \"out_of_scope_feedback\": 0,\n    \"blocked_follow_ups\": 0,\n    \"fact_writeback_allowed\": false\n  },\n  \"goal_adjustment_safety_status\": {\n    \"status\": \"not-yet-accepted\",\n    \"preserve_human_owned_edits\": false,\n    \"fact_writeback_allowed\": false,\n    \"long_horizon_operations\": 0,\n    \"operator_overrides\": 0,\n    \"locked_manual_edits\": 0,\n    \"scope_blocked_operations\": 0\n  },\n  \"remaining_gaps\": [\n    \"same\",\n    \"Longitudinal-tutoring acceptance still only covers the current formal scope and current intake chain, not a finished all-subject autonomous tutoring system.\",\n    \"Post-R19 work still needs autonomous tutoring and self-evolving study governance implementation on top of the accepted longitudinal-tutoring loop.\"\n  ],\n  \"readiness_status\": \"not-ready-for-r20-t01\",\n  \"post_r19_successor\": {\n    \"track_id\": \"R20-T01\",\n    \"title\": \"autonomous tutoring and self-evolving study governance reset\",\n    \"scope\": \"longitudinal tutoring -> autonomous tutoring -> self-evolving study governance\",\n    \"machine_readable_entry_point\": \"R20-T01 -> M11-T01\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_autonomous_trigger_contract": {
+      "kwargs": {
+        "plan_date": "2026-09-08"
+      },
+      "json_filename": "41_r20_autonomous_trigger_contract.json",
+      "markdown_filename": "41_r20_autonomous_trigger_contract.md",
+      "payload": {
+        "artifact_contract_version": "r20.autonomous-trigger-contract.v1",
+        "artifact_id": "r20-autonomous-trigger-contract",
+        "plan_date": "2026-09-08",
+        "scope": "longitudinal-tutoring acceptance -> initiative eligibility -> autonomous trigger contract boundary",
+        "input_contract_refs": [
+          {
+            "name": "r19_t06_longitudinal_tutoring_acceptance_artifact",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r19_t03_tutoring_strategy_packet",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r19_t04_tutoring_feedback_loop",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r19_t05_long_horizon_operations",
+            "version": "fixture.v1"
+          }
+        ],
+        "longitudinal_tutoring_refs": {
+          "acceptance_artifact_id": "",
+          "readiness_status": "not-ready",
+          "tutoring_summary_status": "",
+          "goal_adjustment_safety_status": ""
+        },
+        "trigger_guardrails": {
+          "preserve_human_owned_edits": false,
+          "fact_writeback_allowed": false,
+          "in_scope_subjects": [],
+          "out_of_scope_subjects": [],
+          "human_override_priority": "operator_override_and_manual_lock_take_precedence"
+        },
+        "autonomous_trigger_contract": {
+          "plan_date": "2026-09-08",
+          "initiative_signals": []
+        },
+        "initiative_eligibility_summary": {
+          "auto_executable_count": 0,
+          "approval_required_count": 0,
+          "review_only_count": 0,
+          "blocked_count": 0
+        },
+        "remaining_gaps": [
+          "same",
+          "R20-T02 only defines autonomous trigger eligibility and does not yet publish learner-side action plans or governance-ledger updates."
+        ],
+        "readiness_status": "not-ready-for-r20-t03",
+        "post_r20_t02_successor": {
+          "track_id": "R20-T03",
+          "title": "autonomous action planning and approval boundary",
+          "scope": "initiative eligibility -> autonomous action planning -> approval boundary",
+          "machine_readable_entry_point": "R20-T03 -> M11-T03",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R20-T02 autonomous trigger contract\n\n- artifact_id: r20-autonomous-trigger-contract\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r20-t03\n\n## Initiative eligibility summary\n\n- auto_executable_count: 0\n- approval_required_count: 0\n- review_only_count: 0\n- blocked_count: 0\n\n## Post-R20-T02 successor\n\n- track_id: R20-T03\n- machine_readable_entry_point: R20-T03 -> M11-T03\n",
+      "stdout": "{\n  \"artifact_id\": \"r20-autonomous-trigger-contract\",\n  \"plan_date\": \"2026-09-08\",\n  \"longitudinal_tutoring_refs\": {\n    \"acceptance_artifact_id\": \"\",\n    \"readiness_status\": \"not-ready\",\n    \"tutoring_summary_status\": \"\",\n    \"goal_adjustment_safety_status\": \"\"\n  },\n  \"trigger_guardrails\": {\n    \"preserve_human_owned_edits\": false,\n    \"fact_writeback_allowed\": false,\n    \"in_scope_subjects\": [],\n    \"out_of_scope_subjects\": [],\n    \"human_override_priority\": \"operator_override_and_manual_lock_take_precedence\"\n  },\n  \"autonomous_trigger_contract\": {\n    \"plan_date\": \"2026-09-08\",\n    \"initiative_signals\": []\n  },\n  \"initiative_eligibility_summary\": {\n    \"auto_executable_count\": 0,\n    \"approval_required_count\": 0,\n    \"review_only_count\": 0,\n    \"blocked_count\": 0\n  },\n  \"remaining_gaps\": [\n    \"same\",\n    \"R20-T02 only defines autonomous trigger eligibility and does not yet publish learner-side action plans or governance-ledger updates.\"\n  ],\n  \"readiness_status\": \"not-ready-for-r20-t03\",\n  \"post_r20_t02_successor\": {\n    \"track_id\": \"R20-T03\",\n    \"title\": \"autonomous action planning and approval boundary\",\n    \"scope\": \"initiative eligibility -> autonomous action planning -> approval boundary\",\n    \"machine_readable_entry_point\": \"R20-T03 -> M11-T03\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_autonomous_action_plan": {
+      "kwargs": {
+        "plan_date": "2026-09-08"
+      },
+      "json_filename": "42_r20_autonomous_action_plan.json",
+      "markdown_filename": "42_r20_autonomous_action_plan.md",
+      "payload": {
+        "artifact_contract_version": "r20.autonomous-action-plan.v1",
+        "artifact_id": "r20-autonomous-action-plan",
+        "action_plan_id": "r20-action-plan-2026-09-08",
+        "plan_date": "2026-09-08",
+        "scope": "autonomous trigger contract -> learner-side action planning -> approval boundary",
+        "input_contract_refs": [
+          {
+            "name": "r20_t02_autonomous_trigger_contract",
+            "version": "fixture.v1"
+          }
+        ],
+        "action_planning_policy": {
+          "preserve_human_owned_edits": false,
+          "fact_writeback_allowed": false,
+          "human_override_priority": ""
+        },
+        "auto_executable_actions": [],
+        "approval_required_actions": [],
+        "review_only_actions": [],
+        "blocked_actions": [],
+        "remaining_gaps": [
+          "same",
+          "same",
+          "R20-T03 only defines learner-side action planning and approval boundaries; governance-ledger drift handling still belongs to R20-T04."
+        ],
+        "readiness_status": "not-ready-for-r20-t04",
+        "post_r20_t03_successor": {
+          "track_id": "R20-T04",
+          "title": "self-evolving governance ledger and policy-adjustment boundary",
+          "scope": "autonomous action planning -> governance ledger -> policy adjustment boundary",
+          "machine_readable_entry_point": "R20-T04 -> M11-T04",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R20-T03 autonomous action plan\n\n- artifact_id: r20-autonomous-action-plan\n- action_plan_id: r20-action-plan-2026-09-08\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r20-t04\n\n## Action summary\n\n- auto_executable_actions: 0\n- approval_required_actions: 0\n- review_only_actions: 0\n- blocked_actions: 0\n\n## Post-R20-T03 successor\n\n- track_id: R20-T04\n- machine_readable_entry_point: R20-T04 -> M11-T04\n",
+      "stdout": "{\n  \"artifact_id\": \"r20-autonomous-action-plan\",\n  \"action_plan_id\": \"r20-action-plan-2026-09-08\",\n  \"plan_date\": \"2026-09-08\",\n  \"action_planning_policy\": {\n    \"preserve_human_owned_edits\": false,\n    \"fact_writeback_allowed\": false,\n    \"human_override_priority\": \"\"\n  },\n  \"auto_executable_actions\": [],\n  \"approval_required_actions\": [],\n  \"review_only_actions\": [],\n  \"blocked_actions\": [],\n  \"readiness_status\": \"not-ready-for-r20-t04\",\n  \"post_r20_t03_successor\": {\n    \"track_id\": \"R20-T04\",\n    \"title\": \"self-evolving governance ledger and policy-adjustment boundary\",\n    \"scope\": \"autonomous action planning -> governance ledger -> policy adjustment boundary\",\n    \"machine_readable_entry_point\": \"R20-T04 -> M11-T04\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_autonomous_governance_ledger": {
+      "kwargs": {
+        "plan_date": "2026-09-08",
+        "governance_json": null
+      },
+      "json_filename": "43_r20_autonomous_governance_ledger.json",
+      "markdown_filename": "43_r20_autonomous_governance_ledger.md",
+      "payload": {
+        "artifact_contract_version": "r20.autonomous-governance-ledger.v1",
+        "artifact_id": "r20-autonomous-governance-ledger",
+        "governance_ledger_id": "r20-governance-ledger-2026-09-08",
+        "plan_date": "2026-09-08",
+        "scope": "autonomous action plan -> governance ledger -> policy adjustment and rollback boundary",
+        "input_contract_refs": [
+          {
+            "name": "r20_t03_autonomous_action_plan",
+            "version": "fixture.v1"
+          }
+        ],
+        "policy_adjustment_policy": {
+          "preserve_human_owned_edits": false,
+          "fact_writeback_allowed": false,
+          "human_override_priority": "",
+          "rollback_authority": "human_operator_only"
+        },
+        "strategy_drift_entries": [],
+        "false_positive_entries": [],
+        "over_intervention_entries": [],
+        "human_rollback_entries": [],
+        "policy_adjustment_trace": [],
+        "remaining_gaps": [
+          "same",
+          "same",
+          "R20-T04 only records governance-ledger drift and policy-adjustment boundaries; final autonomous-tutoring acceptance still belongs to R20-T05."
+        ],
+        "readiness_status": "not-ready-for-r20-t05",
+        "post_r20_t04_successor": {
+          "track_id": "R20-T05",
+          "title": "autonomous tutoring acceptance artifact and post-R20 successor preparation",
+          "scope": "governance ledger -> policy adjustment boundary -> autonomous tutoring acceptance",
+          "machine_readable_entry_point": "R20-T05 -> M11-T05",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R20-T04 autonomous governance ledger\n\n- artifact_id: r20-autonomous-governance-ledger\n- governance_ledger_id: r20-governance-ledger-2026-09-08\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r20-t05\n\n## Governance summary\n\n- strategy_drift_entries: 0\n- false_positive_entries: 0\n- over_intervention_entries: 0\n- human_rollback_entries: 0\n- policy_adjustment_trace: 0\n\n## Post-R20-T04 successor\n\n- track_id: R20-T05\n- machine_readable_entry_point: R20-T05 -> M11-T05\n",
+      "stdout": "{\n  \"artifact_id\": \"r20-autonomous-governance-ledger\",\n  \"governance_ledger_id\": \"r20-governance-ledger-2026-09-08\",\n  \"plan_date\": \"2026-09-08\",\n  \"policy_adjustment_policy\": {\n    \"preserve_human_owned_edits\": false,\n    \"fact_writeback_allowed\": false,\n    \"human_override_priority\": \"\",\n    \"rollback_authority\": \"human_operator_only\"\n  },\n  \"strategy_drift_entries\": [],\n  \"false_positive_entries\": [],\n  \"over_intervention_entries\": [],\n  \"human_rollback_entries\": [],\n  \"policy_adjustment_trace\": [],\n  \"readiness_status\": \"not-ready-for-r20-t05\",\n  \"post_r20_t04_successor\": {\n    \"track_id\": \"R20-T05\",\n    \"title\": \"autonomous tutoring acceptance artifact and post-R20 successor preparation\",\n    \"scope\": \"governance ledger -> policy adjustment boundary -> autonomous tutoring acceptance\",\n    \"machine_readable_entry_point\": \"R20-T05 -> M11-T05\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    },
+    "build_r20_autonomous_tutoring_artifact": {
+      "kwargs": {
+        "plan_date": "2026-09-08"
+      },
+      "json_filename": "44_r20_autonomous_tutoring_acceptance_artifact.json",
+      "markdown_filename": "44_r20_autonomous_tutoring_acceptance_artifact.md",
+      "payload": {
+        "artifact_contract_version": "r20.autonomous-tutoring-acceptance.v1",
+        "artifact_id": "r20-autonomous-tutoring-acceptance",
+        "plan_date": "2026-09-08",
+        "scope": "initiative eligibility -> autonomous action planning -> governance ledger -> autonomous tutoring acceptance",
+        "input_contract_refs": [
+          {
+            "name": "r20_t02_autonomous_trigger_contract",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r20_t03_autonomous_action_plan",
+            "version": "fixture.v1"
+          },
+          {
+            "name": "r20_t04_autonomous_governance_ledger",
+            "version": "fixture.v1"
+          }
+        ],
+        "initiative_readiness": {
+          "status": "not-yet-accepted",
+          "auto_executable_count": 0,
+          "approval_required_count": 0,
+          "review_only_count": 0,
+          "blocked_count": 0
+        },
+        "action_plan_readiness": {
+          "status": "not-yet-accepted",
+          "auto_executable_actions": 0,
+          "approval_required_actions": 0,
+          "review_only_actions": 0,
+          "blocked_actions": 0,
+          "preserve_human_owned_edits": false,
+          "fact_writeback_allowed": false
+        },
+        "governance_readiness": {
+          "status": "not-yet-accepted",
+          "strategy_drift_entries": 0,
+          "false_positive_entries": 0,
+          "over_intervention_entries": 0,
+          "human_rollback_entries": 0,
+          "policy_adjustment_trace": 0,
+          "rollback_authority": "",
+          "preserve_human_owned_edits": false,
+          "fact_writeback_allowed": false
+        },
+        "remaining_gaps": [
+          "same",
+          "Autonomous tutoring acceptance still only covers the current formal scope and current autonomous-governance chain, not a finished all-subject autonomous tutoring system.",
+          "Post-R20 work still needs storage/index scalability acceptance before operating-range expansion can be treated as formally ready."
+        ],
+        "readiness_status": "not-ready-for-r21-t00",
+        "post_r20_successor": {
+          "track_id": "R21-T00",
+          "title": "storage/index scalability acceptance planning gate",
+          "scope": "autonomous tutoring acceptance -> storage/index scalability acceptance -> operating range expansion",
+          "machine_readable_entry_point": "R21-T00 -> M12-T00",
+          "status": "defined_not_started"
+        }
+      },
+      "markdown": "# R20-T05 autonomous tutoring acceptance artifact\n\n- artifact_id: r20-autonomous-tutoring-acceptance\n- plan_date: 2026-09-08\n- readiness_status: not-ready-for-r21-t00\n\n## Acceptance summary\n\n- initiative_readiness_status: not-yet-accepted\n- action_plan_readiness_status: not-yet-accepted\n- governance_readiness_status: not-yet-accepted\n\n## Post-R20 successor\n\n- track_id: R21-T00\n- machine_readable_entry_point: R21-T00 -> M12-T00\n",
+      "stdout": "{\n  \"artifact_id\": \"r20-autonomous-tutoring-acceptance\",\n  \"plan_date\": \"2026-09-08\",\n  \"initiative_readiness\": {\n    \"status\": \"not-yet-accepted\",\n    \"auto_executable_count\": 0,\n    \"approval_required_count\": 0,\n    \"review_only_count\": 0,\n    \"blocked_count\": 0\n  },\n  \"action_plan_readiness\": {\n    \"status\": \"not-yet-accepted\",\n    \"auto_executable_actions\": 0,\n    \"approval_required_actions\": 0,\n    \"review_only_actions\": 0,\n    \"blocked_actions\": 0,\n    \"preserve_human_owned_edits\": false,\n    \"fact_writeback_allowed\": false\n  },\n  \"governance_readiness\": {\n    \"status\": \"not-yet-accepted\",\n    \"strategy_drift_entries\": 0,\n    \"false_positive_entries\": 0,\n    \"over_intervention_entries\": 0,\n    \"human_rollback_entries\": 0,\n    \"policy_adjustment_trace\": 0,\n    \"rollback_authority\": \"\",\n    \"preserve_human_owned_edits\": false,\n    \"fact_writeback_allowed\": false\n  },\n  \"remaining_gaps\": [\n    \"same\",\n    \"Autonomous tutoring acceptance still only covers the current formal scope and current autonomous-governance chain, not a finished all-subject autonomous tutoring system.\",\n    \"Post-R20 work still needs storage/index scalability acceptance before operating-range expansion can be treated as formally ready.\"\n  ],\n  \"readiness_status\": \"not-ready-for-r21-t00\",\n  \"post_r20_successor\": {\n    \"track_id\": \"R21-T00\",\n    \"title\": \"storage/index scalability acceptance planning gate\",\n    \"scope\": \"autonomous tutoring acceptance -> storage/index scalability acceptance -> operating range expansion\",\n    \"machine_readable_entry_point\": \"R21-T00 -> M12-T00\",\n    \"status\": \"defined_not_started\"\n  }\n}\n"
+    }
+  }
+}

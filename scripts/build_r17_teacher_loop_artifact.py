@@ -2,21 +2,21 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_daily_study_card import ARTIFACT_JSON as DAILY_CARD_JSON
-from build_review_followups import ARTIFACT_JSON as REVIEW_FOLLOWUPS_JSON
-from build_study_orchestration_context import ARTIFACT_JSON as ORCHESTRATION_CONTEXT_JSON
-from build_weekly_orchestration import ARTIFACT_JSON as WEEKLY_ORCHESTRATION_JSON
-from common import INDEX_DIRNAME, default_vault_root_arg, load_json_or_default, save_json, save_text
+from kaoyan_kb.domain.learner_artifact_files import DAILY_STUDY_CARD as DAILY_CARD_JSON
+from kaoyan_kb.domain.learner_artifact_files import REVIEW_FOLLOWUPS as REVIEW_FOLLOWUPS_JSON
+from kaoyan_kb.domain.learner_artifact_files import STUDY_ORCHESTRATION_CONTEXT as ORCHESTRATION_CONTEXT_JSON
+from kaoyan_kb.domain.learner_artifact_files import WEEKLY_ORCHESTRATION as WEEKLY_ORCHESTRATION_JSON
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg
+from kaoyan_kb.domain.artifact_support import render_acceptance_markdown
 from kaoyan_kb.domain.artifact_support import dedupe_strings as _dedupe_strings
 from kaoyan_kb.domain.artifact_support import load_required_artifact as _load_artifact
 from kaoyan_kb.domain.artifact_support import status_from_readiness as _status_from_readiness
 
-ARTIFACT_JSON = "30_r17_teacher_loop_acceptance_artifact.json"
+from kaoyan_kb.domain.learner_artifact_files import R17_TEACHER_LOOP_ARTIFACT as ARTIFACT_JSON
 ARTIFACT_MD = "30_r17_teacher_loop_acceptance_artifact.md"
 ARTIFACT_ID = "r17-teacher-loop-intake-acceptance"
 ARTIFACT_CONTRACT_VERSION = "r17.teacher-loop-intake.v1"
@@ -148,57 +148,30 @@ def build_payload(index_root: Path, plan_date: str) -> dict[str, Any]:
 
 
 def render_markdown(payload: dict[str, Any]) -> str:
-    orchestration_summary = dict(payload.get("orchestration_summary", {}))
-    daily_card_readiness = dict(payload.get("daily_card_readiness", {}))
-    review_loop_status = dict(payload.get("review_loop_status", {}))
-    override_safety_status = dict(payload.get("override_safety_status", {}))
-    successor = dict(payload.get("post_r17_successor", {}))
-    lines = [
-        "# R17-T06 teacher-loop intake acceptance artifact",
-        "",
-        f"- artifact_id: {payload.get('artifact_id', '')}",
-        f"- plan_date: {payload.get('plan_date', '')}",
-        f"- readiness_status: {payload.get('readiness_status', '')}",
-        "",
-        "## Intake summary",
-        "",
-        f"- orchestration_input_status: {orchestration_summary.get('input_status', '')}",
-        f"- daily_card_status: {daily_card_readiness.get('status', '')}",
-        f"- review_loop_status: {review_loop_status.get('status', '')}",
-        f"- override_safety_status: {override_safety_status.get('status', '')}",
-        "",
-        "## Post-R17 successor",
-        "",
-        f"- track_id: {successor.get('track_id', '')}",
-        f"- machine_readable_entry_point: {successor.get('machine_readable_entry_point', '')}",
-        "",
-    ]
-    return "\n".join(lines)
+    return render_acceptance_markdown(
+        payload,
+        title='# R17-T06 teacher-loop intake acceptance artifact', summary_title='## Intake summary',
+        summary_fields=(
+            ('orchestration_input_status', 'orchestration_summary', 'input_status'),
+            ('daily_card_status', 'daily_card_readiness', 'status'),
+            ('review_loop_status', 'review_loop_status', 'status'),
+            ('override_safety_status', 'override_safety_status', 'status'),
+        ),
+        successor_key='post_r17_successor', successor_title='## Post-R17 successor',
+    )
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, args.plan_date)
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "plan_date": payload["plan_date"],
-        "orchestration_summary": payload["orchestration_summary"],
-        "daily_card_readiness": payload["daily_card_readiness"],
-        "review_loop_status": payload["review_loop_status"],
-        "override_safety_status": payload["override_safety_status"],
-        "remaining_gaps": payload["remaining_gaps"],
-        "readiness_status": payload["readiness_status"],
-        "post_r17_successor": payload["post_r17_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, args.plan_date),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'plan_date', 'orchestration_summary', 'daily_card_readiness',
+            'review_loop_status', 'override_safety_status', 'remaining_gaps', 'readiness_status',
+            'post_r17_successor',
+        ),
+    )
 
 
 if __name__ == "__main__":

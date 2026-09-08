@@ -3,15 +3,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_study_orchestration_context import ARTIFACT_JSON as ORCHESTRATION_CONTEXT_JSON
-from common import INDEX_DIRNAME, default_vault_root_arg, learner_file_map, load_json_or_default, save_json, save_text
+from kaoyan_kb.domain.learner_artifact_files import STUDY_ORCHESTRATION_CONTEXT as ORCHESTRATION_CONTEXT_JSON
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg, learner_file_map, load_json_or_default
 from learner_events import load_events
 
-ARTIFACT_JSON = "27_r17_daily_study_card.json"
+from kaoyan_kb.domain.learner_artifact_files import DAILY_STUDY_CARD as ARTIFACT_JSON
 ARTIFACT_MD = "27_r17_daily_study_card.md"
 ARTIFACT_ID = "r17-daily-study-card"
 ARTIFACT_CONTRACT_VERSION = "r17.daily-study-card.v1"
@@ -203,27 +203,15 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, args.plan_date)
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "plan_date": payload["plan_date"],
-        "recommended_actions": payload["recommended_actions"],
-        "review_needed_actions": payload["review_needed_actions"],
-        "blocked_actions": payload["blocked_actions"],
-        "out_of_scope_actions": payload["out_of_scope_actions"],
-        "readiness_status": payload["readiness_status"],
-        "post_r17_t03_successor": payload["post_r17_t03_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, args.plan_date),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'plan_date', 'recommended_actions', 'review_needed_actions',
+            'blocked_actions', 'out_of_scope_actions', 'readiness_status', 'post_r17_t03_successor',
+        ),
+    )
 
 
 if __name__ == "__main__":

@@ -2,21 +2,21 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_long_horizon_operations import ARTIFACT_JSON as LONG_HORIZON_OPERATIONS_JSON
-from build_longitudinal_tutoring_context import ARTIFACT_JSON as LONGITUDINAL_CONTEXT_JSON
-from build_tutoring_feedback_loop import ARTIFACT_JSON as TUTORING_FEEDBACK_JSON
-from build_tutoring_strategy_packet import ARTIFACT_JSON as STRATEGY_PACKET_JSON
-from common import INDEX_DIRNAME, default_vault_root_arg, load_json_or_default, save_json, save_text
+from kaoyan_kb.domain.learner_artifact_files import LONG_HORIZON_OPERATIONS as LONG_HORIZON_OPERATIONS_JSON
+from kaoyan_kb.domain.learner_artifact_files import LONGITUDINAL_TUTORING_CONTEXT as LONGITUDINAL_CONTEXT_JSON
+from kaoyan_kb.domain.learner_artifact_files import TUTORING_FEEDBACK_LOOP as TUTORING_FEEDBACK_JSON
+from kaoyan_kb.domain.learner_artifact_files import TUTORING_STRATEGY_PACKET as STRATEGY_PACKET_JSON
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg
+from kaoyan_kb.domain.artifact_support import render_acceptance_markdown
 from kaoyan_kb.domain.artifact_support import dedupe_strings as _dedupe_strings
 from kaoyan_kb.domain.artifact_support import load_required_artifact as _load_artifact
 from kaoyan_kb.domain.artifact_support import status_from_readiness as _status_from_readiness
 
-ARTIFACT_JSON = "40_r19_longitudinal_tutoring_acceptance_artifact.json"
+from kaoyan_kb.domain.learner_artifact_files import R19_LONGITUDINAL_TUTORING_ARTIFACT as ARTIFACT_JSON
 ARTIFACT_MD = "40_r19_longitudinal_tutoring_acceptance_artifact.md"
 ARTIFACT_ID = "r19-longitudinal-tutoring-acceptance"
 ARTIFACT_CONTRACT_VERSION = "r19.longitudinal-tutoring-acceptance.v1"
@@ -140,57 +140,30 @@ def build_payload(index_root: Path, plan_date: str) -> dict[str, Any]:
 
 
 def render_markdown(payload: dict[str, Any]) -> str:
-    tutoring_summary = dict(payload.get("tutoring_summary", {}))
-    strategy_readiness = dict(payload.get("strategy_readiness", {}))
-    cycle_feedback_status = dict(payload.get("cycle_feedback_status", {}))
-    goal_adjustment_safety_status = dict(payload.get("goal_adjustment_safety_status", {}))
-    successor = dict(payload.get("post_r19_successor", {}))
-    lines = [
-        "# R19-T06 longitudinal tutoring acceptance artifact",
-        "",
-        f"- artifact_id: {payload.get('artifact_id', '')}",
-        f"- plan_date: {payload.get('plan_date', '')}",
-        f"- readiness_status: {payload.get('readiness_status', '')}",
-        "",
-        "## Acceptance summary",
-        "",
-        f"- tutoring_summary_status: {tutoring_summary.get('status', '')}",
-        f"- strategy_readiness_status: {strategy_readiness.get('status', '')}",
-        f"- cycle_feedback_status: {cycle_feedback_status.get('status', '')}",
-        f"- goal_adjustment_safety_status: {goal_adjustment_safety_status.get('status', '')}",
-        "",
-        "## Post-R19 successor",
-        "",
-        f"- track_id: {successor.get('track_id', '')}",
-        f"- machine_readable_entry_point: {successor.get('machine_readable_entry_point', '')}",
-        "",
-    ]
-    return "\n".join(lines)
+    return render_acceptance_markdown(
+        payload,
+        title='# R19-T06 longitudinal tutoring acceptance artifact', summary_title='## Acceptance summary',
+        summary_fields=(
+            ('tutoring_summary_status', 'tutoring_summary', 'status'),
+            ('strategy_readiness_status', 'strategy_readiness', 'status'),
+            ('cycle_feedback_status', 'cycle_feedback_status', 'status'),
+            ('goal_adjustment_safety_status', 'goal_adjustment_safety_status', 'status'),
+        ),
+        successor_key='post_r19_successor', successor_title='## Post-R19 successor',
+    )
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, args.plan_date)
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "plan_date": payload["plan_date"],
-        "tutoring_summary": payload["tutoring_summary"],
-        "strategy_readiness": payload["strategy_readiness"],
-        "cycle_feedback_status": payload["cycle_feedback_status"],
-        "goal_adjustment_safety_status": payload["goal_adjustment_safety_status"],
-        "remaining_gaps": payload["remaining_gaps"],
-        "readiness_status": payload["readiness_status"],
-        "post_r19_successor": payload["post_r19_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, args.plan_date),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'plan_date', 'tutoring_summary', 'strategy_readiness',
+            'cycle_feedback_status', 'goal_adjustment_safety_status', 'remaining_gaps',
+            'readiness_status', 'post_r19_successor',
+        ),
+    )
 
 
 if __name__ == "__main__":

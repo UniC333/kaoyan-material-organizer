@@ -3,16 +3,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_daily_study_card import ARTIFACT_JSON as DAILY_CARD_JSON
-from common import INDEX_DIRNAME, default_vault_root_arg, save_json, save_text
+from kaoyan_kb.domain.learner_artifact_files import DAILY_STUDY_CARD as DAILY_CARD_JSON
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg
 from kaoyan_kb.domain.review_scheduler import build_checkin_summary, build_due_queue
 from learner_events import load_events
 
-ARTIFACT_JSON = "28_r17_review_followups.json"
+from kaoyan_kb.domain.learner_artifact_files import REVIEW_FOLLOWUPS as ARTIFACT_JSON
 ARTIFACT_MD = "28_r17_review_followups.md"
 ARTIFACT_ID = "r17-review-followups"
 ARTIFACT_CONTRACT_VERSION = "r17.review-followups.v2"
@@ -204,35 +204,16 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(
-        index_root,
-        args.plan_date,
-        events=load_events(),
-        time_budget_minutes=args.time_budget_minutes,
-        max_items=args.max_items,
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, args.plan_date, events=load_events(), time_budget_minutes=args.time_budget_minutes, max_items=args.max_items),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'plan_date', 'formal_follow_ups', 'review_only_insights',
+            'blocked_follow_ups', 'scheduled_reviews', 'review_checkin', 'fact_writeback_allowed',
+            'readiness_status', 'post_r17_t04_successor',
+        ),
     )
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "plan_date": payload["plan_date"],
-        "formal_follow_ups": payload["formal_follow_ups"],
-        "review_only_insights": payload["review_only_insights"],
-        "blocked_follow_ups": payload["blocked_follow_ups"],
-        "scheduled_reviews": payload["scheduled_reviews"],
-        "review_checkin": payload["review_checkin"],
-        "fact_writeback_allowed": payload["fact_writeback_allowed"],
-        "readiness_status": payload["readiness_status"],
-        "post_r17_t04_successor": payload["post_r17_t04_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
 
 
 if __name__ == "__main__":

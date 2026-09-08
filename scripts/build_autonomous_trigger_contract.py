@@ -2,19 +2,18 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 from pathlib import Path
 from typing import Any
 
-from build_long_horizon_operations import ARTIFACT_JSON as LONG_HORIZON_OPERATIONS_JSON
-from build_r19_longitudinal_tutoring_artifact import ARTIFACT_JSON as R19_ACCEPTANCE_JSON
-from build_tutoring_feedback_loop import ARTIFACT_JSON as TUTORING_FEEDBACK_JSON
-from build_tutoring_strategy_packet import ARTIFACT_JSON as STRATEGY_PACKET_JSON
+from kaoyan_kb.domain.learner_artifact_files import LONG_HORIZON_OPERATIONS as LONG_HORIZON_OPERATIONS_JSON
+from kaoyan_kb.domain.learner_artifact_files import R19_LONGITUDINAL_TUTORING_ARTIFACT as R19_ACCEPTANCE_JSON
+from kaoyan_kb.domain.learner_artifact_files import TUTORING_FEEDBACK_LOOP as TUTORING_FEEDBACK_JSON
+from kaoyan_kb.domain.learner_artifact_files import TUTORING_STRATEGY_PACKET as STRATEGY_PACKET_JSON
 from kaoyan_kb.domain.artifact_support import dedupe_strings as _dedupe_strings, load_required_artifact as _load_artifact
-from common import INDEX_DIRNAME, default_vault_root_arg, load_json_or_default, save_json, save_text
+from kaoyan_kb.cli.learner_artifact_runner import run_artifact
+from common import default_vault_root_arg
 
-ARTIFACT_JSON = "41_r20_autonomous_trigger_contract.json"
+from kaoyan_kb.domain.learner_artifact_files import AUTONOMOUS_TRIGGER_CONTRACT as ARTIFACT_JSON
 ARTIFACT_MD = "41_r20_autonomous_trigger_contract.md"
 ARTIFACT_ID = "r20-autonomous-trigger-contract"
 ARTIFACT_CONTRACT_VERSION = "r20.autonomous-trigger-contract.v1"
@@ -238,28 +237,16 @@ def render_markdown(payload: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    args = parse_args()
-    index_root = Path(args.vault_root) / INDEX_DIRNAME
-    index_root.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(index_root, args.plan_date)
-    save_json(index_root / ARTIFACT_JSON, payload)
-    save_text(index_root / ARTIFACT_MD, render_markdown(payload))
-    result = {
-        "artifact_id": payload["artifact_id"],
-        "plan_date": payload["plan_date"],
-        "longitudinal_tutoring_refs": payload["longitudinal_tutoring_refs"],
-        "trigger_guardrails": payload["trigger_guardrails"],
-        "autonomous_trigger_contract": payload["autonomous_trigger_contract"],
-        "initiative_eligibility_summary": payload["initiative_eligibility_summary"],
-        "remaining_gaps": payload["remaining_gaps"],
-        "readiness_status": payload["readiness_status"],
-        "post_r20_t02_successor": payload["post_r20_t02_successor"],
-    }
-    if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return run_artifact(
+        parse_args,
+        lambda index_root, args: build_payload(index_root, args.plan_date),
+        render_markdown, ARTIFACT_JSON, ARTIFACT_MD,
+        (
+            'artifact_id', 'plan_date', 'longitudinal_tutoring_refs', 'trigger_guardrails',
+            'autonomous_trigger_contract', 'initiative_eligibility_summary', 'remaining_gaps',
+            'readiness_status', 'post_r20_t02_successor',
+        ),
+    )
 
 
 if __name__ == "__main__":

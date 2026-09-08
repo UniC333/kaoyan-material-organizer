@@ -38,3 +38,27 @@ def load_overrides(path: str | None) -> dict[str, Any]:
         "manual_locks": list(payload.get("manual_locks", [])),
         "operator_overrides": list(payload.get("operator_overrides", [])),
     }
+
+
+def render_acceptance_markdown(
+    payload: dict[str, Any], *, title: str, summary_title: str,
+    summary_fields: tuple[tuple[str, str, str], ...],
+    successor_key: str, successor_title: str,
+) -> str:
+    summaries = [(label, dict(payload.get(section, {})), key) for label, section, key in summary_fields]
+    successor = dict(payload.get(successor_key, {}))
+    lines = [
+        title, "",
+        f"- artifact_id: {payload.get('artifact_id', '')}",
+        f"- plan_date: {payload.get('plan_date', '')}",
+        f"- readiness_status: {payload.get('readiness_status', '')}",
+        "", summary_title, "",
+    ]
+    lines.extend(f"- {label}: {summary.get(key, '')}" for label, summary, key in summaries)
+    lines.extend([
+        "", successor_title, "",
+        f"- track_id: {successor.get('track_id', '')}",
+        f"- machine_readable_entry_point: {successor.get('machine_readable_entry_point', '')}",
+        "",
+    ])
+    return "\n".join(lines)
