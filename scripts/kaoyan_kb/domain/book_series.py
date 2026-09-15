@@ -189,10 +189,9 @@ def parse_exercise_request(query: str) -> dict[str, Any]:
     exercise_number = _number_after(r"第\s*(\d+)\s*题", text)
     if exercise_number is None:
         exercise_number = _number_after(r"(?:选择题|填空题|解答题|题)\s*(\d+)\b", text)
-    page_match = re.search(r"第\s*(\d+)\s*页", text)
-    if not page_match:
-        page_match = re.search(r"(?<![A-Za-z0-9])P\s*(\d+)(?![0-9])", text, flags=re.IGNORECASE)
-    page_number = int(page_match.group(1)) if page_match else None
+    from .query.source_targets import page_mentions
+    pages = page_mentions(text)
+    page_number = pages[0]['number'] if pages else None
     return {
         "stage": _detect_stage(text),
         "role_intent": _detect_role(text),
@@ -457,8 +456,9 @@ def resolve_answer_grounding(
     page_anchor: dict[str, Any],
     book_route: dict[str, Any],
     exercise_route: dict[str, Any],
+    request: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    request = parse_exercise_request(query)
+    request = dict(request) if request is not None else parse_exercise_request(query)
     request_kind = classify_source_request(
         query=query,
         book_title=book_title,
@@ -490,8 +490,21 @@ def resolve_answer_grounding(
 
     if exercise_route.get("match_status") == "exact_exercise":
         pair_status = str(exercise_route.get("pair_status") or "")
-        grounding["problem"] = dict(exercise_route.get("question") or {})
-        grounding["solution"] = dict(exercise_route.get("solution") or {})
+        # Published photo-book exercise records use one ``evidence_id`` per
+        # side, while the teaching contract and the query/ask gates consume
+        # the shared plural ``evidence_ids`` shape.  Normalize at this
+        # boundary so the exact pair keeps both citations.
+        def _teaching_side(value: Any) -> dict[str, Any]:
+            side = dict(value or {})
+            evidence_ids = [str(item) for item in side.get("evidence_ids", []) or [] if str(item)]
+            if not evidence_ids and side.get("evidence_id"):
+                evidence_ids = [str(side["evidence_id"])]
+            if evidence_ids:
+                side["evidence_ids"] = evidence_ids
+            return side
+
+        grounding["problem"] = _teaching_side(exercise_route.get("question"))
+        grounding["solution"] = _teaching_side(exercise_route.get("solution"))
         if pair_status == "exact_pair" and grounding["problem"] and grounding["solution"]:
             grounding.update(status="exact_answer", can_conclude=True, failure_reason="", next_action="")
         elif pair_status == "needs_review":
@@ -561,7 +574,7 @@ def resolve_answer_grounding(
 
 
 def resolve_book_route(
-    *, query: str, book_title: str | None = None, context: dict[str, Any] | None = None
+    *, query: str, book_title: str | None = None, context: dict[str, Any] | None = None, request: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     index = load_book_series_index()
     context = context or {}
@@ -589,7 +602,7 @@ def resolve_book_route(
         base["candidates"] = [{"series_id": item["series_id"], "canonical_title": item["canonical_title"]} for item in candidates]
         return base
     series = candidates[0]
-    request = parse_exercise_request(combined)
+    request = dict(request) if request is not None else parse_exercise_request(combined)
     stage = request["stage"] or str(context.get("stage") or "")
     role_intent = request["role_intent"] or str(context.get("role_intent") or "")
     volumes = list(series.get("volumes", []))
@@ -620,8 +633,8 @@ def resolve_book_route(
     return base
 
 
-def resolve_exercise_route(*, query: str, book_route: dict[str, Any]) -> dict[str, Any]:
-    request = parse_exercise_request(query)
+def resolve_exercise_route(*, query: str, book_route: dict[str, Any], request: dict[str, Any] | None = None) -> dict[str, Any]:
+    request = dict(request) if request is not None else parse_exercise_request(query)
     result = {
         "match_status": "not_requested",
         "exercise_key": "",
@@ -707,13 +720,7 @@ def build_exercise_pair_index() -> dict[str, Any]:
                 "solution_records": [],
             },
         )
-        record = {
-            "book_id": book_id,
-            "evidence_id": evidence.get("evidence_id", ""),
-            "printed_pages": sorted({int(ref.get("printed_page")) for ref in evidence.get("page_classification_refs", []) if ref.get("printed_page") is not None}),
-            "content": evidence.get("content", ""),
-            "title": evidence.get("title", ""),
-        }
+        record = _exercise_pair_record(evidence, book_id=book_id)
         target = "question_records" if volume.get("role") == "question_book" else "solution_records"
         item[target].append(record)
     items: list[dict[str, Any]] = []
@@ -762,3 +769,21 @@ def build_exercise_pair_index() -> dict[str, Any]:
     }
     save_json(layout["indexes"] / EXERCISE_PAIR_INDEX_NAME, payload)
     return payload
+
+
+def _exercise_pair_record(evidence: dict[str, Any], *, book_id: str) -> dict[str, Any]:
+    """Project one photo-book evidence record with ordered physical-page refs."""
+    refs = [ref for ref in evidence.get("page_classification_refs", []) if isinstance(ref, dict)]
+    refs.sort(key=lambda ref: int(ref.get("printed_page", 0) or 0))
+    return {
+        "book_id": book_id,
+        "evidence_id": evidence.get("evidence_id", ""),
+        "printed_pages": sorted({int(ref.get("printed_page")) for ref in refs if ref.get("printed_page") is not None}),
+        "source_image_paths": [
+            str(ref.get("source_image_path") or "")
+            for ref in refs
+            if str(ref.get("source_image_path") or "").strip()
+        ],
+        "content": evidence.get("content", ""),
+        "title": evidence.get("title", ""),
+    }

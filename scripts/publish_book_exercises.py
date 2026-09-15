@@ -150,6 +150,7 @@ def _collect_pages(
     classifications: dict[str, Any],
     assets: dict[str, Any],
     inputs: list[dict[str, Any]],
+    chapter_ids: set[str] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], set[str], list[dict[str, Any]]]:
     files_by_path = {
         str(Path(str(item.get("absolute_path") or "")).resolve()).casefold(): item
@@ -174,6 +175,8 @@ def _collect_pages(
 
     for page_id, classification in class_by_page.items():
         chapter_id = str(classification.get("chapter_id") or "")
+        if chapter_ids is not None and chapter_id not in chapter_ids:
+            continue
         if classification.get("classification_status") != "confirmed" or not chapter_id:
             continue
         if status_by_page.get(page_id, {}).get("status") != "completed":
@@ -193,6 +196,8 @@ def _collect_pages(
             continue
         classification = class_by_page.get(page_id, {})
         chapter_id = str(classification.get("chapter_id") or "")
+        if chapter_ids is not None and chapter_id not in chapter_ids:
+            continue
         if classification.get("classification_status") != "confirmed" or not chapter_id:
             blocked.append({"page_id": page_id, "reason": "classification_not_confirmed"})
             continue
@@ -404,7 +409,9 @@ def _evidence_key(candidate: dict[str, Any], *, series_id: str, book_id: str) ->
     )
 
 
-def _prepare_plan(*, book_root: Path) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], Any, dict[str, Path]]:
+def _prepare_plan(
+    *, book_root: Path, chapter_ids: set[str] | None = None
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], Any, dict[str, Path]]:
     runtime = load_runtime_config()
     root = Path(book_root).resolve()
     metadata = root / runtime.paper_book_metadata_dir
@@ -444,6 +451,7 @@ def _prepare_plan(*, book_root: Path) -> tuple[dict[str, Any], list[dict[str, An
         classifications=classifications,
         assets=assets,
         inputs=inputs,
+        chapter_ids=chapter_ids,
     )
     candidates, parse_issues = _parse_candidates(pages_by_chapter, blocked_chapters)
     existing = _existing_evidence_by_key(layout)
@@ -495,7 +503,10 @@ def _prepare_plan(*, book_root: Path) -> tuple[dict[str, Any], list[dict[str, An
     base = {
         "plan_contract_version": "ocr-publication-plan.v1",
         "publication_kind": "book-exercises",
-        "arguments": {"book_root": str(root)},
+        "arguments": {
+            "book_root": str(root),
+            "chapter_ids": sorted(chapter_ids) if chapter_ids is not None else None,
+        },
         "inputs": inputs,
         "items": plan_items,
         "blocked": blocked,
@@ -525,8 +536,8 @@ def _prepare_plan(*, book_root: Path) -> tuple[dict[str, Any], list[dict[str, An
     return plan, publication_items, context, runtime, layout
 
 
-def build_publication_plan(*, book_root: Path) -> dict[str, Any]:
-    return _prepare_plan(book_root=book_root)[0]
+def build_publication_plan(*, book_root: Path, chapter_ids: set[str] | None = None) -> dict[str, Any]:
+    return _prepare_plan(book_root=book_root, chapter_ids=chapter_ids)[0]
 
 
 def _build_evidence(*, publication: dict[str, Any], context: dict[str, Any], old: dict[str, Any]) -> dict[str, Any]:
@@ -623,11 +634,14 @@ def publish_exercises(
     write: bool | None = None,
     yes: bool | None = None,
     expected_plan_fingerprint: str | None = None,
+    chapter_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Preview by default; execute only with --yes and the preview fingerprint."""
     if yes is None:
         yes = bool(write)
-    plan, publication_items, context, runtime, layout = _prepare_plan(book_root=book_root)
+    plan, publication_items, context, runtime, layout = _prepare_plan(
+        book_root=book_root, chapter_ids=chapter_ids
+    )
     if yes and not expected_plan_fingerprint:
         raise SystemExit("[ERROR] --yes requires --plan-fingerprint from a fresh zero-write preview")
     if expected_plan_fingerprint:
@@ -687,6 +701,12 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--book-root", required=True)
+    parser.add_argument(
+        "--chapter-id",
+        action="append",
+        default=[],
+        help="limit publication to the listed confirmed chapter IDs; repeat for multiple chapters",
+    )
     parser.add_argument("--yes", action="store_true", help="execute the reviewed plan and refresh all retrieval indexes")
     parser.add_argument("--plan-fingerprint", help="fingerprint printed by the preview; reject execution if inputs drifted")
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
@@ -701,6 +721,7 @@ def main() -> int:
         book_root=Path(args.book_root).resolve(),
         yes=args.yes,
         expected_plan_fingerprint=args.plan_fingerprint,
+        chapter_ids=set(getattr(args, "chapter_id", []) or []) or None,
     )
     if args.format == "json":
         print(json.dumps(payload, ensure_ascii=False, indent=2))

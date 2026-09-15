@@ -8,7 +8,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from common import default_vault_root_arg, ensure_kb_layout, is_publishable_source_evidence, load_json, resolve_subject, validate_entity_contract
+from common import default_vault_root_arg, kb_layout, is_publishable_source_evidence, resolve_subject, validate_entity_contract
+from kaoyan_kb.domain.query.read_session import read_json as load_json
+from kaoyan_kb.domain.query.source_revision import capture
 from query_local_knowledge import build_page_content_bundle, build_teaching_bundle, detect_intent, evidence_has_formal_topic_statement, evidence_matches_book, generic_topic_terms, preferred_page_ref, query_knowledge, should_prefer_evidence_chapter
 
 
@@ -266,14 +268,17 @@ def validate_teaching_contract_invariants(contract: dict[str, Any]) -> None:
 
     verification = dict(contract.get("page_verification") or {})
     explanation_allowed = bool(verification.get("textbook_explanation_allowed"))
+    from kaoyan_kb.domain.query.permission import teaching_permission
     if request_kind == "page_content":
-        expected_allowed = page_content_status == "exact"
+        expected_allowed = teaching_permission(contract)
         if explanation_allowed != expected_allowed:
             raise ValueError("page-content explanation permission contradicts page content bundle")
     elif request_kind == "exercise":
-        expected_allowed = bool(exact and can_conclude and teaching_status == "exact")
+        expected_allowed = teaching_permission(contract)
         if explanation_allowed != expected_allowed:
             raise ValueError("exercise explanation permission contradicts exact-answer teaching gate")
+        if exact and not expected_allowed:
+            raise ValueError("exact answer contradicts source identity, page or citation permission")
     elif explanation_allowed:
         raise ValueError("generic requests cannot permit textbook explanation")
 
@@ -342,6 +347,7 @@ def build_teaching_answer_view(
     saved_at: str = "",
 ) -> dict[str, Any]:
     """Project the full answer contract into a small, model-facing teaching view."""
+    contract["source_revisions"] = capture(contract)
     validate_teaching_contract_invariants(contract)
     grounding = dict(contract.get("answer_grounding") or {})
     compact_grounding = {
@@ -827,7 +833,7 @@ def _evidence_from_id(layout: dict[str, Path], evidence_id: str) -> dict[str, An
 
 
 def build_citations(result: dict, *, limit: int = 3) -> list[dict[str, Any]]:
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     ranking = _ranking_by_evidence(result)
     ordered_ids: list[str] = []
     grounding = normalized_answer_grounding(result)

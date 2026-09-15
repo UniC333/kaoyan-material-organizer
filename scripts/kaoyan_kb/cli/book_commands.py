@@ -32,6 +32,7 @@ def add_book_commands(subparsers: argparse._SubParsersAction, *, formatter_class
     )
     publish_exercises.add_argument("--yes", action="store_true", help="execute the reviewed plan and refresh all retrieval indexes")
     publish_exercises.add_argument("--plan-fingerprint", help="fingerprint from preview; reject execution after input drift")
+    publish_exercises.add_argument("--chapter-id", action="append", default=[], help="limit publication to the listed confirmed chapter IDs")
     chapters = path("generate-chapters"); chapters.add_argument("--context-json", required=True); chapters.add_argument("--plan-json", required=True)
     pdf = command("register-pdf-source"); pdf.add_argument("--subject", required=True); pdf.add_argument("--book-title", required=True); pdf.add_argument("--pdf-path", required=True); pdf.add_argument("--edition", default=""); pdf.add_argument("--format", choices=("json", "quiet"), default="json")
     parallel = command("link-parallel-sources"); parallel.add_argument("--subject", required=True); parallel.add_argument("--book-title", required=True); parallel.add_argument("--image-book-root", required=True); parallel.add_argument("--pdf-source-id", default=""); parallel.add_argument("--context-root", default=""); parallel.add_argument("--format", choices=("json", "quiet"), default="json")
@@ -101,6 +102,8 @@ def dispatch_book(args: argparse.Namespace, run_script: Callable[..., str]) -> s
         return run_script("register_photo_book_source.py", *_format(args, "--book-root", args.book_root))
     if c == "publish-exercises":
         forwarded = _format(args, "--book-root", args.book_root)
+        for chapter_id in args.chapter_id:
+            forwarded.extend(["--chapter-id", chapter_id])
         if args.yes: forwarded.append("--yes")
         if args.plan_fingerprint: forwarded.extend(["--plan-fingerprint", args.plan_fingerprint])
         return run_script("publish_book_exercises.py", *forwarded)

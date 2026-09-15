@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from build_search_index import tokenize
-from common import ensure_kb_layout, load_json, resolve_subject
+from common import ensure_kb_layout, resolve_subject
+from kaoyan_kb.domain.query.read_session import read_json as load_json, with_read_scope
 
 
 def parse_args() -> argparse.Namespace:
@@ -136,6 +137,7 @@ def bm25_score(
     return score
 
 
+@with_read_scope
 def retrieve(layout: dict[str, Path], *, subject: str | None, query: str, topk: int) -> dict[str, Any]:
     docs, inverted = load_index(layout)
     query_tokens = tokenize(query)

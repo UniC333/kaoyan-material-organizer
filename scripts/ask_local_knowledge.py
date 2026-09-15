@@ -11,6 +11,8 @@ from common import default_vault_root_arg, resolve_subject
 from kaoyan_kb.domain.exercise_batch import parse_exercise_batch_request
 from query_local_knowledge import explicit_page_subject_error, query_exercise_batch, query_knowledge, render_exercise_batch_text
 from save_local_answer import save_answer_contract, saved_at_label
+from kaoyan_kb.domain.query.read_session import read_scope
+from kaoyan_kb.domain.query.source_targets import split_targets, query_source_targets, project_targets, render_targets
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,8 +44,18 @@ def main() -> int:
         raise SystemExit("[ERROR] --subject is required")
     if args.save and parse_exercise_batch_request(args.question).get("is_batch"):
         raise SystemExit("[ERROR] batch exercise answers cannot be saved; no saved-QA write was made")
+    if args.save and split_targets(args.question):
+        raise SystemExit("[ERROR] multi-target answers cannot be saved; no saved-QA write was made")
     vault_root = Path(args.vault_root or default_vault_root_arg())
     subject, _ = resolve_subject(args.subject)
+    with read_scope():
+        multiple = query_source_targets(query_one=query_knowledge, vault_root=vault_root, subject=subject, chapter=args.chapter, query=args.question, topk=args.topk, book_title=args.book_title, printed_page=args.printed_page, exercise_label=args.exercise_label)
+        if multiple is not None:
+            if args.format == 'text':
+                print(render_targets(multiple), end='')
+            else:
+                print(json.dumps(project_targets(multiple, view='teaching' if args.format == 'teaching-json' else 'answer'), ensure_ascii=False, indent=2))
+            return 0
     batch = query_exercise_batch(
         vault_root,
         subject,
@@ -60,8 +72,9 @@ def main() -> int:
         else:
             print(render_exercise_batch_text(batch), end="")
         return 0
-    result = query_knowledge(vault_root, subject, args.chapter, args.question, args.topk, args.printed_page, args.book_title, args.exercise_label)
-    contract = build_answer_contract(result)
+    with read_scope():
+        result = query_knowledge(vault_root, subject, args.chapter, args.question, args.topk, args.printed_page, args.book_title, args.exercise_label)
+        contract = build_answer_contract(result)
 
     if args.save:
         try:

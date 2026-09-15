@@ -69,6 +69,10 @@ def _blocked_batch_item(target: dict[str, Any], *, book_title: str) -> dict[str,
             "citations": {
                 "problem_evidence_ids": [],
                 "solution_evidence_ids": [],
+                "problem_printed_pages": [],
+                "solution_printed_pages": [],
+                "problem_source_image_paths": [],
+                "solution_source_image_paths": [],
                 "problem_pdf_pages": [],
                 "solution_pdf_pages": [],
             },
@@ -81,11 +85,8 @@ def _blocked_batch_item(target: dict[str, Any], *, book_title: str) -> dict[str,
 def _project_batch_item(target: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
     grounding = dict(result.get("answer_grounding") or {})
     teaching = dict(result.get("teaching_bundle") or {})
-    exact = bool(
-        grounding.get("status") == "exact_answer"
-        and grounding.get("can_conclude")
-        and teaching.get("status") == "exact"
-    )
+    from .permission import teaching_permission
+    exact = teaching_permission(result)
     problem_ids = set((grounding.get("problem") or {}).get("evidence_ids", []) or [])
     solution_ids = set((grounding.get("solution") or {}).get("evidence_ids", []) or [])
     cited_ids = {str(item.get("evidence_id") or "") for item in result.get("references", []) or []}

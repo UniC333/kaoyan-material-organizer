@@ -15,6 +15,7 @@
     "conversation_scan_manifest.schema.json",
     "conversation_closure_decision.schema.json",
     "exercise_batch_view.schema.json",
+    "source_targets_view.schema.json",
     "conflict.schema.json",
     "learner_model.schema.json",
     "learner_event.schema.json"

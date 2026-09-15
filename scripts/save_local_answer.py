@@ -12,6 +12,8 @@ from answer_local_question import ANSWER_CONTRACT_VERSION, build_answer_contract
 from common import default_vault_root_arg, normalize_context, preferred_python_executable, resolve_subject, run_utf8_subprocess, runtime_subprocess_env, sanitize_name
 from config import load_runtime_config
 from query_local_knowledge import query_knowledge
+from kaoyan_kb.domain.query.source_revision import verify as verify_source_revisions
+from kaoyan_kb.domain.query.read_session import read_scope
 
 
 SAVEABLE_ANSWER_MODES = {"canonical_claim", "accepted_evidence", "exercise_pair"}
@@ -162,6 +164,10 @@ def page_anchor_metadata(result: dict) -> dict[str, str]:
 
 def save_eligibility(contract: dict) -> tuple[bool, str]:
     """Return before any write whether this answer may enter learner history."""
+    from kaoyan_kb.domain.query.source_targets import is_multi
+    from kaoyan_kb.domain.query.permission import teaching_permission
+    if is_multi(contract):
+        return False, "多目标结果不能保存为单条学习问答。"
     answer_mode = str(contract.get("answer_mode", ""))
     assessment = dict(contract.get("evidence_assessment") or {})
     grounding = dict(contract.get("answer_grounding") or {})
@@ -188,6 +194,8 @@ def save_eligibility(contract: dict) -> tuple[bool, str]:
             return False, "原书答案尚未形成唯一可核验锚点，不能保存为学习问答。"
         if not bool(contract.get("citation_coverage_ok")):
             return False, "有来源题目必须同时引用原题和原书答案，当前引用不完整。"
+        if not teaching_permission(contract):
+            return False, "原题、答案、页码和引用尚未通过统一讲解门禁。"
     if answer_mode not in SAVEABLE_ANSWER_MODES:
         return False, "当前回答没有可保存的结构化证据；请先补齐教材映射或 OCR 后再保存。"
     if answer_mode in {"canonical_claim", "accepted_evidence"} and not bool(contract.get("citation_coverage_ok")):
@@ -290,6 +298,7 @@ def save_answer_contract(
     allowed, reason = save_eligibility(contract)
     if not allowed:
         raise ValueError(reason)
+    verify_source_revisions(contract)
 
     _, config = resolve_subject(subject)
     result = dict(contract["query_result"])
@@ -383,8 +392,9 @@ def main() -> int:
     args = parse_args()
     vault_root = Path(args.vault_root)
     subject, _ = resolve_subject(args.subject)
-    result = query_knowledge(vault_root, subject, args.chapter, args.question, args.topk, args.printed_page, args.book_title)
-    contract = build_answer_contract(result)
+    with read_scope():
+        result = query_knowledge(vault_root, subject, args.chapter, args.question, args.topk, args.printed_page, args.book_title)
+        contract = build_answer_contract(result)
     try:
         subject_index = save_answer_contract(
             contract=contract,

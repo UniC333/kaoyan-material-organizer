@@ -9,6 +9,9 @@ description = "Local kaoyan knowledge-base tooling for Windows and Obsidian."
 requires-python = ">=3.10"
 dependencies = ["mistralai==2.5.0", "Pillow>=10,<12", "pypdf>=5,<6"]
 
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
 [tool.setuptools.packages.find]
 where = ["scripts"]
 include = ["kaoyan_kb*", "ocr*", "subject_adapters*"]

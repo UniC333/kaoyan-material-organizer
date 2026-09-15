@@ -9,7 +9,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
-from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, is_publishable_claim, is_publishable_source_evidence, learner_file_map, load_all_json, load_json, resolve_subject, runtime_context_payload, validate_entity_contract
+from common import INDEX_DIRNAME, default_vault_root_arg, kb_layout, is_publishable_claim, is_publishable_source_evidence, learner_file_map, resolve_subject, runtime_context_payload, validate_entity_contract
 from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator
 from kaoyan_kb.domain.exercise_locator import assemble_exact_relation, container_path_from_query, find_exact_relation, find_exact_worked_example_relation, find_unique_relation_for_scope, list_exact_relations_for_question_page, list_exact_worked_example_relations, normalize_exercise_category, normalize_exercise_label, resolve_section_anchor
 from kaoyan_kb.domain.book_series import classify_source_request, has_exercise_request_signal, parse_exercise_request, resolve_answer_grounding, resolve_book_route, resolve_exercise_route
@@ -36,8 +36,11 @@ from kaoyan_kb.domain.query.batch import (
     _batch_failure_text, _blocked_batch_item, _project_batch_item,
     query_exercise_batch as _query_exercise_batch,
 )
-from learner_events import load_events
+from kaoyan_kb.domain.query.read_session import read_json as load_json, read_all_json as load_all_json, with_read_scope, read_scope
+from learner_events import load_events_readonly as load_events
 from retrieve_knowledge import retrieve as retrieve_index
+from kaoyan_kb.domain.query.permission import finalized
+from kaoyan_kb.domain.query.source_targets import query_source_targets, is_multi, render_targets, catalogue
 
 
 PRIMARY_CALCULUS_BOOK_TITLE = "高等数学辅导讲义基础篇"
@@ -251,7 +254,7 @@ def build_page_anchor(evidences: list[dict[str, Any]], anchor: dict[str, Any]) -
 
 
 def exact_evidence_hits_for_locator(subject: str, chapter: str | None, locator: dict[str, Any]) -> list[dict[str, Any]]:
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     matches: list[dict[str, Any]] = []
     for evidence_id in locator.get("evidence_ids", []) or []:
         path = layout["evidence"] / f"{evidence_id}.json"
@@ -357,7 +360,7 @@ def apply_exercise_relation(locator: dict[str, Any], evidences: list[dict[str, A
         question = dict(relation.get("question") or {})
         answer = dict(relation.get("answer") or {})
         linked_ids = list(answer.get("evidence_ids") or [])
-        layout = ensure_kb_layout()
+        layout = kb_layout()
         linked = [
             evidence
             for item in linked_ids
@@ -405,7 +408,7 @@ def apply_exercise_relation(locator: dict[str, Any], evidences: list[dict[str, A
     if not relation:
         locator["exercise_match_status"] = "unverified"
         return {"status": "unverified", "exercise_label": label, "candidate_pages": []}, evidences
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     linked_ids = list(relation.get("answer_evidence_ids", []) or [])
     linked = []
     for evidence_id in linked_ids:
@@ -441,7 +444,7 @@ def apply_scoped_exercise_relation(*, book_title: str | None, chapter: str | Non
         }, []
     if not relation:
         return {"status": "unverified", "exercise_label": label, "reason": "current-book-and-chapter-not-unique-or-uncovered"}, []
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     ids = list(relation.get("question_evidence_ids", []) or []) + list(relation.get("answer_evidence_ids", []) or [])
     evidence = []
     for item in ids:
@@ -578,6 +581,10 @@ def build_teaching_bundle(grounding: dict[str, Any], request_resolution: dict[st
             "citations": {
                 "problem_evidence_ids": [],
                 "solution_evidence_ids": [],
+                "problem_printed_pages": [],
+                "solution_printed_pages": [],
+                "problem_source_image_paths": [],
+                "solution_source_image_paths": [],
                 "problem_pdf_pages": [],
                 "solution_pdf_pages": [],
             },
@@ -586,20 +593,94 @@ def build_teaching_bundle(grounding: dict[str, Any], request_resolution: dict[st
     can_conclude = bool(grounding.get("can_conclude")) and grounding.get("status") == "exact_answer"
     problem = dict(grounding.get("problem") or {})
     solution = dict(grounding.get("solution") or {})
+    problem_text = _replace_relative_image_links(
+        str(problem.get("content") or ""),
+        list(problem.get("source_image_paths", []) or []),
+        label="原题图",
+    )
+    solution_text = _replace_relative_image_links(
+        str(solution.get("content") or ""),
+        list(solution.get("source_image_paths", []) or []),
+        label="原书答案图",
+    )
     return {
         "status": "exact" if can_conclude else "blocked",
-        "problem_text": str(problem.get("content") or "") if can_conclude else "",
-        "source_answer_text": str(solution.get("content") or "") if can_conclude else "",
+        "problem_text": problem_text if can_conclude else "",
+        "source_answer_text": solution_text if can_conclude else "",
         "requested_option": str(request_resolution.get("requested_option") or ""),
         "exercise_label": str(request_resolution.get("exercise_label") or problem.get("exercise_label") or ""),
         "citations": {
             "problem_evidence_ids": list(problem.get("evidence_ids", []) or []),
             "solution_evidence_ids": list(solution.get("evidence_ids", []) or []),
+            # Photo-book evidence has no PDF page number. Keep the physical
+            # printed-page order and original image paths in the formal
+            # teaching citation so exact answers remain auditable.
+            "problem_printed_pages": list(problem.get("printed_pages", []) or []),
+            "solution_printed_pages": list(solution.get("printed_pages", []) or []),
+            "problem_source_image_paths": list(problem.get("source_image_paths", []) or []),
+            "solution_source_image_paths": list(solution.get("source_image_paths", []) or []),
             "problem_pdf_pages": list(problem.get("pdf_pages", []) or []),
             "solution_pdf_pages": list(solution.get("pdf_pages", []) or []),
         },
         "failure_reason": "" if can_conclude else str(grounding.get("failure_reason") or "原题或原书答案未确认。"),
     }
+
+
+def _replace_relative_image_links(content: str, source_image_paths: list[str], *, label: str) -> str:
+    """Replace unusable OCR-local image links with auditable original-page links."""
+    pattern = r"!\[[^\]]*\]\((?![A-Za-z][A-Za-z0-9+.-]*:|[/\\])[^)]+\)"
+    relative_images = list(re.finditer(pattern, content))
+    if not relative_images or not source_image_paths:
+        return content
+    verified_paths = list(dict.fromkeys(str(item).strip() for item in source_image_paths if str(item).strip()))
+    if not verified_paths:
+        return content
+    if len(relative_images) == 1 and len(verified_paths) == 1:
+        target = Path(verified_paths[0]).as_posix()
+        return content[:relative_images[0].start()] + f"![{label}（已核验整页原图）](<{target}>)" + content[relative_images[0].end():]
+
+    # Multiple OCR-local image names cannot be paired to page images safely.
+    # Remove the broken links and expose every verified full-page source instead.
+    cleaned = re.sub(pattern, f"[{label}块：见下列已核验整页原图]", content).rstrip()
+    links = "\n".join(
+        f"- [{label}整页来源 {index}](<{Path(path).as_posix()}>)"
+        for index, path in enumerate(verified_paths, start=1)
+    )
+    return f"{cleaned}\n\n已核验整页原图：\n{links}"
+
+
+def _promote_exact_pair_page_anchor(
+    page_anchor: dict[str, Any],
+    answer_grounding: dict[str, Any],
+    *,
+    exact_pair: bool,
+    series_alias_match: bool,
+) -> None:
+    """Use a verified problem page only to repair an alias locator miss."""
+    if not exact_pair or not series_alias_match or str(page_anchor.get("match_status") or "") != "not_found":
+        return
+    if page_anchor.get("locator_available") is not True:
+        return
+    if str(answer_grounding.get("status") or "") != "exact_answer" or not answer_grounding.get("can_conclude"):
+        return
+    requested_page = page_anchor.get("requested_page")
+    problem = dict(answer_grounding.get("problem") or {})
+    printed_pages = list(problem.get("printed_pages", []) or [])
+    if requested_page is None or requested_page not in printed_pages:
+        return
+    evidence_ids = list(problem.get("evidence_ids", []) or [])
+    if not evidence_ids and problem.get("evidence_id"):
+        evidence_ids = [str(problem["evidence_id"])]
+    image_paths = list(problem.get("source_image_paths", []) or [])
+    if not evidence_ids or not image_paths:
+        return
+    page_anchor.update(
+        match_status="exact_evidence",
+        match_basis="exact_exercise_problem_evidence",
+        evidence_ids=evidence_ids,
+        matched_evidence_id=evidence_ids[0],
+        source_image_path=image_paths[0],
+    )
 
 
 def _empty_page_content_bundle(
@@ -723,7 +804,7 @@ def attach_exercise_index_runtime(result: dict[str, Any]) -> None:
 
 
 def load_syllabus(subject: str) -> tuple[dict, dict]:
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     tree_path = layout["syllabus"] / f"{subject}.json"
     if not tree_path.exists():
         return {"subject": subject, "nodes": []}, {"subject": subject, "aliases": {}}
@@ -754,13 +835,13 @@ def route_syllabus_nodes(subject: str, query: str, topk: int, intent: str) -> li
 
 
 def learner_snapshot(subject: str) -> dict:
-    files = learner_file_map()
+    files = learner_file_map(readonly=True)
     model = load_json(files["learner_model"]) if files["learner_model"].exists() else {}
     return model.get("subjects", {}).get(subject, {})
 
 
 def learner_compare_candidates(subject: str, chapter: str | None) -> list[dict]:
-    files = learner_file_map()
+    files = learner_file_map(readonly=True)
     refinement = load_json(files["refinement_queue"]) if files["refinement_queue"].exists() else {"items": []}
     results = []
     for item in refinement.get("items", []):
@@ -783,7 +864,7 @@ def claim_hits_from_retrieval(
     topic_terms: list[str] | None = None,
     formal_only: bool = False,
 ) -> list[dict]:
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     evidence_by_id = {
         str(evidence.get("evidence_id") or "").strip(): evidence
         for evidence in load_all_json(layout["evidence"])
@@ -845,7 +926,7 @@ def evidence_hits_from_retrieval(
     topic_terms: list[str] | None = None,
     formal_only: bool = False,
 ) -> list[dict]:
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     evidence_by_id = {
         str(evidence.get("evidence_id") or "").strip(): evidence
         for evidence in load_all_json(layout["evidence"])
@@ -914,7 +995,7 @@ def fallback_claim_hits(
     topic_terms: list[str] | None = None,
     formal_only: bool = False,
 ) -> list[dict]:
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     evidence_by_id = {
         str(evidence.get("evidence_id") or "").strip(): evidence
         for evidence in load_all_json(layout["evidence"])
@@ -963,7 +1044,7 @@ def fallback_evidence_hits(
     topic_terms: list[str] | None = None,
     formal_only: bool = False,
 ) -> list[dict]:
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     evidence_by_id = {
         str(evidence.get("evidence_id") or "").strip(): evidence
         for evidence in load_all_json(layout["evidence"])
@@ -1169,7 +1250,7 @@ def infer_route_from_hits(subject: str, topk: int, claims: list[dict], evidences
 def retrieval_hit_matches_chapter(hit: dict[str, Any], chapter: str | None) -> bool:
     if not chapter:
         return True
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     entity_id = str(hit.get("entity_id", "")).strip()
     if hit.get("doc_type") == "evidence":
         path = layout["evidence"] / f"{entity_id}.json"
@@ -1191,7 +1272,7 @@ def retrieve_hits(
     book_title: str | None = None,
 ) -> list[dict]:
     try:
-        payload = retrieve_index(ensure_kb_layout(), subject=subject, query=query, topk=max(topk * 5, 20))
+        payload = retrieve_index(kb_layout(), subject=subject, query=query, topk=max(topk * 5, 20))
     except SystemExit:
         return []
     hits = [
@@ -1618,7 +1699,9 @@ def attach_concept_routes(result: dict[str, Any], *, topk: int) -> None:
     result["concept_routes"] = build_concept_routes(result, topk=topk)
 
 
-def query_knowledge(
+@with_read_scope
+@finalized
+def _query_single(
     vault_root: Path,
     subject: str,
     chapter: str | None,
@@ -1627,15 +1710,32 @@ def query_knowledge(
     printed_page: int | None = None,
     book_title: str | None = None,
     exercise_label: str | None = None,
+    *, confirmed_book_title: str | None = None,
 ) -> dict:
     intent = detect_intent(query)
-    book_resolution = resolve_current_task_book(vault_root=vault_root, subject=subject, explicit_book_title=book_title)
+    book_resolution = resolve_current_task_book(vault_root=vault_root, subject=subject, explicit_book_title=book_title, query=query, confirmed_book_title=confirmed_book_title)
     effective_book_title = str(book_resolution.get("book_title") or "")
-    book_route = resolve_book_route(query=query, book_title=effective_book_title)
     request_resolution = resolve_request(query=query, book_title=effective_book_title, chapter=chapter, printed_page=printed_page, exercise_label=exercise_label)
+    pair_request = request_resolution.get('exercise_scope') or parse_exercise_request(query)
+    book_route = resolve_book_route(query=query, book_title=effective_book_title, request=pair_request)
+    exercise_route = resolve_exercise_route(query=query, book_route=book_route, request=pair_request)
+    if exercise_route.get('match_status') == 'exact_exercise' and exercise_route.get('pair_status') == 'exact_pair':
+        book_id = (exercise_route.get('question') or {}).get('book_id')
+        volumes = [v for s in catalogue() for v in s.get('volumes', []) if v.get('book_id') == book_id]
+        # A unique formal relation may refine a series alias, never replace an
+        # explicitly selected different volume.
+        candidates = book_route.get('candidates', [])
+        if len(volumes) == 1 and any(v.get('book_id') == book_id for v in candidates):
+            explicit_volumes = [v for s in catalogue() for v in s.get('volumes', []) if _normalized_book_title(v.get('title', '')) == _normalized_book_title(effective_book_title)]
+            if not explicit_volumes or explicit_volumes[0].get('book_id') == book_id:
+                effective_book_title = volumes[0]['title']
+                book_resolution.update(status='exact', book_title=effective_book_title, book_id=book_id, match_basis='unique_formal_exercise_relation')
+                book_route.update(match_status='exact_series')
+                request_resolution['book_title'] = effective_book_title
+    request_resolution.setdefault('field_sources', {})['book_title'] = book_resolution.get('source', '')
     page_anchor_request = {
         "requested_page": request_resolution["page"]["number"],
-        "requested_position": parse_page_anchor(query).get("requested_position"),
+        "requested_position": request_resolution.get("requested_position"),
         "requested_exercise_label": request_resolution["exercise_label"],
         "requested_container_path": list(request_resolution.get("container_path") or []),
     }
@@ -1742,7 +1842,7 @@ def query_knowledge(
         routed_book_title = effective_book_title
         if book_route.get("series_id"):
             active = [item for item in book_route.get("candidates", []) if item.get("status") == "active"]
-            exercise_request = parse_exercise_request(query)
+            exercise_request = pair_request
             if exercise_request.get("role_intent") == "paired_answer" and exercise_request.get("exercise_number") is not None:
                 questions = [item for item in active if item.get("role") == "question_book"]
                 if len(questions) == 1:
@@ -1773,10 +1873,16 @@ def query_knowledge(
             if exercise_resolution.get("status") == "inferred_unique":
                 resolved_label = str(exercise_resolution.get("exercise_label") or "")
                 request_resolution["exercise_label"] = resolved_label
+                pair_request['exercise_label'] = resolved_label if resolved_label.startswith('例') else ''
+                pair_request['exercise_number'] = int(resolved_label) if resolved_label.isdigit() else None
+                request_resolution['exercise_scope'] = pair_request
+                exercise_route = resolve_exercise_route(query=query, book_route=book_route, request=pair_request)
                 page_anchor_request["requested_exercise_label"] = resolved_label
                 page_anchor["requested_exercise_label"] = resolved_label
         if resolved_label:
             exercise_anchor, evidences = apply_exercise_relation(page_anchor, evidences)
+            if exercise_anchor.get('status') == 'exact_answer_evidence':
+                page_anchor['exercise_match_status'] = 'matched'
         elif exercise_resolution.get("status") == "unavailable":
             page_anchor["exercise_match_status"] = "unavailable"
             exercise_anchor = {
@@ -1806,7 +1912,6 @@ def query_knowledge(
         page_anchor = build_page_anchor(evidences, page_anchor_request)
         exercise_anchor = {"status": "not_requested"}
     page_crosscheck = build_page_crosscheck(request_resolution, page_anchor)
-    exercise_route = resolve_exercise_route(query=query, book_route=book_route)
     compare_bundle = build_compare_bundle(routed, claims, evidences, parts) if intent == "compare" else None
     refine_candidates = learner_compare_candidates(subject, effective_chapter or None)
     answer_mode, fallback_note, fallback = _resolve_answer_fallback(
@@ -1953,7 +2058,15 @@ def query_knowledge(
             page_anchor=page_anchor,
             book_route=book_route,
             exercise_route=exercise_route,
+            request=pair_request,
         )
+        if exercise_route.get("match_status") == "exact_exercise" and exercise_route.get("pair_status") == "exact_pair":
+            # An exact series exercise relation is the formal exercise gate,
+            # even when the request identifies the item by chapter and number
+            # without an explicit printed-page anchor.
+            page_anchor["exercise_match_status"] = "matched"
+            # The page lookup above already used the resolved volume identity.
+            # Never promote an unavailable/conflicting page from answer evidence.
     else:
         answer_grounding = build_answer_grounding(
             query=query,
@@ -2021,6 +2134,20 @@ def query_knowledge(
     return result
 
 
+@with_read_scope
+def query_knowledge(vault_root: Path, subject: str, chapter: str | None, query: str, topk: int,
+                    printed_page: int | None = None, book_title: str | None = None,
+                    exercise_label: str | None = None, *, confirmed_book_title: str | None = None) -> dict:
+    multiple = query_source_targets(query_one=_query_single, vault_root=vault_root, subject=subject,
+                                    chapter=chapter, query=query, topk=topk, book_title=book_title,
+                                    printed_page=printed_page, exercise_label=exercise_label,
+                                    confirmed_book_title=confirmed_book_title)
+    if multiple is not None:
+        return multiple
+    return _query_single(vault_root, subject, chapter, query, topk, printed_page, book_title, exercise_label, confirmed_book_title=confirmed_book_title)
+
+
+@with_read_scope
 def query_exercise_batch(
     vault_root: Path,
     subject: str,
@@ -2049,6 +2176,11 @@ def main() -> int:
     if not args.subject:
         raise SystemExit("[ERROR] --subject is required")
     subject, _ = resolve_subject(args.subject)
+    with read_scope():
+        multiple = query_source_targets(query_one=query_knowledge, vault_root=Path(args.vault_root), subject=subject, chapter=args.chapter, query=args.query or '', topk=args.topk, book_title=args.book_title, printed_page=args.printed_page, exercise_label=args.exercise_label)
+        if multiple is not None:
+            print(json.dumps(multiple, ensure_ascii=False, indent=2) if args.format == 'json' else render_targets(multiple))
+            return 0
     batch = query_exercise_batch(
         Path(args.vault_root),
         subject,

@@ -23,11 +23,24 @@ def normalize_text(value: Any) -> str:
     return text
 
 
-def resolve_current_task_book(*, vault_root: Path, subject: str, explicit_book_title: str | None) -> dict[str, str]:
+def resolve_current_task_book(*, vault_root: Path, subject: str, explicit_book_title: str | None, query: str = '', confirmed_book_title: str | None = None) -> dict[str, Any]:
     """Use an explicit current-task default only for unspecific math requests."""
     explicit = str(explicit_book_title or "").strip()
     if explicit:
+        from .source_targets import book_mentions, resolve_mentioned_book
+        mentions = book_mentions(explicit)
+        if len(mentions) == 1 and mentions[0]['start'] == 0 and mentions[0]['end'] == len(explicit):
+            binding = resolve_mentioned_book(explicit)
+            if binding and binding['status'] == 'exact':
+                binding.update(status='explicit', source='explicit')
+                return binding
         return {"status": "explicit", "source": "explicit", "book_title": explicit, "current_task_path": ""}
+    from .source_targets import resolve_mentioned_book
+    mentioned = resolve_mentioned_book(query) if query else None
+    if mentioned is not None:
+        return mentioned
+    if confirmed_book_title:
+        return {"status": "exact", "source": "confirmed_context", "book_title": confirmed_book_title, "current_task_path": ""}
     if subject != "数学":
         return {"status": "not_applicable", "source": "", "book_title": "", "current_task_path": ""}
     path = Path(vault_root) / CURRENT_TASK_PATH
@@ -147,8 +160,9 @@ def extract_explicit_concepts(query: str) -> list[str]:
 
 def parse_page_anchor(query: str) -> dict[str, Any]:
     text = str(query or "")
-    match = re.search(r"(?:第?\s*([0-9]+)\s*页|(?<![A-Za-z0-9])[Pp]\s*[.．]?\s*([0-9]+)(?![0-9]))", text)
-    requested_page = int(match.group(1) or match.group(2)) if match else None
+    from .source_targets import page_mentions
+    pages = page_mentions(text)
+    requested_page = pages[0]['number'] if pages else None
     requested_position = None
     if any(token in text for token in ("最下方", "最下面", "页底", "底部", "最底下", "下方")):
         requested_position = "bottom"
@@ -239,8 +253,17 @@ def resolve_request(
         exercise_label=label,
         requested_option=requested_option,
     )
+    from kaoyan_kb.domain.book_series import parse_exercise_request
+    exercise_scope = parse_exercise_request(' '.join([str(book_title or ''), text]))
+    exercise_scope['printed_page'] = page
+    if label:
+        exercise_scope['exercise_label'] = label if label.startswith('例') else ''
+        exercise_scope['exercise_number'] = int(label) if label.isdigit() else None
     return {
         "original_query": text,
+        "exercise_scope": exercise_scope,
+        "requested_position": parsed.get('requested_position'),
+        "field_sources": {"book_title": "cli_or_resolved", "printed_page": "cli" if printed_page is not None else "query" if page is not None else "", "exercise_label": label_source},
         "source_request_kind": source_request_kind,
         "book_title": str(book_title or ""),
         "chapter_input": str(chapter or ""),
@@ -344,24 +367,12 @@ def build_page_verification_summary(
     grounding = dict(answer_grounding or {})
     teaching = dict(teaching_bundle or {})
     page_content = dict(page_content_bundle or {})
-    if request_kind == "page_content":
-        textbook_explanation_allowed = (
-            status == "exact_evidence"
-            and crosscheck_ok
-            and str(page_content.get("status") or "") == "exact"
-        )
-    elif request_kind == "exercise":
-        page_ok = requested_page is None or status == "exact_evidence"
-        textbook_explanation_allowed = (
-            page_ok
-            and exercise_status == "matched"
-            and crosscheck_ok
-            and str(grounding.get("status") or "") == "exact_answer"
-            and bool(grounding.get("can_conclude"))
-            and str(teaching.get("status") or "") == "exact"
-        )
-    else:
-        textbook_explanation_allowed = False
+    from .permission import teaching_permission
+    textbook_explanation_allowed = teaching_permission({
+        'request_resolution': request_resolution or {}, 'page_anchor': page_anchor,
+        'page_crosscheck': crosscheck, 'answer_grounding': grounding,
+        'teaching_bundle': teaching, 'page_content_bundle': page_content,
+    })
     if crosscheck_required and not crosscheck_ok:
         summary = str(crosscheck.get("reason") or "页码线索与小节标题锚点尚未完成一致性核验。")
     elif status == "exact_asset":

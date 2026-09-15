@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from .read_session import read_json as load_json
+from .book_identity import normalize_title as _normalized_book_title, titles_match as _book_title_matches, registered_identities
 from .request import normalize_text
 from common import (
-    ensure_kb_layout, is_publishable_source_evidence, load_json,
+    kb_layout, is_publishable_source_evidence,
 )
 from typing import Any
 import re
@@ -264,14 +266,8 @@ def title_match_score(title: str, aliases: list[str], keywords: list[str], token
     return score
 
 
-def _normalized_book_title(value: Any) -> str:
-    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", unicodedata.normalize("NFKC", str(value or "")).lower())
 
 
-def _book_title_matches(actual: Any, requested: Any) -> bool:
-    left = _normalized_book_title(actual)
-    right = _normalized_book_title(requested)
-    return bool(left and right and (left == right or left in right or right in left))
 
 
 def evidence_matches_book(evidence: dict[str, Any], book_title: str | None) -> bool:
@@ -279,6 +275,14 @@ def evidence_matches_book(evidence: dict[str, Any], book_title: str | None) -> b
     requested = str(book_title or "").strip()
     if not requested:
         return False
+    requested_ids = registered_identities(requested)
+    if len(requested_ids) > 1:
+        return False
+    book_ids = {str(evidence.get("book_id") or "").strip()}
+    book_ids.update(str(ref.get("book_id") or "").strip() for ref in evidence.get("page_classification_refs", []) or [] if isinstance(ref, dict))
+    book_ids.discard("")
+    if requested_ids and book_ids:
+        return book_ids == requested_ids
     titles = [evidence.get("book_title"), evidence.get("source_name")]
     titles.extend(
         ref.get("book_title")
@@ -293,7 +297,7 @@ def _claim_support_evidence(claim: dict[str, Any], book_title: str | None) -> li
     evidence_ids = [str(item).strip() for item in claim.get("evidence_ids", []) or [] if str(item).strip()]
     if not evidence_ids:
         return []
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     loaded: list[dict[str, Any]] = []
     for evidence_id in evidence_ids:
         path = layout["evidence"] / f"{evidence_id}.json"
@@ -315,7 +319,7 @@ def _retrieval_hit_matches_book(hit: dict[str, Any], book_title: str | None) -> 
     requested = str(book_title or "").strip()
     if not requested:
         return False
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     entity_id = str(hit.get("entity_id") or "").strip()
     if hit.get("doc_type") == "evidence" and entity_id:
         path = layout["evidence"] / f"{entity_id}.json"

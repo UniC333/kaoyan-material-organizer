@@ -19,10 +19,11 @@ description: 基于本地考研资料提供老师式讲解、教材检索、复�
 `SKILL_ROOT` 是本文件所在目录。Windows 调用使用下列绝对路径，并将工作目录设为 `SKILL_ROOT`；不能从 Vault 拼接工具路径。安装配置见 [README](README.md)，参数查子命令 `--help`。
 
 ```text
-SKILL_ROOT\.venv\Scripts\python.exe SKILL_ROOT\scripts\kb.py --config SKILL_ROOT\kaoyan.config.json ask --subject <学科> --book-title <教材> --question <用户原话及已确认上下文> --format teaching-json
+SKILL_ROOT\.venv\Scripts\python.exe SKILL_ROOT\scripts\kb.py --config SKILL_ROOT\kaoyan.config.json ask --subject math --question <用户原话及已确认上下文> --format teaching-json
 ```
 
 - `--config` 在子命令前；`query` 使用 `--query`，`ask` 使用 `--question`。诊断用 `--format json`。先检查 `runtime_context` 的配置、Vault 和知识库是否正确。底层脚本仅在 CLI 无入口且 README 明确列出时使用。
+- 上例用于数学，其他学科替换 `--subject`。单教材可传已确认的 `--book-title`；含多个教材/页码的比较保留原话一次调用，不把全句绑定到其中一本书，也不手工逐题拆查。返回 `source_targets_version=source-targets.v1` 时逐项读取 `items[].result`，只在 `comparison_allowed=true` 时完成跨目标比较；部分阻塞可讲已确认项，但不得补猜缺失项。
 - 教材页码、章节、题号、选项、原文或有来源题目的首轮及追问，第一项实质操作是本地 `query/ask`，先核验再讲解；具体契约见教材问答参考。独立普通概念问答不强行构造教材定位。
 - 有来源题目须唯一确认原题与原书答案，同时满足 `answer_grounding.status=exact_answer`、`can_conclude=true`、`teaching_bundle.status=exact` 才能判断过程、给结论或补充推导。缺答案停止解题，不以“补充讲解”绕过；原题或原图定位不等于答案确认。
 - 原页代码、定义、公式、段落须 `page_content_bundle.status=exact` 才能按审核正文讲解；不套用习题答案门禁。仅定位原图时报告正文未确认，只有用户继续明确要求才人工阅图并标注，不冒充 OCR 引用。

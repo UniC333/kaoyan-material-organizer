@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from common import ensure_kb_layout, load_json_or_default
+from common import kb_layout, load_json_or_default
 from kaoyan_kb.domain.exercise_locator import (
     load_exercise_locator_index,
     normalize_exercise_category,
@@ -89,7 +89,7 @@ def parse_exercise_batch_request(query: str) -> dict[str, Any]:
 
 
 def _active_pdf_sources(book_title: str) -> dict[str, dict[str, Any]]:
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     requested = normalize_book_title(book_title)
     return {
         str(item.get("source_id") or ""): item

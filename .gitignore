@@ -73,3 +73,7 @@ __pycache__/
 !/tests/fixtures/learner_stage_compatibility.json
 !/tests/unit/test_query_components.py
 !/tests/fixtures/query_parsing_compatibility.json
+!/tests/unit/test_query_readonly_and_artifact_rollback.py
+!/tests/unit/test_search_index_status.py
+!/tests/unit/test_publish_book_ocr_evidence.py
+!/tests/unit/test_source_targets.py

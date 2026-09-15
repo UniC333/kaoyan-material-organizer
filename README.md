@@ -8,6 +8,15 @@
 
 ## 主要能力
 
+### 多教材定位与比较
+
+`kb.py ask --subject math --question "1800 P17第3题为什么和高数基础篇P56类似" --format teaching-json`
+保留原话即可，入口按正式教材目录分别绑定各目标。`query --format json`、`ask --format json/teaching-json` 的多目标响应使用 `source_targets_version: source-targets.v1`：`items` 保留原文片段、绑定依据和对应单目标结果，`status` 为 `exact/partial/blocked`，只有全部目标通过证据门禁时 `comparison_allowed` 才为真。单目标与原有王道批量格式不变。
+
+多目标的 `--book-title` 只填补未注明书籍的目标；无法唯一归属的全局页码/题号参数返回冲突。`--save` 拒绝多目标写入。缺失、歧义和不可用状态保持为阻塞结果；查询不补做 OCR、发布或索引写入。数学学科支持 `math`、`数学`、`高数`、`高等数学`，统一输出“数学”。
+
+### 资料与学习工作流
+
 - 注册教材、PDF 与纸质书照片，并保留来源和内容哈希。
 - 按 `inspect -> map-pages -> OCR -> review -> classify -> publish -> query/ask` 处理纸质教材与 PDF。
 - `book pdf-ocr-approve-mapping-interval` 与 `book pdf-ocr-apply-outline` 默认只预览；人工复核后用同一组参数加 `--yes --plan-fingerprint <预览指纹>` 执行。输入变化会拒绝执行，任一写入失败会恢复本次涉及的映射、分类及审计文件。
@@ -218,7 +227,13 @@ OCR 证据发布使用独立的零写入预览：
 
 `query_local_knowledge.py` 保留原 CLI 和 Python 调用入口，负责检索与来源证据编排；请求解析、主题及同书门禁、批量问答、文本呈现分别位于 `scripts/kaoyan_kb/domain/query/` 的 `request.py`、`topics.py`、`batch.py`、`views.py`。批量模块显式接收单题查询与定位依赖，不反向导入入口，不另建门禁或状态。
 
-R17–R20 的业务判定、公开命令和既有产物保持兼容。`learner_artifact_files.py` 是产物 JSON 文件名的唯一声明；生成器仍导出原 `ARTIFACT_JSON` 常量，但读取上游文件名不再加载上游构建实现。18 个生成器共用 `learner_artifact_runner.py` 的输出流程，四个阶段验收共用 Markdown 呈现；输入缺失、事实回写与人工回滚权限仍由原业务判定负责。共用输出流程保持原写入顺序，并不新增事务或自动构建上游产物。
+R17–R20 的业务判定、公开命令和既有产物保持兼容。`learner_artifact_files.py` 是产物 JSON 文件名的唯一声明；生成器仍导出原 `ARTIFACT_JSON` 常量，但读取上游文件名不再加载上游构建实现。18 个生成器共用 `learner_artifact_runner.py` 的输出流程，四个阶段验收共用 Markdown 呈现；输入缺失、事实回写与人工回滚权限仍由原业务判定负责。共用输出流程先完成渲染和结果校验，再写 JSON 与 Markdown；写入异常时恢复这一对文件及本次新建的空目录，不自动构建上游产物。此恢复范围不包括进程强制终止或并发写入。
+
+普通 `query/ask` 使用只读路径，不初始化学习库；同一次查询（含批量子题）复用 JSON 读取结果，`ask` 的查询与引用组装共享读取范围，保存时重新校验。书名到教材 ID 的映射每次请求只构建一次，结束后清空缓存。教材匹配使用规范化的完整名称或正式书系索引中能唯一定位的别名，未登记的截断书名、跨版本名称及多卷歧义不会通过同书门禁。
+
+回归测试使用 `python -m pip install -e ".[test]"` 安装项目与测试依赖，再运行 `python -m pytest -q`。测试应使用临时夹具；交付前还应在仅包含 Git 收录文件和本次待交付文件的副本中运行，排除被忽略的本机配置、索引和教材数据对结果的影响。
+
+答案契约的 `source_revisions` 记录引用证据与命中结论的 JSON 内容指纹。保存前直接读取这些正式记录并比对；记录缺失、损坏、变化或旧契约缺少指纹时拒绝保存，需重新查询。JSON 排版变化不影响指纹。此检查发生在写入前，不提供跨进程锁，也不保证检查后发生的并发修改能被阻止。
 
 ## 数据与隐私
 

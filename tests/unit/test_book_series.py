@@ -63,6 +63,24 @@ SERIES_INDEX = {
 }
 
 
+def test_photo_pair_record_keeps_ordered_printed_pages_and_source_images() -> None:
+    record = book_series._exercise_pair_record(
+        {
+            "evidence_id": "EV-PHOTO",
+            "page_classification_refs": [
+                {"printed_page": 7, "source_image_path": "P7.jpg"},
+                {"printed_page": 5, "source_image_path": "P5.jpg"},
+            ],
+            "content": "答案",
+            "title": "题解",
+        },
+        book_id="SB",
+    )
+
+    assert record["printed_pages"] == [5, 7]
+    assert record["source_image_paths"] == ["P5.jpg", "P7.jpg"]
+
+
 def _verified_query_result(*, source_id: str, printed: bool) -> dict:
     page_key = "printed_pages" if printed else "pdf_pages"
     page_anchor = {"source_id": source_id, "requested_page": 30} if printed else {"match_status": "not_requested"}

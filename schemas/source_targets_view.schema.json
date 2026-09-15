@@ -1,0 +1,27 @@
+{
+  "title": "source_targets_view",
+  "type": "object",
+  "required": ["source_targets_version", "view", "original_query", "subject", "runtime_context", "status", "comparison_allowed", "items"],
+  "properties": {
+    "source_targets_version": {"const": "source-targets.v1"},
+    "view": {"enum": ["query", "answer", "teaching"]},
+    "original_query": {"type": "string"},
+    "subject": {"type": "string"},
+    "runtime_context": {"type": "object"},
+    "status": {"enum": ["exact", "partial", "blocked"]},
+    "comparison_allowed": {"type": "boolean"},
+    "items": {"type": "array", "minItems": 2, "items": {
+      "type": "object",
+      "required": ["target_id", "fragment", "span", "printed_page", "status", "failure_reason", "next_action", "binding", "result"],
+      "properties": {
+        "target_id": {"type": "string"}, "fragment": {"type": "string"},
+        "span": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
+        "printed_page": {"type": "integer"}, "reason": {"type": "string"},
+        "status": {"enum": ["exact", "blocked"]},
+        "failure_reason": {"type": "string"}, "next_action": {"type": "string"},
+        "binding": {"type": "object"}, "result": {"type": ["object", "null"]}
+      }, "additionalProperties": false
+    }}
+  },
+  "additionalProperties": false
+}

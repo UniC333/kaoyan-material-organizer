@@ -18,6 +18,7 @@ from common import (
     sanitize_name,
     save_json,
 )
+from kaoyan_kb.domain.book_series import load_exercise_pair_index
 from query_local_knowledge import query_knowledge
 
 
@@ -27,6 +28,11 @@ CATEGORY_LABELS = {
     "multiple-choice": "多项选择题",
     "comprehensive": "综合应用题",
     "true-false": "判断题",
+}
+PHOTO_CATEGORY_LABELS = {
+    "choice": "选择题",
+    "fill_blank": "填空题",
+    "worked": "解答题",
 }
 
 
@@ -158,6 +164,11 @@ def _relation_query(relation: dict[str, Any]) -> tuple[str, int | None, str]:
     printed_pages = expectation["question_printed_pages"]
     if printed_pages:
         container = " ".join(_strings(relation.get("container_path")))
+        category = PHOTO_CATEGORY_LABELS.get(str(relation.get("category") or "").strip(), "")
+        if label.isdigit():
+            middle = f" {container}" if container else ""
+            type_text = f"{category}" if category else ""
+            return f"P{printed_pages[0]}{middle} {type_text}第{int(label)}题的原书答案", printed_pages[0], label
         middle = f" {container}" if container else ""
         return f"P{printed_pages[0]}{middle} {label} 的原书答案", printed_pages[0], label
     section = str(relation.get("section_root") or "").strip()
@@ -231,21 +242,27 @@ def verify_relation(
     if not answer_gate_ok:
         reasons.append("answer_gate_not_exact")
 
+    nested_question = dict(relation.get("question") or {})
+    nested_solution = dict(relation.get("answer") or {})
     relation_sources = {
         value
         for value in (
             relation_source_id(relation),
-            str((relation.get("question") or {}).get("source_id") or "").strip(),
-            str((relation.get("answer") or {}).get("source_id") or "").strip(),
+            str(nested_question.get("source_id") or "").strip(),
+            str(nested_solution.get("source_id") or "").strip(),
         )
         if value
     }
     expected_evidence_ids = expectation["question_evidence_ids"] + expectation["answer_evidence_ids"]
-    evidence_source_ok = bool(expected_evidence_ids) and all(
-        str((evidence_by_id.get(evidence_id) or {}).get("source_id") or "").strip() == source_id
-        for evidence_id in expected_evidence_ids
+    question_expected_source = str(nested_question.get("source_id") or source_id).strip()
+    answer_expected_source = str(nested_solution.get("source_id") or source_id).strip()
+    question_ids = expectation["question_evidence_ids"]
+    answer_ids = expectation["answer_evidence_ids"]
+    evidence_source_ok = bool(expected_evidence_ids) and (
+        all(str((evidence_by_id.get(evidence_id) or {}).get("source_id") or "").strip() == question_expected_source for evidence_id in question_ids)
+        and all(str((evidence_by_id.get(evidence_id) or {}).get("source_id") or "").strip() == answer_expected_source for evidence_id in answer_ids)
     )
-    relation_source_ok = relation_sources == {source_id}
+    relation_source_ok = bool(source_id) and source_id == question_expected_source and relation_source_id(relation) == source_id and relation_sources.issubset({question_expected_source, answer_expected_source})
     page_anchor = dict(query_result.get("page_anchor") or {})
     anchor_ok = True
     if expectation["question_printed_pages"]:
@@ -299,6 +316,7 @@ def verify_relation(
             },
             "answer_grounding_status": grounding.get("status", ""),
             "teaching_bundle_status": teaching_bundle.get("status", ""),
+            "teaching_bundle_citations": dict(teaching_bundle.get("citations") or {}),
             "teaching_view_version": teaching_view.get("teaching_view_version", ""),
         },
     }
@@ -387,6 +405,52 @@ def build_photo_pages(
     return [grouped[key] for key in sorted(grouped)]
 
 
+def _photo_exercise_relations(
+    *, source_id: str, chapter_number: int | None, book_title: str, evidence_by_id: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Project the canonical cross-volume exercise pairs into coverage shape."""
+    relations: list[dict[str, Any]] = []
+    for item in load_exercise_pair_index().get("items", []):
+        if not isinstance(item, dict) or not item.get("series_id"):
+            continue
+        if chapter_number is not None and int(item.get("chapter_number") or 0) != chapter_number:
+            continue
+        question = dict(item.get("question") or {})
+        solution = dict(item.get("solution") or {})
+        question_ids = _strings(question.get("evidence_ids") or question.get("evidence_id"))
+        solution_ids = _strings(solution.get("evidence_ids") or solution.get("evidence_id"))
+        if not question_ids or not solution_ids:
+            continue
+        if not any(str((evidence_by_id.get(evidence_id) or {}).get("source_id") or "").strip() == source_id for evidence_id in question_ids):
+            continue
+        question_source = str((evidence_by_id.get(question_ids[0]) or {}).get("source_id") or source_id).strip()
+        solution_source = str((evidence_by_id.get(solution_ids[0]) or {}).get("source_id") or "").strip()
+        exercise_number = int(item.get("exercise_number") or 0)
+        relation = {
+            "relation_id": f"EXR-{item.get('exercise_key', '')}",
+            "relation_kind": "cross_volume_exercise",
+            "relation_status": "exact" if item.get("pair_status") == "exact_pair" else "needs_review",
+            "source_id": question_source,
+            "book_title": book_title,
+            "chapter_id": f"{item.get('series_id')}-B-{item.get('part') or 'CALC'}-{int(item.get('chapter_number') or 0):02d}",
+            "chapter_title": "",
+            "category": str(item.get("exercise_type") or ""),
+            "exercise_label": str(exercise_number),
+            "question": {
+                "source_id": question_source,
+                "evidence_ids": question_ids,
+                "printed_pages": _ints(question.get("printed_pages")),
+            },
+            "answer": {
+                "source_id": solution_source,
+                "evidence_ids": solution_ids,
+                "printed_pages": _ints(solution.get("printed_pages")),
+            },
+        }
+        relations.append(relation)
+    return sorted(relations, key=lambda item: str(item.get("relation_id") or ""))
+
+
 def build_report(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
     layout = ensure_kb_layout()
     subject, _ = resolve_subject(args.subject)
@@ -400,14 +464,21 @@ def build_report(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
         explicit_source_id=str(args.source_id or args.pdf_source_id or "").strip(),
     )
     source_id = str(source["source_id"])
-    relations = [item for item in all_relations if relation_source_id(item) == source_id]
-    if args.chapter_number is not None:
-        relations = [item for item in relations if relation_chapter_number(item) == args.chapter_number]
-    relations.sort(key=lambda item: str(item.get("relation_id") or item.get("location_key") or ""))
-
     evidence = load_all_json(layout["evidence"])
     evidence_by_id = {str(item.get("evidence_id") or ""): item for item in evidence if item.get("evidence_id")}
     material_type = str(source.get("material_type") or "").strip()
+    if "pdf" in material_type:
+        relations = [item for item in all_relations if relation_source_id(item) == source_id]
+        if args.chapter_number is not None:
+            relations = [item for item in relations if relation_chapter_number(item) == args.chapter_number]
+        relations.sort(key=lambda item: str(item.get("relation_id") or item.get("location_key") or ""))
+    else:
+        relations = _photo_exercise_relations(
+            source_id=source_id,
+            chapter_number=args.chapter_number,
+            book_title=args.book_title,
+            evidence_by_id=evidence_by_id,
+        )
     pages = (
         build_pdf_pages(
             layout=layout,

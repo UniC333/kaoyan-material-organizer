@@ -165,6 +165,7 @@ def test_exercise_locator_fails_closed_when_fingerprint_is_missing(monkeypatch, 
     layout = _freshness_layout(tmp_path)
     _write_json(layout["indexes"] / exercise_locator.EXERCISE_LOCATOR_INDEX_NAME, {"relations": []})
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
+    monkeypatch.setattr(exercise_locator, "kb_layout", lambda: layout)
 
     loaded = exercise_locator.load_exercise_locator_index()
 
@@ -316,7 +317,7 @@ def test_current_task_default_book_requires_one_explicit_math_title(tmp_path: Pa
 
 def test_request_resolution_distinguishes_page_semantics(monkeypatch) -> None:
     monkeypatch.setattr(
-        "query_local_knowledge.resolve_section_anchor",
+        "kaoyan_kb.domain.query.request.resolve_section_anchor",
         lambda **kwargs: {"status": "exact", "requested_section": "3.3.6", "section_root": "3.3", "pdf_page": 106},
     )
     section_start = resolve_request(query="94页起的3.3.6试题第4题C项", book_title="王道数据结构", chapter=None, printed_page=None, exercise_label=None)
@@ -780,6 +781,7 @@ def test_exercise_locator_links_question_to_multpage_answer(monkeypatch, tmp_pat
     for page, content in fixtures.items():
         _write_json(layout["evidence"] / f"EV-{page}.json", _pdf_evidence_payload(f"EV-{page}", page, page - 2, content))
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
+    monkeypatch.setattr(exercise_locator, "kb_layout", lambda: layout)
     payload = exercise_locator.build_exercise_locator_index()
     assert payload["summary"]["relation_count"] == 1
     relation = payload["relations"][0]
@@ -1024,6 +1026,7 @@ def test_worked_example_container_path_resolves_same_page_restarted_label(monkey
     }]
     relations = exercise_locator.build_worked_example_relations(_publication_ready_evidences(evidences))
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
+    monkeypatch.setattr(exercise_locator, "kb_layout", lambda: layout)
     monkeypatch.setattr(exercise_locator, "exercise_locator_input_fingerprint", lambda _layout: "fresh")
     _write_json(layout["indexes"] / exercise_locator.EXERCISE_LOCATOR_INDEX_NAME, {"schema_version": "exercise-locator.v3", "input_fingerprint": "fresh", "relations": relations})
 
@@ -1052,6 +1055,7 @@ def test_exercise_locator_does_not_treat_summary_number_as_answer(monkeypatch, t
     for page, content in fixtures.items():
         _write_json(layout["evidence"] / f"EV-{page}.json", _pdf_evidence_payload(f"EV-{page}", page, page - 2, content))
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
+    monkeypatch.setattr(exercise_locator, "kb_layout", lambda: layout)
     payload = exercise_locator.build_exercise_locator_index()
     assert payload["summary"]["relation_count"] == 1
     assert payload["summary"]["review_count"] == 0
@@ -1070,6 +1074,7 @@ def test_scoped_exercise_relation_uses_section_before_chapter(monkeypatch, tmp_p
         {"relation_status": "exact", "source_id": "SRC-PDF", "section_root": "3.2", "exercise_label": "17"},
     ]}
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: layout)
+    monkeypatch.setattr(exercise_locator, "kb_layout", lambda: layout)
     monkeypatch.setattr(exercise_locator, "load_exercise_locator_index", lambda: relations)
 
     assert exercise_locator.find_unique_relation_for_scope(book_title="王道数据结构", chapter="第3.1节", exercise_label="17")["section_root"] == "3.1"
@@ -1088,6 +1093,7 @@ def test_page_relation_candidates_exclude_unusable_question_slices(monkeypatch, 
     _write_json(evidence_root / "EV-Q1.json", {"content": "# 一、单项选择题\n01. 可唯一切片的题目。\n\n02. 下一题。"})
     _write_json(evidence_root / "EV-Q2.json", {"content": "该证据没有正式题号标记。"})
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: {"evidence": evidence_root})
+    monkeypatch.setattr(exercise_locator, "kb_layout", lambda: {"evidence": evidence_root})
     monkeypatch.setattr(
         exercise_locator,
         "load_exercise_locator_index",
@@ -1146,7 +1152,7 @@ def test_exact_page_evidence_is_not_rejected_by_subsection_name(monkeypatch, tmp
         }),
         encoding="utf-8",
     )
-    monkeypatch.setattr("query_local_knowledge.ensure_kb_layout", lambda: {"evidence": evidence_dir})
+    monkeypatch.setattr("query_local_knowledge.kb_layout", lambda: {"evidence": evidence_dir})
     locator = {"evidence_ids": ["EV-PDF-67"], "pdf_page": 79}
 
     matches = exact_evidence_hits_for_locator("408", "第3.1节", locator)

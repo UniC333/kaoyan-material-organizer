@@ -799,6 +799,8 @@ def test_sourced_problem_without_source_answer_blocks_conclusion_and_save(monkey
 
 def test_exact_answer_requires_problem_and_solution_citations(monkeypatch) -> None:
     result = _result(answer_mode="accepted_evidence")
+    result['request_resolution'] = {'source_request_kind': 'exercise'}
+    result['page_verification'] = {'textbook_explanation_allowed': True}
     result["answer_grounding"] = {"required": True, "status": "exact_answer", "can_conclude": True, "problem": {"evidence_ids": ["EV-Q"], "printed_pages": [64], "exercise_label": "例3.8", "content": "原题"}, "solution": {"evidence_ids": ["EV-A"], "printed_pages": [65], "exercise_label": "例3.8", "content": "\\frac{\\pi}{3}+2-\\sqrt3"}, "failure_reason": "", "next_action": ""}
     result["supplementary_content"] = [{"explanation": "由偶函数折半后保留整体系数 2。"}]
     monkeypatch.setattr(answer_module, "build_citations", lambda result: [{"evidence_id": "EV-Q"}, {"evidence_id": "EV-A"}])
@@ -886,7 +888,15 @@ def test_explicit_concept_extraction_does_not_expand_implicit_dependencies() -> 
     assert query_module.extract_explicit_concepts("讲一下高数63页例5第一问") == []
 
 
-def test_exact_primary_concept_evidence_skips_li_zhengyuan(monkeypatch) -> None:
+@pytest.fixture
+def primary_book_index(tmp_path, monkeypatch):
+    import json
+    from kaoyan_kb.domain.query import book_identity
+    (tmp_path / 'book_series_index.json').write_text(json.dumps({'series': [{'aliases': ['高等数学辅导讲义基础篇'], 'volumes': [{'book_id': 'TEST-CALC', 'title': '考研数学高等数学辅导讲义 基础篇'}]}]}), encoding='utf-8')
+    monkeypatch.setattr(book_identity, 'kb_layout', lambda: {'indexes': tmp_path})
+
+
+def test_exact_primary_concept_evidence_skips_li_zhengyuan(monkeypatch, primary_book_index) -> None:
     calls: list[str] = []
 
     def find(**kwargs):
@@ -902,7 +912,7 @@ def test_exact_primary_concept_evidence_skips_li_zhengyuan(monkeypatch) -> None:
     assert routes[0]["supplement"]["attempted"] is False
 
 
-def test_primary_concept_gap_can_add_exact_li_zhengyuan_supplement(monkeypatch) -> None:
+def test_primary_concept_gap_can_add_exact_li_zhengyuan_supplement(monkeypatch, primary_book_index) -> None:
     calls: list[tuple[str, set[str]]] = []
 
     def find(**kwargs):
@@ -1562,7 +1572,7 @@ def _transaction_contract(question: str = "事务测试") -> dict:
         ],
         evidence_hits=[],
     )
-    return {
+    contract = {
         "answer_contract_version": "test.answer.v1",
         "answer_mode": "accepted_evidence",
         "citation_coverage_ok": True,
@@ -1578,6 +1588,10 @@ def _transaction_contract(question: str = "事务测试") -> dict:
         "references": result["references"],
         "content_provenance": [{"source_label": "fixture evidence"}],
     }
+
+    from kaoyan_kb.domain.query.source_revision import capture
+    contract["source_revisions"] = capture(contract)
+    return contract
 
 
 def _transaction_fixture(tmp_path: Path) -> tuple[Path, Path, tuple[Path, ...]]:
@@ -1605,6 +1619,11 @@ def _transaction_paths(vault_root: Path, question: str, feedback_paths: tuple[Pa
 
 
 def _stub_feedback_scripts(monkeypatch, feedback_paths: tuple[Path, ...], *, fail_second: bool = False) -> list[str]:
+    from kaoyan_kb.domain.query import source_revision
+    evidence_root = feedback_paths[0].parent.parent.parent / "source-evidence"
+    evidence_root.mkdir(parents=True, exist_ok=True)
+    (evidence_root / "EV-FIXTURE.json").write_text('{"content":"fixture evidence"}', encoding="utf-8")
+    monkeypatch.setattr(source_revision, "kb_layout", lambda: {"evidence": evidence_root})
     calls: list[str] = []
 
     def fake_run_script(name: str, *args: str) -> None:
@@ -1711,3 +1730,23 @@ def test_rejected_save_does_not_enumerate_or_write_transaction_files(tmp_path: P
         )
 
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("change", ["content", "revoked", "deleted", "invalid", "legacy"])
+def test_save_rechecks_real_sources_before_writes(tmp_path, monkeypatch, change):
+    vault, _, feedback = _transaction_fixture(tmp_path)
+    calls = _stub_feedback_scripts(monkeypatch, feedback)
+    contract = _transaction_contract()
+    path = tmp_path / "source-evidence" / "EV-FIXTURE.json"
+    if change == "deleted":
+        path.unlink()
+    elif change == "legacy":
+        contract.pop("source_revisions")
+    else:
+        payload = {"content": "changed"} if change == "content" else {"content": "fixture evidence", "verification_status": "revoked"}
+        path.write_text("{" if change == "invalid" else json.dumps(payload), encoding="utf-8")
+    before = {str(p.relative_to(tmp_path)): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")}
+    with pytest.raises(ValueError):
+        save_answer_contract(contract=contract, vault_root=vault, subject="数学", chapter="第三章", question="事务测试", saved_at="2026-09-05")
+    assert not calls
+    assert {str(p.relative_to(tmp_path)): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before

@@ -4,7 +4,7 @@ import re
 from collections import defaultdict
 from typing import Any
 
-from common import ensure_kb_layout, load_json_or_default, now_iso, save_json
+from common import kb_layout, ensure_kb_layout, load_json_or_default, now_iso, save_json
 from kaoyan_kb.domain.evidence_publication import is_publishable_source_evidence
 from kaoyan_kb.domain.index_freshness import directory_json_inputs, fingerprint_index_inputs
 
@@ -241,7 +241,7 @@ def resolve_section_anchor(*, book_title: str, chapter: str, query: str = "") ->
             "candidates": [],
         }
 
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     source_ids = {
         str(item.get("source_id") or "")
         for path in layout["manifests"].joinpath("sources").glob("*.json")
@@ -743,7 +743,7 @@ def build_exercise_locator_index() -> dict[str, Any]:
 
 
 def load_exercise_locator_index() -> dict[str, Any]:
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     index_path = layout["indexes"] / EXERCISE_LOCATOR_INDEX_NAME
     unavailable = {
         "relations": [],
@@ -837,7 +837,7 @@ def assemble_exact_relation(
 
     loaded = list(evidences or [])
     existing_ids = {str(item.get("evidence_id") or "") for item in loaded}
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     for evidence_id in base["question_evidence_ids"] + base["answer_evidence_ids"]:
         path = layout["evidence"] / f"{evidence_id}.json"
         if evidence_id not in existing_ids and path.is_file():
@@ -903,7 +903,7 @@ def list_exact_relations_for_question_page(*, source_id: str, question_pdf_page:
             "_availability": dict(unavailable.get("_availability") or {}),
         }
     normalized_category = normalize_exercise_category(category)
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     candidates: list[dict[str, Any]] = []
     for item in index.get("relations", []) or []:
         if item.get("relation_status") != "exact":
@@ -971,7 +971,7 @@ def find_unique_relation_for_scope(*, book_title: str, chapter: str, exercise_la
     if not label or (not scope and not chapter_number):
         return {}
     scope = scope or chapter_number.group(1)
-    layout = ensure_kb_layout()
+    layout = kb_layout()
     sources = {
         str(item.get("source_id") or ""): str(item.get("source_name") or "")
         for path in layout["manifests"].joinpath("sources").glob("*.json")

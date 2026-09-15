@@ -185,6 +185,8 @@ def ensure_templates() -> None:
 
 def resolve_subject(raw: str) -> tuple[str, dict[str, Any]]:
     normalized = raw.strip().lower()
+    if normalized in {"高数", "高等数学"}:
+        normalized = "math"
     for label, config in SUBJECT_MAP.items():
         aliases = {alias.lower() for alias in config["aliases"]}
         if normalized in aliases:
@@ -1224,8 +1226,8 @@ def clear_kb_business_data(
     return removed
 
 
-def learner_file_map(default: Path | None = None) -> dict[str, Path]:
-    layout = ensure_kb_layout(default)
+def learner_file_map(default: Path | None = None, *, readonly: bool = False) -> dict[str, Path]:
+    layout = kb_layout(default) if readonly else ensure_kb_layout(default)
     learner_root = layout["learner"]
     return {
         "root": learner_root,

@@ -189,6 +189,7 @@ def test_shared_relation_assembler_returns_both_page_systems(monkeypatch, tmp_pa
     (evidence_root / "EV-Q.json").write_text(json.dumps({"evidence_id": "EV-Q", "content": "# 一、单项选择题\n01. 题干\n02. 下一题"}), encoding="utf-8")
     (evidence_root / "EV-A.json").write_text(json.dumps({"evidence_id": "EV-A", "content": "# 一、单项选择题\n01. C\n解析\n02. D"}), encoding="utf-8")
     monkeypatch.setattr(exercise_locator, "ensure_kb_layout", lambda: {"evidence": evidence_root})
+    monkeypatch.setattr(exercise_locator, "kb_layout", lambda: {"evidence": evidence_root})
     relation = {
         "relation_id": "EXR-SRC-5.2-single-choice-01",
         "relation_status": "exact",
@@ -228,6 +229,7 @@ def _exact_query_result(label: str) -> dict:
     }
     return {
         "book_title": "王道数据结构",
+        "request_resolution": {"source_request_kind": "exercise"},
         "answer_grounding": grounding,
         "teaching_bundle": {
             "status": "exact", "problem_text": "题干", "source_answer_text": "答案", "requested_option": "", "exercise_label": label,
