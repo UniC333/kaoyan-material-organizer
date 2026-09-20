@@ -85,6 +85,31 @@ def exact_result(page=17):
     )
 
 
+@pytest.mark.parametrize('subquestion', ['第一问', '第1问', '第（1）问', '第(一)问', '第十二问'])
+def test_subquestion_is_exercise_intent_without_invented_parent(books, monkeypatch, subquestion):
+    monkeypatch.setattr(request, 'resolve_section_anchor', lambda **_: {'status': 'not_requested'})
+    text = f'1800第10页{subquestion}刚刚做错了，帮我讲一下这个等价的问题'
+    resolved = request.resolve_request(query=text, book_title='1800', chapter=None, printed_page=None, exercise_label=None)
+    assert resolved['source_request_kind'] == 'exercise'
+    assert resolved['exercise_label'] == ''
+    assert resolved['exercise_scope']['exercise_number'] is None
+    assert resolved['page']['number'] == 10
+    binding = targets.resolve_mentioned_book(text)
+    assert binding['status'] == 'ambiguous'
+    assert {v['book_id'] for v in binding['candidates']} == {'EX-Q', 'EX-A'}
+
+
+def test_explicit_volume_keeps_its_page_and_identity(books, monkeypatch):
+    monkeypatch.setattr(request, 'resolve_section_anchor', lambda **_: {'status': 'not_requested'})
+    for title, book_id in [('练习1800题目册', 'EX-Q'), ('练习1800基础篇题解', 'EX-A')]:
+        text = f'{title}第10页第一问'
+        binding = targets.resolve_mentioned_book(text)
+        assert binding['book_id'] == book_id
+        resolved = request.resolve_request(query=text, book_title=binding['book_title'], chapter=None, printed_page=None, exercise_label=None)
+        assert resolved['book_title'] == title
+        assert resolved['page']['number'] == 10
+
+
 @pytest.mark.parametrize('status', ['unavailable', 'unmapped', 'stale', 'ambiguous', 'not_found'])
 def test_precise_answer_cannot_bypass_page_gate(status):
     result = exact_result()

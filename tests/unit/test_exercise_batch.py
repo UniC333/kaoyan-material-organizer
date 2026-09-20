@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import pytest
 from pathlib import Path
 
 
@@ -11,6 +12,32 @@ if str(SCRIPTS) not in sys.path:
 
 from kaoyan_kb.domain import exercise_batch, exercise_locator
 import query_local_knowledge as query_module
+
+
+@pytest.mark.parametrize('text', [
+    '第10页第1题第（1）问：lim_{x→0}(1/sin^2x - cos^2x/x^2)。',
+    '第10页第一问，没理解 lim_{x→0}(1/sin^2x - cos^2x/x^2)',
+    '第10页第1题没理解，式子是 2x + 3y',
+    '第10页第1题，式子为 sin^ 2X 和 cos^2X',
+    '第10页第1题，没懂 2A + 3B',
+    '第10页第一问没理解，1/sin²x - cos²x/x²',
+    '选择题第1题，题干 sin(2x) 和 cos(3y)',
+])
+def test_formula_and_page_numbers_do_not_create_exercise_batches(text):
+    parsed = exercise_batch.parse_exercise_batch_request(text)
+    assert parsed['is_batch'] is False
+    assert all(item['exercise_label'] == '01' and not item['requested_option'] for item in parsed['items'])
+
+
+def test_explicit_batch_survives_formula_and_focus_text():
+    parsed = exercise_batch.parse_exercise_batch_request('第1、8题没懂，重点讲 sin^2x + 3y')
+    assert parsed['is_batch'] is True
+    assert [item['exercise_label'] for item in parsed['items']] == ['01', '08']
+
+
+def test_lowercase_choice_options_with_explicit_context():
+    parsed = exercise_batch.parse_exercise_batch_request('选项 1b,8d')
+    assert [item['requested_option'] for item in parsed['items']] == ['B', 'D']
 
 
 def _published_pdf_evidence(evidence_id: str, pdf_page: int, printed_page: int) -> dict:

@@ -40,12 +40,25 @@ def parse_exercise_batch_request(query: str) -> dict[str, Any]:
 
     selected: list[tuple[str, str]] = []
     invalid_options: dict[str, str] = {}
-    for match in re.finditer(r"(?<![A-Za-z0-9.])(\d{1,3})\s*([A-Za-z])(?![A-Za-z])", text):
+    choice_context = any(token in text for token in ("单选", "多选", "选择", "选项"))
+    # A formula exponent/coefficient is not a question-option shorthand.
+    # Lowercase letters and invalid options require explicit choice context.
+    for match in re.finditer(r"(?<![A-Za-z0-9.^/\\*+\-=])(\d{1,3})\s*([A-Za-z])(?![A-Za-z0-9])", text):
+        if re.search(r"[\^/\\*+\-=]\s*$", text[:match.start()]):
+            continue
+        if re.match(r"\s*[\^/\\*+\-=]", text[match.end():]):
+            continue
+        if not choice_context and match.group(2) not in {"A", "B", "C", "D"}:
+            continue
         label = normalize_exercise_label(match.group(1))
         option = match.group(2).upper()
         if option in {"A", "B", "C", "D"}:
             selected.append((label, option))
-        else:
+        elif (
+            match.group(2).isupper()
+            and re.search(r"(?:^|第|[、，,:：\s])$", text[:match.start()])
+            and re.match(r"(?:$|题|[、，,。；;\s])", text[match.end():])
+        ):
             invalid_options[label] = option
 
     listed: list[str] = []
@@ -55,7 +68,10 @@ def parse_exercise_batch_request(query: str) -> dict[str, Any]:
     focus: list[str] = []
     for clause in re.split(r"[，,。；;\n]", text):
         if any(token in clause for token in FOCUS_TOKENS):
-            focus.extend(_numbers(clause))
+            # Only collect an explicit question list, never all numbers in a
+            # clause that may also contain pages, subquestions or formulas.
+            for match in re.finditer(r"(?<![\d.])(?:第\s*)?([0-9、和及与\s]+?)\s*(?:这|两|几|个)*\s*题", clause):
+                focus.extend(_numbers(match.group(1)))
 
     ordered: list[str] = []
     option_by_label: dict[str, str] = {}

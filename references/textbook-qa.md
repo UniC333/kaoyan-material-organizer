@@ -8,6 +8,8 @@
 
 核对 `request_resolution`、`book_resolution`、`textbook_location`、`page_anchor`；以正式 `container_path` 和 `location_key` 保持教材身份，口语数字/空格变体只用于匹配。缺题号仅接受 `request_resolution.exercise_resolution.status=inferred_unique`；歧义保留候选并问一个必要信息，不能按顺序、语义或选项字母猜题。
 
+“第一问”“第（1）问”只表明习题/小问意图，不等于“第1题第（1）问”，不得自行补大题号。书系简称出现题目册、题解册等多个候选时，保持册别与页码绑定；不得把题目册某页直接改查为题解册同页。附件公式可作核对线索，其系数、幂次和变量不是题号或选项。定位失败应区分册别歧义、题号未确认、正文/答案缺失与入口误路由，不能一律归因于照片裁切或要求重传。
+
 ## 返回判定
 
 先按入口检查运行配置，再看 `request_resolution.source_request_kind`、`page_verification` 与以下状态：
