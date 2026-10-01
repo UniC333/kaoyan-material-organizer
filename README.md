@@ -36,7 +36,7 @@ PDF 物理页码与书上印刷页码必须分别保存并由正式映射确认�
 要求 Python 3.10 或更高版本。Windows PowerShell 示例：
 
 ```powershell
-git clone https://github.com/UniC114514/kaoyan-material-organizer.git
+git clone https://github.com/UniC333/kaoyan-material-organizer.git
 cd kaoyan-material-organizer
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e .
