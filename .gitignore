@@ -77,3 +77,4 @@ __pycache__/
 !/tests/unit/test_search_index_status.py
 !/tests/unit/test_publish_book_ocr_evidence.py
 !/tests/unit/test_source_targets.py
+!/tests/unit/test_snapshot_restore.py

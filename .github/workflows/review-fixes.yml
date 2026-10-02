@@ -1,0 +1,29 @@
+name: Review regression tests
+on:
+  push:
+    branches: ['codex/fix-commit-review']
+  pull_request:
+jobs:
+  test:
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install ".[test]"
+      - name: Exercise Windows legacy path limits
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem'
+          Set-ItemProperty -Path $key -Name LongPathsEnabled -Value 0
+          if ((Get-ItemProperty -Path $key).LongPathsEnabled -ne 0) { throw 'LongPathsEnabled was not disabled' }
+          'KAOYAN_TEST_LONG_PATHS_DISABLED=1' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - run: python -m pytest -q

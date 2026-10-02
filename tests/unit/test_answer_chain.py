@@ -1750,3 +1750,69 @@ def test_save_rechecks_real_sources_before_writes(tmp_path, monkeypatch, change)
         save_answer_contract(contract=contract, vault_root=vault, subject="数学", chapter="第三章", question="事务测试", saved_at="2026-09-05")
     assert not calls
     assert {str(p.relative_to(tmp_path)): p.read_bytes() if p.is_file() else None for p in tmp_path.rglob("*")} == before
+
+
+def _normal_save_result(tmp_path, monkeypatch):
+    from kaoyan_kb.domain.query import source_revision
+    evidence_root = tmp_path / "evidence"
+    evidence_root.mkdir()
+    records = [
+        _reviewed_page_content_evidence(evidence_id="EV-Q", content="原题"),
+        _reviewed_page_content_evidence(evidence_id="EV-A", content="原书答案"),
+    ]
+    for record in records:
+        (evidence_root / (record["evidence_id"] + ".json")).write_text(json.dumps(record), encoding="utf-8")
+    layout = {"evidence": evidence_root, "claims": tmp_path / "claims"}
+    monkeypatch.setattr(answer_module, "kb_layout", lambda: layout)
+    monkeypatch.setattr(source_revision, "kb_layout", lambda: layout)
+    result = _result(answer_mode="accepted_evidence")
+    result.update(
+        query="例3.8的答案",
+        request_resolution={"source_request_kind": "exercise"},
+        page_verification={"textbook_explanation_allowed": True},
+        references=[{"evidence_id": record["evidence_id"], "title": record["title"],
+                     "page_span": "P64", "image_span": "1", "chunk_id": record["chunk_id"]} for record in records],
+        answer_grounding={"required": True, "status": "exact_answer", "can_conclude": True,
+                          "problem": {"evidence_ids": ["EV-Q"], "content": "原题"},
+                          "solution": {"evidence_ids": ["EV-A"], "content": "原书答案"},
+                          "failure_reason": "", "next_action": ""},
+    )
+    return result, evidence_root
+
+
+@pytest.mark.parametrize("format_name", ["json", "text", "teaching-json"])
+def test_normal_ask_save_builds_source_revisions_before_output(tmp_path, monkeypatch, capsys, format_name):
+    result, evidence_root = _normal_save_result(tmp_path, monkeypatch)
+    vault = tmp_path / "vault"
+    monkeypatch.setattr(ask_module, "query_knowledge", lambda *args, **kwargs: result)
+    monkeypatch.setattr(sys, "argv", ["ask_local_knowledge.py", "--vault-root", str(vault),
+        "--subject", "数学", "--chapter", "第三章", "--question", result["query"],
+        "--save", "--saved-at", "2026-10-02", "--format", format_name])
+    # The real contract builder, source verification and save writer all run.
+    assert ask_module.main() == 0
+    output = capsys.readouterr().out
+    assert len(list(vault.rglob("*.md"))) == 3
+    if format_name == "json":
+        contract = json.loads(output)["answer"]
+        assert set(contract["source_revisions"]) == {"evidence/EV-Q", "evidence/EV-A"}
+        assert all(contract["source_revisions"].values())
+    elif format_name == "teaching-json":
+        assert json.loads(output)["saved"] is True
+    else:
+        assert "已沉淀" in output
+
+
+def test_teaching_projection_cannot_refresh_a_stale_full_contract(tmp_path, monkeypatch):
+    from kaoyan_kb.domain.query.read_session import read_scope
+    result, evidence_root = _normal_save_result(tmp_path, monkeypatch)
+    with read_scope():
+        contract = answer_module.build_answer_contract(result)
+    expected = dict(contract["source_revisions"])
+    (evidence_root / "EV-A.json").write_text('{"content":"changed answer"}', encoding="utf-8")
+    answer_module.build_teaching_answer_view(contract)
+    assert contract["source_revisions"] == expected
+    before = {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    with pytest.raises(ValueError, match="来源版本未确认或已变化"):
+        save_answer_contract(contract=contract, vault_root=tmp_path / "vault", subject="数学",
+                             chapter="第三章", question=result["query"], saved_at="2026-10-02")
+    assert before == {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}

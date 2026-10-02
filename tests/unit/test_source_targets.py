@@ -165,8 +165,10 @@ def test_multi_partial_and_repeat_cache(books, tmp_path, monkeypatch):
     calls = []
     def query_one(*args):
         calls.append(args)
-        result = exact_result(args[5])
-        if args[5] == 56:
+        page = request.parse_page_anchor(args[3])['requested_page']
+        assert args[5] is None  # natural-language page, not a CLI override
+        result = exact_result(page)
+        if page == 56:
             result['page_anchor']['match_status'] = 'unmapped'
             finalize_result(result)
         return result
@@ -198,3 +200,53 @@ def test_multi_save_rejected_before_any_query(books, monkeypatch):
 @pytest.mark.parametrize('alias', ['高等数学', '高数', 'math', '数学'])
 def test_math_subject_alias(alias):
     assert common.resolve_subject(alias)[0] == '数学'
+
+
+@pytest.mark.parametrize("question,semantics", [
+    ("P94附近的极限定义和P120附近的积分定义", "approximate_page"),
+    ("从第94页起的极限定义和从第120页起的积分定义", "section_start"),
+])
+def test_multi_soft_pages_keep_single_query_semantics(tmp_path, monkeypatch, question, semantics):
+    import config
+    import query_local_knowledge as query_module
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"workspace_root": str(tmp_path), "vault_root": str(tmp_path / "vault"),
+                                      "kb_root": str(tmp_path / "kb")}), encoding="utf-8")
+    monkeypatch.setenv("KAOYAN_CONFIG_FILE", str(config_path))
+    config.reset_runtime_config_cache()
+    try:
+        before = {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+        multiple = query_module.query_knowledge(tmp_path / "vault", "数学", None, question, 3, book_title="示例教材")
+        assert len(multiple["items"]) == 2
+        for item in multiple["items"]:
+            single = query_module.query_knowledge(tmp_path / "vault", "数学", None, item["fragment"], 3, book_title="示例教材")
+            assert item["result"]["request_resolution"]["page"] == single["request_resolution"]["page"]
+            assert item["result"]["request_resolution"]["page"]["semantics"] == semantics
+            assert not item["result"]["request_resolution"]["page"]["explicit_cli"]
+            assert item["result"]["page_crosscheck"]["required"] is True
+        assert not multiple["comparison_allowed"]
+        assert before == {str(p): p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    finally:
+        config.reset_runtime_config_cache()
+
+
+def test_exact_and_soft_page_targets_do_not_share_cached_result(books, tmp_path, monkeypatch):
+    monkeypatch.setattr(common, "runtime_context_payload", lambda **kwargs: {})
+    monkeypatch.setattr(request, "resolve_section_anchor", lambda **_: {"status": "not_requested"})
+    calls = []
+    def query_one(*args, **kwargs):
+        calls.append(args)
+        resolved = request.resolve_request(query=args[3], book_title=args[6], chapter=None,
+                                           printed_page=args[5], exercise_label=None)
+        result = exact_result(resolved["page"]["number"])
+        result["request_resolution"] = resolved
+        result["page_crosscheck"] = request.build_page_crosscheck(resolved, result["page_anchor"])
+        finalize_result(result)
+        return result
+    multiple = targets.query_source_targets(query_one=query_one, vault_root=tmp_path, subject="数学",
+        chapter=None, query="练习1800题目册P17第3题和P17附近第3题", topk=3)
+    assert len(calls) == 2
+    assert all(args[5] is None for args in calls)
+    assert [item["result"]["request_resolution"]["page"]["semantics"] for item in multiple["items"]] == ["exact_page", "approximate_page"]
+    assert multiple["items"][1]["result"]["page_crosscheck"]["required"]
+    assert not multiple["comparison_allowed"]
