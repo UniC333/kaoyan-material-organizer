@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
-from pathlib import Path
+import tempfile
+from pathlib import Path, PurePosixPath
 
 from kaoyan_kb.storage.snapshot_restore import RestoreTransaction, preflight
 from common import ensure_parent_dir, filesystem_path, load_json_or_default, load_runtime_config, save_json, sha256_for_file
@@ -35,14 +37,14 @@ def snapshot_file_set(manifest: dict) -> dict[str, set[str]]:
     files_by_root: dict[str, set[str]] = {"workspace": set(), "vault": set(), "kb": set()}
     for item in manifest.get("files", []):
         root_label = str(item.get("root", "")).strip()
-        relative_path = str(item.get("relative_path", "")).replace("\\", "/").strip()
+        relative_path = PurePosixPath(str(item.get("relative_path", "")).replace("\\", "/")).as_posix()
         if root_label in files_by_root and relative_path:
             files_by_root[root_label].add(relative_path)
     return files_by_root
 
 
 def is_machine_owned_cleanup_candidate(relative_path: str) -> bool:
-    normalized = str(relative_path or "").replace("\\", "/").strip()
+    normalized = str(relative_path or "").replace("\\", "/")
     return normalized.startswith("runs/")
 
 
@@ -61,7 +63,7 @@ def prune_machine_only_files(kb_root: Path, expected_relative_paths: set[str], *
         relative = str(path.relative_to(kb_root)).replace("\\", "/")
         if relative in expected_relative_paths:
             continue
-        if is_machine_owned_cleanup_candidate(relative):
+        if not path.is_symlink() and is_machine_owned_cleanup_candidate(relative):
             path.unlink()
             pruned_paths.append(relative)
             continue
@@ -108,21 +110,34 @@ def restore_snapshot(snapshot_id: str) -> dict:
         return {"restored": False, "snapshot_id": snapshot_id, "reason": "snapshot_preflight_failed",
                 "restored_files": 0, "pruned_files": 0, "checksum_failures": len(errors), "errors": errors}
     expected_files = snapshot_file_set(manifest)
+    for _, destination, _ in plan:
+        try:
+            expected_files["kb"].add(destination.relative_to(roots["kb"]).as_posix())
+        except ValueError:
+            pass
     transaction = None
     try:
         # Freeze the cleanup set before copying; never prune files created later.
         candidates = [path for path in roots["kb"].rglob("*") if path.is_file()] if roots["kb"].exists() else []
         cleanup_paths = [path for path in candidates
-                         if is_machine_owned_cleanup_candidate(path.relative_to(roots["kb"]).as_posix())
+                         if not path.is_symlink() and is_machine_owned_cleanup_candidate(path.relative_to(roots["kb"]).as_posix())
                          and path.relative_to(roots["kb"]).as_posix() not in expected_files["kb"]]
         report_path = root / "recovery" / "latest_restore_summary.json"
         transaction = RestoreTransaction([destination for _, destination, _ in plan] + cleanup_paths + [report_path],
                                          backup_root=root)
         for source, destination, expected in plan:
             ensure_parent_dir(destination)
-            shutil.copy2(filesystem_path(source), filesystem_path(destination))
-            if sha256_for_file(destination) != expected:
-                raise OSError(f"restored checksum mismatch: {destination}")
+            descriptor, name = tempfile.mkstemp(prefix=".snapshot-restore-", dir=destination.parent)
+            os.close(descriptor)
+            temporary = Path(name)
+            try:
+                shutil.copy2(filesystem_path(source), filesystem_path(temporary))
+                if sha256_for_file(temporary) != expected:
+                    raise OSError(f"restored checksum mismatch: {destination}")
+                os.replace(filesystem_path(temporary), filesystem_path(destination))
+            finally:
+                if temporary.exists():
+                    temporary.unlink()
         cleanup_summary = prune_machine_only_files(roots["kb"], expected_files["kb"], candidate_paths=candidates)
         payload = {
             "restored": True,

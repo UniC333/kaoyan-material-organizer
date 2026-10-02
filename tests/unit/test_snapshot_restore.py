@@ -141,3 +141,35 @@ def test_corrupt_snapshot_cli_returns_nonzero_and_preserves_notes(snapshot):
     assert result.returncode == 1, result.stderr
     assert not json.loads(result.stdout)["restored"]
     assert tree(root) == before
+
+
+def test_normalized_snapshot_run_is_not_pruned_and_human_path_is_kept(snapshot, capsys):
+    root, roots, snapshot_dir, manifest = snapshot
+    payload = json.loads(manifest.read_text())
+    source = snapshot_dir / "files/kb/runs/RUN-SAVED.json"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"SAVED RUN")
+    payload["files"].append({"root": "kb", "relative_path": "runs/./RUN-SAVED.json",
+                             "sha256": hashlib.sha256(b"SAVED RUN").hexdigest()})
+    payload["file_count"] = len(payload["files"])
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    protected = roots["kb"] / " runs" / "user-note.md"
+    protected.parent.mkdir()
+    protected.write_bytes(b"HUMAN DIRECTORY")
+    assert restore.main() == 0
+    capsys.readouterr()
+    assert (roots["kb"] / "runs/RUN-SAVED.json").read_bytes() == b"SAVED RUN"
+    assert protected.read_bytes() == b"HUMAN DIRECTORY")
+
+
+def test_machine_cleanup_preserves_symlink(snapshot, capsys):
+    _, roots, _, _ = snapshot
+    link = roots["kb"] / "runs/RUN-LINK.json"
+    try:
+        link.symlink_to(roots["kb"] / "human-note.md")
+    except OSError:
+        pytest.skip("symlinks are not available to this runner")
+    assert restore.main() == 0
+    capsys.readouterr()
+    assert link.is_symlink()
+    assert link.read_bytes() == b"KEEP HUMAN NOTE"

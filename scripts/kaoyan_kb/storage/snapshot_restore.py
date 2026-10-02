@@ -78,6 +78,8 @@ class RestoreTransaction:
         self.backup_dir = Path(tempfile.mkdtemp(prefix=".restore-rollback-", dir=backup_root))
         try:
             for index, path in enumerate(self.paths):
+                if path.is_symlink():
+                    raise OSError(f"restore transaction target is a symlink: {path}")
                 if path.exists():
                     if not path.is_file():
                         raise OSError(f"restore target is not a file: {path}")
