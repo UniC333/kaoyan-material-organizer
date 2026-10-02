@@ -159,7 +159,7 @@ def test_normalized_snapshot_run_is_not_pruned_and_human_path_is_kept(snapshot, 
     assert restore.main() == 0
     capsys.readouterr()
     assert (roots["kb"] / "runs/RUN-SAVED.json").read_bytes() == b"SAVED RUN"
-    assert protected.read_bytes() == b"HUMAN DIRECTORY")
+    assert protected.read_bytes() == b"HUMAN DIRECTORY"
 
 
 def test_machine_cleanup_preserves_symlink(snapshot, capsys):
