@@ -6,9 +6,34 @@ import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
+import stat
 import tempfile
 
-from common import filesystem_path, sha256_for_file
+from common import display_path, filesystem_path, sha256_for_file
+
+
+def path_stat(path: Path, *, follow_symlinks=True):
+    """Use extended Windows paths; only a missing entry counts as absent."""
+    try:
+        return os.stat(filesystem_path(path), follow_symlinks=follow_symlinks)
+    except FileNotFoundError:
+        return None
+
+
+def resolve_path(path: Path) -> Path:
+    # Keep logical paths unprefixed for containment checks and manifest keys.
+    return Path(display_path(Path(filesystem_path(path)).resolve()))
+
+
+def regular_files_under(root: Path) -> list[Path]:
+    if path_stat(root) is None:
+        return []
+    files = []
+    for entry in Path(filesystem_path(root)).rglob("*"):
+        state = path_stat(entry)
+        if state is not None and stat.S_ISREG(state.st_mode):
+            files.append(Path(display_path(entry)))
+    return files
 
 
 def preflight(snapshot_dir: Path, manifest: dict, roots: dict[str, Path]):
@@ -37,13 +62,13 @@ def preflight(snapshot_dir: Path, manifest: dict, roots: dict[str, Path]):
                 raise ValueError("snapshot_path_outside_root")
             if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
                 raise ValueError("snapshot_checksum_invalid")
-            source = (snapshot_dir / "files" / label / path).resolve()
-            source.relative_to(snapshot_dir.resolve())
-            destination = (roots[label] / path).resolve()
-            destination.relative_to(roots[label].resolve())
+            source = resolve_path(snapshot_dir / "files" / label / path)
+            source.relative_to(resolve_path(snapshot_dir))
+            destination = resolve_path(roots[label] / path)
+            destination.relative_to(resolve_path(roots[label]))
             # Restoring workspace files must never overwrite the recovery source.
             try:
-                destination.relative_to(snapshot_dir.parent.resolve())
+                destination.relative_to(resolve_path(snapshot_dir.parent))
             except ValueError:
                 pass
             else:
@@ -51,11 +76,13 @@ def preflight(snapshot_dir: Path, manifest: dict, roots: dict[str, Path]):
             if destination in destinations:
                 raise ValueError("snapshot_destination_duplicate")
             destinations.add(destination)
-            if not Path(filesystem_path(source)).is_file():
+            source_state = path_stat(source)
+            if source_state is None or not stat.S_ISREG(source_state.st_mode):
                 raise ValueError("snapshot_file_missing")
             if sha256_for_file(source) != expected:
                 raise ValueError("snapshot_checksum_mismatch")
-            if destination.exists() and not destination.is_file():
+            destination_state = path_stat(destination)
+            if destination_state is not None and not stat.S_ISREG(destination_state.st_mode):
                 raise ValueError("restore_destination_not_file")
             plan.append((source, destination, expected))
         except (OSError, ValueError, TypeError) as exc:
@@ -69,32 +96,38 @@ class RestoreTransaction:
     def __init__(self, paths, *, backup_root: Path):
         self.paths = list(dict.fromkeys(Path(path) for path in paths))
         self.before = {}
+        self.checksums = {}
         self.missing_dirs = set()
         for path in self.paths:
             parent = path.parent
-            while not parent.exists():
+            while path_stat(parent) is None:
                 self.missing_dirs.add(parent)
                 parent = parent.parent
-        self.backup_dir = Path(tempfile.mkdtemp(prefix=".restore-rollback-", dir=backup_root))
+        self.backup_dir = Path(display_path(tempfile.mkdtemp(prefix=".restore-rollback-", dir=filesystem_path(backup_root))))
         try:
             for index, path in enumerate(self.paths):
-                if path.is_symlink():
+                state = path_stat(path, follow_symlinks=False)
+                if state is not None and stat.S_ISLNK(state.st_mode):
                     raise OSError(f"restore transaction target is a symlink: {path}")
-                if path.exists():
-                    if not path.is_file():
+                if state is not None:
+                    if not stat.S_ISREG(state.st_mode):
                         raise OSError(f"restore target is not a file: {path}")
                     backup = self.backup_dir / str(index)
                     shutil.copy2(filesystem_path(path), filesystem_path(backup))
+                    checksum = sha256_for_file(backup)
+                    if sha256_for_file(path) != checksum:
+                        raise OSError(f"restore backup checksum mismatch: {path}")
                     self.before[path] = backup
+                    self.checksums[path] = checksum
                 else:
                     self.before[path] = None
-            (self.backup_dir / "manifest.json").write_text(
+            Path(filesystem_path(self.backup_dir / "manifest.json")).write_text(
                 json.dumps({str(path): str(backup) if backup else None
                             for path, backup in self.before.items()}, ensure_ascii=False),
                 encoding="utf-8",
             )
         except Exception:
-            shutil.rmtree(self.backup_dir, ignore_errors=True)
+            shutil.rmtree(filesystem_path(self.backup_dir), ignore_errors=True)
             raise
 
     def rollback(self):
@@ -103,25 +136,34 @@ class RestoreTransaction:
             temporary = None
             try:
                 if backup is None:
-                    if path.exists():
-                        path.unlink()
+                    if path_stat(path, follow_symlinks=False) is not None:
+                        os.unlink(filesystem_path(path))
+                    if path_stat(path, follow_symlinks=False) is not None:
+                        raise OSError(f"rollback did not remove new file: {path}")
                     continue
-                path.parent.mkdir(parents=True, exist_ok=True)
-                descriptor, name = tempfile.mkstemp(prefix=".snapshot-rollback-", dir=path.parent)
+                os.makedirs(filesystem_path(path.parent), exist_ok=True)
+                descriptor, name = tempfile.mkstemp(prefix=".snapshot-rollback-", dir=filesystem_path(path.parent))
                 os.close(descriptor)
                 temporary = Path(name)
                 # Deliberately independent of the restore's copy2 operation.
                 shutil.copyfile(filesystem_path(backup), filesystem_path(temporary))
                 shutil.copystat(filesystem_path(backup), filesystem_path(temporary))
                 os.replace(filesystem_path(temporary), filesystem_path(path))
+                if sha256_for_file(path) != self.checksums[path]:
+                    raise OSError(f"rollback checksum mismatch: {path}")
             except OSError as exc:
                 failures.append(f"{path}: {exc}")
             finally:
-                if temporary is not None and temporary.exists():
-                    temporary.unlink()
+                if temporary is not None:
+                    try:
+                        os.unlink(filesystem_path(temporary))
+                    except FileNotFoundError:
+                        pass
+                    except OSError as exc:
+                        failures.append(f"{temporary}: {exc}")
         for directory in sorted(self.missing_dirs, key=lambda path: len(path.parts), reverse=True):
             try:
-                directory.rmdir()
+                os.rmdir(filesystem_path(directory))
             except FileNotFoundError:
                 pass
             except OSError as exc:
@@ -132,4 +174,4 @@ class RestoreTransaction:
         self.commit()
 
     def commit(self):
-        shutil.rmtree(self.backup_dir, ignore_errors=True)
+        shutil.rmtree(filesystem_path(self.backup_dir), ignore_errors=True)

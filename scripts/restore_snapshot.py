@@ -5,11 +5,12 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from kaoyan_kb.storage.snapshot_restore import RestoreTransaction, preflight
+from kaoyan_kb.storage.snapshot_restore import RestoreTransaction, path_stat, preflight, regular_files_under, resolve_path
 from common import ensure_parent_dir, filesystem_path, load_json_or_default, load_runtime_config, save_json, sha256_for_file
 
 
@@ -27,9 +28,9 @@ def snapshot_root() -> Path:
 def destination_roots() -> dict[str, Path]:
     runtime = load_runtime_config()
     return {
-        "workspace": runtime.workspace_root.resolve(),
-        "vault": runtime.vault_root.resolve(),
-        "kb": runtime.kb_root.resolve(),
+        "workspace": resolve_path(runtime.workspace_root),
+        "vault": resolve_path(runtime.vault_root),
+        "kb": resolve_path(runtime.kb_root),
     }
 
 
@@ -51,20 +52,23 @@ def is_machine_owned_cleanup_candidate(relative_path: str) -> bool:
 def prune_machine_only_files(kb_root: Path, expected_relative_paths: set[str], *, candidate_paths=None) -> dict[str, object]:
     pruned_paths: list[str] = []
     protected_paths: list[str] = []
-    if not kb_root.exists():
+    if path_stat(kb_root) is None:
         return {
             "machine_owned_pruned_count": 0,
             "human_owned_protected_count": 0,
             "pruned_relative_paths": pruned_paths,
             "protected_relative_paths": protected_paths,
         }
-    candidates = candidate_paths if candidate_paths is not None else [item for item in kb_root.rglob("*") if item.is_file()]
+    candidates = candidate_paths if candidate_paths is not None else regular_files_under(kb_root)
     for path in sorted(candidates):
         relative = str(path.relative_to(kb_root)).replace("\\", "/")
         if relative in expected_relative_paths:
             continue
-        if not path.is_symlink() and is_machine_owned_cleanup_candidate(relative):
-            path.unlink()
+        state = path_stat(path, follow_symlinks=False)
+        if state is None:
+            continue
+        if not stat.S_ISLNK(state.st_mode) and is_machine_owned_cleanup_candidate(relative):
+            os.unlink(filesystem_path(path))
             pruned_paths.append(relative)
             continue
         protected_paths.append(relative)
@@ -87,7 +91,7 @@ def build_resume_boundary(expected_kb_files: set[str]) -> dict[str, object]:
 
 def recovery_report_path() -> Path:
     report_dir = snapshot_root() / "recovery"
-    report_dir.mkdir(parents=True, exist_ok=True)
+    os.makedirs(filesystem_path(report_dir), exist_ok=True)
     return report_dir / "latest_restore_summary.json"
 
 
@@ -97,8 +101,8 @@ def restore_snapshot(snapshot_id: str) -> dict:
         return {"restored": False, "snapshot_id": snapshot_id, "reason": "snapshot_id_invalid"}
     snapshot_dir = root / snapshot_id
     try:
-        snapshot_dir.resolve().relative_to(root.resolve())
-        manifest = load_json_or_default(snapshot_dir / "manifest.json", {})
+        resolve_path(snapshot_dir).relative_to(resolve_path(root))
+        manifest = load_json_or_default(Path(filesystem_path(snapshot_dir / "manifest.json")), {})
     except (OSError, ValueError) as exc:
         return {"restored": False, "snapshot_id": snapshot_id, "reason": "snapshot_unreadable", "error": str(exc)}
     if not manifest:
@@ -118,16 +122,17 @@ def restore_snapshot(snapshot_id: str) -> dict:
     transaction = None
     try:
         # Freeze the cleanup set before copying; never prune files created later.
-        candidates = [path for path in roots["kb"].rglob("*") if path.is_file()] if roots["kb"].exists() else []
+        candidates = regular_files_under(roots["kb"])
         cleanup_paths = [path for path in candidates
-                         if not path.is_symlink() and is_machine_owned_cleanup_candidate(path.relative_to(roots["kb"]).as_posix())
+                         if not stat.S_ISLNK(path_stat(path, follow_symlinks=False).st_mode)
+                         and is_machine_owned_cleanup_candidate(path.relative_to(roots["kb"]).as_posix())
                          and path.relative_to(roots["kb"]).as_posix() not in expected_files["kb"]]
         report_path = root / "recovery" / "latest_restore_summary.json"
         transaction = RestoreTransaction([destination for _, destination, _ in plan] + cleanup_paths + [report_path],
                                          backup_root=root)
         for source, destination, expected in plan:
             ensure_parent_dir(destination)
-            descriptor, name = tempfile.mkstemp(prefix=".snapshot-restore-", dir=destination.parent)
+            descriptor, name = tempfile.mkstemp(prefix=".snapshot-restore-", dir=filesystem_path(destination.parent))
             os.close(descriptor)
             temporary = Path(name)
             try:
@@ -136,8 +141,10 @@ def restore_snapshot(snapshot_id: str) -> dict:
                     raise OSError(f"restored checksum mismatch: {destination}")
                 os.replace(filesystem_path(temporary), filesystem_path(destination))
             finally:
-                if temporary.exists():
-                    temporary.unlink()
+                try:
+                    os.unlink(filesystem_path(temporary))
+                except FileNotFoundError:
+                    pass
         cleanup_summary = prune_machine_only_files(roots["kb"], expected_files["kb"], candidate_paths=candidates)
         payload = {
             "restored": True,
@@ -155,11 +162,12 @@ def restore_snapshot(snapshot_id: str) -> dict:
     except Exception as exc:
         payload = {"restored": False, "snapshot_id": snapshot_id, "reason": "restore_failed",
                    "error": str(exc), "restored_files": 0, "pruned_files": 0,
-                   "rolled_back": transaction is not None}
+                   "rolled_back": False}
         if transaction is not None:
             try:
                 transaction.rollback()
-            except OSError as rollback_error:
+                payload["rolled_back"] = True
+            except Exception as rollback_error:
                 payload.update(rolled_back=False, rollback_error=str(rollback_error),
                                rollback_backup_dir=str(transaction.backup_dir))
         return payload

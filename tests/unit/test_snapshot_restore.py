@@ -13,11 +13,12 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import restore_snapshot as restore
+from common import display_path, filesystem_path
 
 
 def tree(root):
-    return {p.relative_to(root).as_posix(): p.read_bytes() if p.is_file() else None
-            for p in root.rglob("*")}
+    return {Path(display_path(p)).relative_to(root).as_posix(): p.read_bytes() if p.is_file() else None
+            for p in Path(filesystem_path(root)).rglob("*")}
 
 
 @pytest.fixture
@@ -173,3 +174,175 @@ def test_machine_cleanup_preserves_symlink(snapshot, capsys):
     capsys.readouterr()
     assert link.is_symlink()
     assert link.read_bytes() == b"KEEP HUMAN NOTE"
+
+
+def long_directory(root, length):
+    path = root
+    while len(str(path)) < length:
+        remaining = length - len(str(path)) - 1
+        if remaining <= 0:
+            raise AssertionError("cannot construct requested path length")
+        path /= "d" * min(60, remaining)
+    assert len(str(path)) == length
+    Path(filesystem_path(path)).mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@pytest.mark.parametrize("failure", [None, "copy", "cleanup", "report"])
+def test_existing_280_character_file_is_backed_up_before_overwrite(snapshot, monkeypatch, capsys, failure):
+    root, roots, snapshot_dir, manifest = snapshot
+    # A long filename in a short directory isolates stat/backup from mkstemp.
+    name = "n" * (280 - len(str(roots["vault"])) - 1 - len(".md")) + ".md"
+    assert len(name) <= 255
+    notes = roots["vault"] / name
+    assert len(str(notes)) == 280
+    Path(filesystem_path(notes)).write_bytes(b"CURRENT GOOD NOTES")
+    payload = json.loads(manifest.read_text())
+    payload["files"][0]["relative_path"] = name
+    Path(filesystem_path(snapshot_dir / "files/vault" / name)).write_bytes(b"SAVED NOTES")
+    manifest.write_text(json.dumps(payload), encoding="utf-8")
+    before = tree(root)
+    original_copy = restore.shutil.copy2
+    def copy_with_failure(source, destination, *args, **kwargs):
+        result = original_copy(source, destination, *args, **kwargs)
+        if failure == "copy" and display_path(source) == str(snapshot_dir / "files/workspace/new/nested/config.txt"):
+            assert Path(filesystem_path(notes)).read_bytes() == b"SAVED NOTES"
+            raise OSError("injected second copy failure")
+        return result
+    monkeypatch.setattr(restore.shutil, "copy2", copy_with_failure)
+    if failure == "cleanup":
+        original_cleanup = restore.prune_machine_only_files
+        def cleanup_with_failure(*args, **kwargs):
+            original_cleanup(*args, **kwargs)
+            raise OSError("injected cleanup failure")
+        monkeypatch.setattr(restore, "prune_machine_only_files", cleanup_with_failure)
+    if failure == "report":
+        def report_with_failure(*args):
+            raise OSError("injected report failure")
+        monkeypatch.setattr(restore, "save_json", report_with_failure)
+    assert restore.main() == (1 if failure else 0)
+    result = json.loads(capsys.readouterr().out)
+    assert result["restored"] is (failure is None)
+    if failure:
+        assert result["rolled_back"] is True
+        assert Path(filesystem_path(notes)).read_bytes() == b"CURRENT GOOD NOTES"
+        assert tree(root) == before
+    else:
+        assert Path(filesystem_path(notes)).read_bytes() == b"SAVED NOTES"
+
+
+@pytest.fixture
+def long_snapshot(snapshot, monkeypatch, request):
+    root, roots, snapshot_dir, manifest = snapshot
+    # Existing notes are 280 characters, or inside a 296-character directory.
+    roots["vault"] = long_directory(root / "long-vault", request.param)
+    Path(filesystem_path(roots["vault"] / "notes.md")).write_bytes(b"CURRENT GOOD NOTES")
+    roots["workspace"] = long_directory(root / "long-workspace", 296)
+    roots["kb"] = long_directory(root / "long-kb", 276)
+    Path(filesystem_path(roots["kb"] / "runs")).mkdir()
+    Path(filesystem_path(roots["kb"] / "runs/RUN-CURRENT.json")).write_bytes(b"CURRENT RUN")
+    Path(filesystem_path(roots["kb"] / "human-note.md")).write_bytes(b"KEEP HUMAN NOTE")
+    backup_root = long_directory(root / "long-backups", 296)
+    new_snapshot = backup_root / "snapshots/SNAP-TEST"
+    restore.shutil.copytree(filesystem_path(snapshot_dir), filesystem_path(new_snapshot))
+    report = backup_root / "snapshots/recovery/latest_restore_summary.json"
+    Path(filesystem_path(report.parent)).mkdir(parents=True)
+    Path(filesystem_path(report)).write_bytes(b"CURRENT REPORT")
+    runtime = SimpleNamespace(**{name + "_root": path for name, path in roots.items()}, backup_root=backup_root)
+    monkeypatch.setattr(restore, "load_runtime_config", lambda: runtime)
+    if os.name == "nt" and os.environ.get("KAOYAN_TEST_LONG_PATHS_DISABLED") == "1":
+        import ctypes
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as key:
+            assert winreg.QueryValueEx(key, "LongPathsEnabled")[0] == 0
+        # Prove this process cannot access the existing file through a plain path.
+        attributes = ctypes.windll.kernel32.GetFileAttributesW
+        attributes.argtypes = [ctypes.c_wchar_p]
+        attributes.restype = ctypes.c_uint32
+        notes = roots["vault"] / "notes.md"
+        assert attributes(str(notes)) == 0xFFFFFFFF
+        assert attributes(filesystem_path(notes)) != 0xFFFFFFFF
+    return root, roots, new_snapshot, report
+
+
+@pytest.mark.parametrize("long_snapshot", [271, 296], indirect=True)
+@pytest.mark.parametrize("failure", [None, "copy", "destination_hash", "cleanup", "report"])
+def test_long_path_restore_and_exception_rollback(long_snapshot, monkeypatch, capsys, failure):
+    root, roots, snapshot_dir, report = long_snapshot
+    notes = Path(filesystem_path(roots["vault"] / "notes.md"))
+    config = Path(filesystem_path(roots["workspace"] / "new/nested/config.txt"))
+    before = tree(root)
+    original_copy = restore.shutil.copy2
+    copies = []
+    def copy_with_failure(source, destination, *args, **kwargs):
+        result = original_copy(source, destination, *args, **kwargs)
+        if str(snapshot_dir / "files") in display_path(source):
+            copies.append(source)
+            if len(copies) == 2:
+                assert notes.read_bytes() == b"SAVED NOTES"  # first target really was overwritten
+                if failure == "copy":
+                    Path(destination).write_bytes(b"PARTIAL COPY")
+                    raise OSError("injected second copy failure")
+                if failure == "destination_hash":
+                    Path(destination).write_bytes(b"WRONG BYTES")
+        return result
+    monkeypatch.setattr(restore.shutil, "copy2", copy_with_failure)
+    if failure == "cleanup":
+        original_cleanup = restore.prune_machine_only_files
+        def cleanup_with_failure(*args, **kwargs):
+            original_cleanup(*args, **kwargs)
+            assert notes.read_bytes() == b"SAVED NOTES"
+            assert not Path(filesystem_path(roots["kb"] / "runs/RUN-CURRENT.json")).exists()
+            raise OSError("injected cleanup failure")
+        monkeypatch.setattr(restore, "prune_machine_only_files", cleanup_with_failure)
+    if failure == "report":
+        def report_with_failure(path, payload):
+            Path(filesystem_path(path)).write_bytes(b"PARTIAL REPORT")
+            raise OSError("injected report failure")
+        monkeypatch.setattr(restore, "save_json", report_with_failure)
+    assert restore.main() == (1 if failure else 0)
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["restored"] is (failure is None)
+    if failure:
+        assert payload["rolled_back"] is True
+        assert notes.read_bytes() == b"CURRENT GOOD NOTES"
+        assert not config.exists()
+        assert Path(filesystem_path(report)).read_bytes() == b"CURRENT REPORT"
+        assert tree(root) == before  # includes long run paths and temporary directories
+    else:
+        assert notes.read_bytes() == b"SAVED NOTES"
+        assert config.read_bytes() == b"SAVED CONFIG"
+        assert not Path(filesystem_path(roots["kb"] / "runs/RUN-CURRENT.json")).exists()
+        assert json.loads(Path(filesystem_path(report)).read_text())["restored"] is True
+        assert not any(".snapshot-" in name or ".restore-rollback-" in name for name in tree(root))
+
+
+@pytest.mark.parametrize("long_snapshot", [271], indirect=True)
+@pytest.mark.parametrize("rollback_fault", ["raises", "wrong_bytes"])
+def test_long_path_rollback_failure_keeps_backup_and_reports_failure(long_snapshot, monkeypatch, capsys, rollback_fault):
+    _, roots, snapshot_dir, _ = long_snapshot
+    original_copy = restore.shutil.copy2
+    original_copyfile = restore.shutil.copyfile
+    def bad_rollback(source, destination, *args, **kwargs):
+        if ".snapshot-rollback-" in str(destination):
+            if rollback_fault == "raises":
+                raise OSError("injected rollback failure")
+            Path(destination).write_bytes(b"INCORRECT ROLLBACK")
+            return destination
+        return original_copyfile(source, destination, *args, **kwargs)
+    def fail_after_overwrite(source, destination, *args, **kwargs):
+        result = original_copy(source, destination, *args, **kwargs)
+        if display_path(source) == str(snapshot_dir / "files/workspace/new/nested/config.txt"):
+            monkeypatch.setattr(restore.shutil, "copyfile", bad_rollback)
+            raise OSError("injected copy failure")
+        return result
+    monkeypatch.setattr(restore.shutil, "copy2", fail_after_overwrite)
+    assert restore.main() == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["restored"] is False and payload["rolled_back"] is False
+    assert payload["rollback_error"]
+    backup = Path(filesystem_path(payload["rollback_backup_dir"]))
+    mapping = json.loads((backup / "manifest.json").read_text())
+    notes = roots["vault"] / "notes.md"
+    assert Path(filesystem_path(mapping[str(restore.resolve_path(notes))])).read_bytes() == b"CURRENT GOOD NOTES"
+    assert Path(filesystem_path(notes)).read_bytes() != b"CURRENT GOOD NOTES"
