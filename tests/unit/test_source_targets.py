@@ -160,7 +160,7 @@ def test_explicit_page_and_label_reach_pairing(books, monkeypatch):
     assert route['request']['printed_page'] == 18
 
 
-def test_multi_partial_and_repeat_cache(books, tmp_path, monkeypatch):
+def test_multi_partial_and_independent_requests(books, tmp_path, monkeypatch):
     monkeypatch.setattr(common, 'runtime_context_payload', lambda **kwargs: {})
     calls = []
     def query_one(*args):
@@ -173,13 +173,84 @@ def test_multi_partial_and_repeat_cache(books, tmp_path, monkeypatch):
             finalize_result(result)
         return result
     payload = targets.query_source_targets(query_one=query_one, vault_root=tmp_path, subject='数学', chapter=None, query='练习1800P17第3题和P17第3题，以及高数基础篇P56', topk=3)
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert payload['status'] == 'partial'
     assert not payload['comparison_allowed']
     assert [x['status'] for x in payload['items']] == ['exact', 'exact', 'blocked']
     payload['items'][0]['result']['teaching_bundle']['source_answer_text'] = 'changed'
     assert payload['items'][1]['result']['teaching_bundle']['source_answer_text'] == '答案'
     assert payload['items'][0]['binding']['status'] == 'exact'
+
+
+@pytest.mark.parametrize("question", [
+    "P17选择题第3题和P17综合题第3题",
+    "P17基础第3题和P17强化第3题",
+    "P17高数第3题和P17线代第3题",
+    "P17第一章第3题和P17第二章第3题",
+    "P17第3题利用极限定义和P17第3题利用积分定义",
+    "P17第3题第一问和P17第3题第二问",
+])
+def test_multi_same_page_and_number_preserve_full_request_scope(tmp_path, monkeypatch, question):
+    monkeypatch.setattr(targets, "catalogue", lambda: [])
+    monkeypatch.setattr(common, "runtime_context_payload", lambda **kwargs: {})
+    monkeypatch.setattr(request, "resolve_section_anchor", lambda **_: {"status": "not_requested"})
+    calls = []
+    def query_one(*args, **kwargs):
+        calls.append(args[3])
+        result = exact_result()
+        result["request_resolution"] = request.resolve_request(query=args[3], book_title=args[6],
+            chapter=None, printed_page=None, exercise_label=None)
+        result["concept_routes"] = request.extract_explicit_concepts(args[3])
+        return result
+
+    payload = targets.query_source_targets(query_one=query_one, vault_root=tmp_path, subject="数学",
+        chapter=None, query=question, topk=3, book_title="示例教材")
+
+    assert len(calls) == 2
+    for item in payload["items"]:
+        expected = request.resolve_request(query=item["fragment"], book_title="示例教材",
+            chapter=None, printed_page=None, exercise_label=None)
+        actual = item["result"]["request_resolution"]
+        assert actual["exercise_scope"] == expected["exercise_scope"]
+        assert actual["exercise_category"] == expected["exercise_category"]
+        assert item["result"]["concept_routes"] == request.extract_explicit_concepts(item["fragment"])
+
+
+def test_multi_different_stage_rechecks_gate_before_comparison(tmp_path, monkeypatch):
+    monkeypatch.setattr(targets, "catalogue", lambda: [])
+    monkeypatch.setattr(common, "runtime_context_payload", lambda **kwargs: {})
+    monkeypatch.setattr(request, "resolve_section_anchor", lambda **_: {"status": "not_requested"})
+    def query_one(*args, **kwargs):
+        result = exact_result()
+        result["request_resolution"] = request.resolve_request(query=args[3], book_title=args[6],
+            chapter=None, printed_page=None, exercise_label=None)
+        if result["request_resolution"]["exercise_scope"]["stage"] == "advanced":
+            result["page_anchor"]["match_status"] = "not_found"
+            finalize_result(result)
+        return result
+
+    payload = targets.query_source_targets(query_one=query_one, vault_root=tmp_path, subject="数学",
+        chapter=None, query="P17基础第3题和P17强化第3题", topk=3, book_title="示例教材")
+
+    assert payload["status"] == "partial"
+    assert payload["comparison_allowed"] is False
+    assert [item["status"] for item in payload["items"]] == ["exact", "blocked"]
+
+
+def test_multi_identical_requests_share_cache_but_not_mutations(tmp_path, monkeypatch):
+    monkeypatch.setattr(targets, "catalogue", lambda: [])
+    monkeypatch.setattr(common, "runtime_context_payload", lambda **kwargs: {})
+    # Each fragment is exactly the same, including punctuation.
+    calls = []
+    def query_one(*args, **kwargs):
+        calls.append(args[3])
+        return exact_result()
+    payload = targets.query_source_targets(query_one=query_one, vault_root=tmp_path, subject="数学",
+        chapter=None, query="P17第3题；P17第3题；", topk=3, book_title="示例教材")
+
+    assert len(calls) == 1
+    payload["items"][0]["result"]["teaching_bundle"]["source_answer_text"] = "changed"
+    assert payload["items"][1]["result"]["teaching_bundle"]["source_answer_text"] == "答案"
 
 
 def test_multi_global_override_is_blocked_before_query(books, tmp_path, monkeypatch):

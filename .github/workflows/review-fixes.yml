@@ -1,7 +1,7 @@
-name: Review regression tests
+name: Regression tests
 on:
   push:
-    branches: ['codex/fix-commit-review']
+    branches: ['main', 'codex/**']
   pull_request:
 jobs:
   test:
@@ -11,12 +11,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
       - run: python -m pip install ".[test]"
       - name: Exercise Windows legacy path limits
         if: runner.os == 'Windows'

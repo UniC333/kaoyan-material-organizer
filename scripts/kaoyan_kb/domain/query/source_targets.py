@@ -123,7 +123,6 @@ def query_source_targets(*, query_one, vault_root, subject, chapter, query, topk
         return None
     from common import runtime_context_payload, validate_entity_contract
     from .permission import teaching_permission
-    from .request import resolve_request, detect_intent
     results, cache = [], {}
     for target in targets:
         reason = target['reason']
@@ -136,10 +135,9 @@ def query_source_targets(*, query_one, vault_root, subject, chapter, query, topk
             reason = binding.get('reason', 'book-identity-unconfirmed')
         result = None
         if not reason:
-            resolved = resolve_request(query=target['fragment'], book_title=target_book, chapter=chapter, printed_page=None, exercise_label=None)
-            key = (target_book, target['printed_page'], resolved['page']['semantics'], resolved['requested_position'], resolved['exercise_label'], resolved['requested_option'], tuple(resolved['container_path']), resolved['section_root'], resolved['source_request_kind'], detect_intent(target['fragment']))
-            if resolved['source_request_kind'] != 'exercise' or not resolved['exercise_label']:
-                key += (target['fragment'],)
+            # The full text affects exercise scope, concept routes and teaching.
+            # Share JSON reads across targets, but only reuse identical requests.
+            key = (target_book, target['fragment'])
             if key not in cache:
                 context = {'confirmed_book_title': confirmed_book_title} if confirmed_book_title else {}
                 cache[key] = query_one(vault_root, subject, chapter, target['fragment'], topk, None, target_book, **context)

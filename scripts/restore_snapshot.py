@@ -5,12 +5,11 @@ import argparse
 import json
 import os
 import shutil
-import stat
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from kaoyan_kb.storage.snapshot_restore import RestoreTransaction, path_stat, preflight, regular_files_under, resolve_path
+from kaoyan_kb.storage.snapshot_restore import RestoreTransaction, is_redirected, path_stat, preflight, regular_files_under, reject_redirected_destination, resolve_path
 from common import ensure_parent_dir, filesystem_path, load_json_or_default, load_runtime_config, save_json, sha256_for_file
 
 
@@ -67,7 +66,7 @@ def prune_machine_only_files(kb_root: Path, expected_relative_paths: set[str], *
         state = path_stat(path, follow_symlinks=False)
         if state is None:
             continue
-        if not stat.S_ISLNK(state.st_mode) and is_machine_owned_cleanup_candidate(relative):
+        if not is_redirected(state) and is_machine_owned_cleanup_candidate(relative):
             os.unlink(filesystem_path(path))
             pruned_paths.append(relative)
             continue
@@ -121,13 +120,14 @@ def restore_snapshot(snapshot_id: str) -> dict:
             pass
     transaction = None
     try:
+        report_path = root / "recovery" / "latest_restore_summary.json"
+        reject_redirected_destination(report_path, root)
         # Freeze the cleanup set before copying; never prune files created later.
         candidates = regular_files_under(roots["kb"])
         cleanup_paths = [path for path in candidates
-                         if not stat.S_ISLNK(path_stat(path, follow_symlinks=False).st_mode)
+                         if not is_redirected(path_stat(path, follow_symlinks=False))
                          and is_machine_owned_cleanup_candidate(path.relative_to(roots["kb"]).as_posix())
                          and path.relative_to(roots["kb"]).as_posix() not in expected_files["kb"]]
-        report_path = root / "recovery" / "latest_restore_summary.json"
         transaction = RestoreTransaction([destination for _, destination, _ in plan] + cleanup_paths + [report_path],
                                          backup_root=root)
         for source, destination, expected in plan:
