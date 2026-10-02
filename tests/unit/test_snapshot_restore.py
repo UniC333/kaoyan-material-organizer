@@ -176,6 +176,85 @@ def test_machine_cleanup_preserves_symlink(snapshot, capsys):
     assert link.read_bytes() == b"KEEP HUMAN NOTE"
 
 
+def make_redirect(link, target, kind):
+    if kind == "junction":
+        if os.name != "nt":
+            pytest.skip("junctions require Windows")
+        result = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)],
+                                capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+    else:
+        try:
+            link.symlink_to(target, target_is_directory=kind == "directory")
+        except OSError:
+            if os.name == "nt":
+                pytest.skip("symlinks are not available to this runner")
+            raise
+
+
+@pytest.mark.parametrize("kind", ["file", "dangling", "directory", "junction"])
+@pytest.mark.parametrize("outside", [False, True])
+def test_restore_rejects_redirected_targets_before_any_write(snapshot, kind, outside):
+    root, roots, _, _ = snapshot
+    if kind in {"file", "dangling"}:
+        link = roots["vault"] / "notes.md"
+        link.unlink()
+        target = (root if outside else roots["vault"]) / "unrelated.md"
+        if kind != "dangling":
+            target.write_bytes(b"UNRELATED HUMAN NOTE")
+    else:
+        link = roots["workspace"] / "new"
+        target = (root if outside else roots["workspace"]) / "unrelated"
+        (target / "nested").mkdir(parents=True)
+        (target / "nested/config.txt").write_bytes(b"UNRELATED HUMAN CONFIG")
+    make_redirect(link, target, kind)
+    before = tree(root)
+
+    result = restore.restore_snapshot("SNAP-TEST")
+
+    assert result["restored"] is False
+    assert result["reason"] == "snapshot_preflight_failed"
+    assert any("restore_destination_redirected" in error["reason"] for error in result["errors"])
+    assert tree(root) == before
+    assert link.exists() or link.is_symlink()
+
+
+@pytest.mark.parametrize("kind", ["file", "directory", "junction"])
+def test_restore_rejects_redirected_recovery_report_before_any_write(snapshot, kind):
+    root, _, snapshot_dir, _ = snapshot
+    report_dir = snapshot_dir.parent / "recovery"
+    if kind == "file":
+        report_dir.mkdir()
+        link = report_dir / "latest_restore_summary.json"
+        target = root / "unrelated-report.json"
+        target.write_text("{}", encoding="utf-8")
+    else:
+        link = report_dir
+        target = root / "unrelated-reports"
+        target.mkdir()
+        (target / "latest_restore_summary.json").write_text("{}", encoding="utf-8")
+    make_redirect(link, target, kind)
+    before = tree(root)
+
+    result = restore.restore_snapshot("SNAP-TEST")
+
+    assert result["restored"] is False
+    assert "restore_destination_redirected" in result["error"]
+    assert tree(root) == before
+
+
+@pytest.mark.parametrize("kind", ["directory", "junction"])
+def test_machine_cleanup_does_not_traverse_redirected_directories(snapshot, kind):
+    _, roots, _, _ = snapshot
+    make_redirect(roots["kb"] / "runs/linked-notes", roots["vault"], kind)
+
+    result = restore.restore_snapshot("SNAP-TEST")
+
+    assert result["restored"] is True
+    assert (roots["vault"] / "notes.md").read_bytes() == b"SAVED NOTES"
+    assert result["cleanup_summary"]["pruned_relative_paths"] == ["runs/RUN-CURRENT.json"]
+
+
 def long_directory(root, length):
     path = root
     while len(str(path)) < length:

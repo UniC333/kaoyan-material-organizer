@@ -173,11 +173,25 @@ def test_remote_ocr_defaults_to_disabled_when_config_and_environment_are_absent(
 
 
 def test_remote_ocr_environment_override_is_explicit(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(config, "_discover_config_path", lambda: (None, "default"))
     monkeypatch.setenv("KAOYAN_OCR_ALLOW_REMOTE", "true")
 
     runtime = config.load_runtime_config(default_workspace=str(tmp_path))
 
     assert runtime.ocr_allow_remote is True
+
+
+@pytest.mark.parametrize("configured,environment", [(False, "true"), (True, "false")])
+def test_remote_ocr_selected_config_takes_precedence(monkeypatch, tmp_path, configured, environment):
+    config_path = tmp_path / "kaoyan.config.json"
+    write_config(config_path)
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    payload["ocr_allow_remote"] = configured
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("KAOYAN_CONFIG_FILE", str(config_path))
+    monkeypatch.setenv("KAOYAN_OCR_ALLOW_REMOTE", environment)
+
+    assert config.load_runtime_config().ocr_allow_remote is configured
 
 
 def test_remote_ocr_config_true_remains_persistent(monkeypatch, tmp_path: Path) -> None:

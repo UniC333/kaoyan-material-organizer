@@ -25,14 +25,41 @@ def resolve_path(path: Path) -> Path:
     return Path(display_path(Path(filesystem_path(path)).resolve()))
 
 
+def is_redirected(state) -> bool:
+    """Recognize symlinks and Windows junctions without rejecting cloud placeholders."""
+    return state is not None and (
+        stat.S_ISLNK(state.st_mode)
+        or getattr(state, "st_reparse_tag", 0) in (0xA0000003, 0xA000000C)
+    )
+
+
+def reject_redirected_destination(path: Path, root: Path) -> None:
+    """Check every un-resolved component below the explicitly configured root."""
+    relative = path.relative_to(root)
+    current = root
+    for part in relative.parts:
+        current /= part
+        if is_redirected(path_stat(current, follow_symlinks=False)):
+            raise ValueError(f"restore_destination_redirected: {current}")
+
+
 def regular_files_under(root: Path) -> list[Path]:
     if path_stat(root) is None:
         return []
     files = []
-    for entry in Path(filesystem_path(root)).rglob("*"):
-        state = path_stat(entry)
-        if state is not None and stat.S_ISREG(state.st_mode):
-            files.append(Path(display_path(entry)))
+    def walk_error(error):
+        raise error
+
+    for directory, dirnames, filenames in os.walk(filesystem_path(root), followlinks=False, onerror=walk_error):
+        parent = Path(display_path(directory))
+        # os.walk can traverse Windows junctions even when followlinks is false.
+        dirnames[:] = [name for name in dirnames
+                       if not is_redirected(path_stat(parent / name, follow_symlinks=False))]
+        for name in filenames:
+            entry = parent / name
+            state = path_stat(entry)
+            if state is not None and stat.S_ISREG(state.st_mode):
+                files.append(entry)
     return files
 
 
@@ -64,7 +91,9 @@ def preflight(snapshot_dir: Path, manifest: dict, roots: dict[str, Path]):
                 raise ValueError("snapshot_checksum_invalid")
             source = resolve_path(snapshot_dir / "files" / label / path)
             source.relative_to(resolve_path(snapshot_dir))
-            destination = resolve_path(roots[label] / path)
+            raw_destination = roots[label] / path
+            reject_redirected_destination(raw_destination, roots[label])
+            destination = resolve_path(raw_destination)
             destination.relative_to(resolve_path(roots[label]))
             # Restoring workspace files must never overwrite the recovery source.
             try:
@@ -107,8 +136,8 @@ class RestoreTransaction:
         try:
             for index, path in enumerate(self.paths):
                 state = path_stat(path, follow_symlinks=False)
-                if state is not None and stat.S_ISLNK(state.st_mode):
-                    raise OSError(f"restore transaction target is a symlink: {path}")
+                if is_redirected(state):
+                    raise OSError(f"restore transaction target is redirected: {path}")
                 if state is not None:
                     if not stat.S_ISREG(state.st_mode):
                         raise OSError(f"restore target is not a file: {path}")
