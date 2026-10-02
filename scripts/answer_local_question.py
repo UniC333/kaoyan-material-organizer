@@ -347,7 +347,6 @@ def build_teaching_answer_view(
     saved_at: str = "",
 ) -> dict[str, Any]:
     """Project the full answer contract into a small, model-facing teaching view."""
-    contract["source_revisions"] = capture(contract)
     validate_teaching_contract_invariants(contract)
     grounding = dict(contract.get("answer_grounding") or {})
     compact_grounding = {
@@ -1226,6 +1225,8 @@ def build_answer_contract(result: dict) -> dict[str, Any]:
         "runtime_context": dict(result.get("runtime_context") or {}),
         "query_result": result,
     }
+    # Capture the same records used to build this full contract, before output projection.
+    contract["source_revisions"] = capture(contract)
     validate_teaching_contract_invariants(contract)
     validate_entity_contract("query_artifact", contract)
     return contract

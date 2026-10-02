@@ -632,7 +632,7 @@ def _replace_relative_image_links(content: str, source_image_paths: list[str], *
     relative_images = list(re.finditer(pattern, content))
     if not relative_images or not source_image_paths:
         return content
-    verified_paths = list(dict.fromkeys(str(item).strip() for item in source_image_paths if str(item).strip()))
+    verified_paths = list(dict.fromkeys(str(item).strip().replace("\\", "/") for item in source_image_paths if str(item).strip()))
     if not verified_paths:
         return content
     if len(relative_images) == 1 and len(verified_paths) == 1:
