@@ -32,11 +32,40 @@ def _numbers(value: str) -> list[str]:
     return [normalize_exercise_label(item) for item in re.findall(r"(?<![\d.])\d{1,3}(?![\d.])", value)]
 
 
+def _requested_exercise_range(text: str) -> dict[str, int]:
+    """Only a unique, explicit request limit may constrain listed exercises."""
+    quantities: set[int] = set()
+    for clause in re.split(r"[，,。；;\n]", text):
+        for quantity in QUANTITY_PATTERN.finditer(clause):
+            before, after = clause[:quantity.start()], clause[quantity.end():]
+            limit = re.search(
+                r"(?:(?:只|仅)(?:讲解|讲|看|复习|分析|检查)|限定(?:在|于)?|限于|范围为)\s*$",
+                before,
+            )
+            wrong_answers = re.match(
+                r"\s*(?:的\s*)?(?:错误|错题|选错的选项)\s*"
+                r"(?:有(?:这些)?|是|如下)?\s*[:：]?\s*(?=$|(?:第\s*)?\d)", after,
+            )
+            if not limit and not wrong_answers:
+                continue
+            prefix = before[:limit.start()] if limit else before
+            if re.search(r"(?:不|别|不要|无需|不用|不必|并非|不是)\s*$", prefix):
+                continue
+            # A historical limit is feedback unless an explicit current-request
+            # marker follows it in this clause.
+            markers = re.findall(r"之前|以前|此前|上次|昨天|曾经|这次|本次|现在|目前", before)
+            if not wrong_answers and markers and markers[-1] in {"之前", "以前", "此前", "上次", "昨天", "曾经"}:
+                continue
+            count = int(quantity.group(1))
+            if count > 0:
+                quantities.add(count)
+    return {"start": 1, "end": next(iter(quantities))} if len(quantities) == 1 else {}
+
+
 def parse_exercise_batch_request(query: str) -> dict[str, Any]:
     """Parse a deterministic multi-exercise request without treating page/chapter numbers as labels."""
     text = str(query or "")
-    quantity = QUANTITY_PATTERN.search(text)
-    exercise_range = {"start": 1, "end": int(quantity.group(1))} if quantity else {}
+    exercise_range = _requested_exercise_range(text)
     start_match = PAGE_START_PATTERN.search(text)
     page_start = {"number": int(start_match.group(1)), "semantics": "section_start"} if start_match else {}
     page_match = PAGE_RANGE_PATTERN.search(text)
@@ -296,7 +325,9 @@ def resolve_exercise_batch_targets(
             else:
                 heading = next(iter(candidates))
                 anchored_section = heading.rsplit('.', 1)[0]
-                if section_root and section_root != anchored_section:
+                requested_parts = section_root.split('.') if section_root else []
+                anchored_parts = anchored_section.split('.')
+                if requested_parts and anchored_parts[:len(requested_parts)] != requested_parts:
                     reason = 'section-start-anchor-conflict'
                 else:
                     section_root = anchored_section

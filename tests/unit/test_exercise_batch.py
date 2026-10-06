@@ -48,6 +48,80 @@ def test_quantity_is_not_added_as_a_focus_question():
     assert [item['exercise_label'] for item in parsed['items'] if item['emphasis']] == ['07']
 
 
+@pytest.mark.parametrize('query', [
+    '王道数据结构 8.4 前20题都做对了，错题：21A,28D',
+    '王道数据结构 8.4 错题：21A,28D。前20题已经做完了',
+    '王道数据结构 8.4 前20题没懂，错题：21A,28D，重点讲第28题',
+    '王道数据结构 8.4 前20题，错题：21A,28D',
+])
+def test_feedback_quantity_does_not_block_explicit_wrong_answers(monkeypatch, tmp_path, query):
+    monkeypatch.setattr(exercise_batch, '_active_pdf_sources', lambda _: {'SRC': {}})
+    monkeypatch.setattr(exercise_batch, 'load_exercise_locator_index', lambda: {'relations': [
+        {'source_id': 'SRC', 'section_root': '8.4', 'category': 'single-choice',
+         'exercise_label': label, 'relation_status': 'exact', 'question_printed_pages': [80]}
+        for label in ('21', '28')
+    ]})
+    parsed = exercise_batch.parse_exercise_batch_request(query)
+    assert parsed['exercise_range'] == {}
+    assert [item['exercise_label'] for item in parsed['items']] == ['21', '28']
+    resolved = exercise_batch.resolve_exercise_batch_targets(
+        subject='408', book_title='王道数据结构', chapter=None, query=query, parsed=parsed,
+    )
+    assert [item['status'] for item in resolved['targets']] == ['exact', 'exact']
+    monkeypatch.setattr(query_module, 'resolve_current_task_book', lambda **_: {
+        'status': 'exact', 'source': 'query', 'book_title': '王道数据结构',
+    })
+    monkeypatch.setattr(query_module, 'query_knowledge', lambda *args: _exact_query_result(args[-1]))
+    monkeypatch.setattr(query_module, 'runtime_context_payload', lambda **_: {})
+    payload = query_module.query_exercise_batch(tmp_path, '408', None, query, 3, view='teaching')
+    assert payload['batch_status'] == 'exact'
+    assert payload['request_resolution']['exercise_range'] == {}
+    assert payload['request_resolution']['original_query'] == query
+
+
+@pytest.mark.parametrize('scope', [
+    '前30题的错误', '前30题的错题', '前30题的选错的选项',
+    '只讲前30题', '仅讲前30题', '只讲解前30题',
+    '限定在前30题', '限于前30题', '范围为前30题',
+    '前 30 道题的错误',
+])
+def test_explicit_quantity_is_selected_after_progress_feedback(scope):
+    parsed = exercise_batch.parse_exercise_batch_request(
+        f'王道数据结构 8.4 前20题都做对了，{scope}：21A,28D',
+    )
+    assert parsed['exercise_range'] == {'start': 1, 'end': 30}
+    assert [item['exercise_label'] for item in parsed['items']] == ['21', '28']
+
+
+@pytest.mark.parametrize('query', [
+    '前20题的错误有这些：1D,7C',
+    '前20题的错题 1D,7C',
+    '前20题的错误如下：1D,7C',
+    '昨天前20题的错误：1D,7C',
+])
+def test_explicit_wrong_answer_list_keeps_its_own_quantity(query):
+    parsed = exercise_batch.parse_exercise_batch_request(query)
+    assert parsed['exercise_range'] == {'start': 1, 'end': 20}
+    assert [item['exercise_label'] for item in parsed['items']] == ['01', '07']
+
+
+@pytest.mark.parametrize('query,expected', [
+    ('只讲前30题，错题：21A,28D。前20题已做完', {'start': 1, 'end': 30}),
+    ('只讲前30题，前30题的错题：21A,28D', {'start': 1, 'end': 30}),
+    ('只讲前20题，仅讲前30题，错题：21A,28D', {}),
+    ('前20题的错误已经订正完了，错题：21A,28D', {}),
+    ('前20题的错题我没问题，错题：21A,28D', {}),
+    ('之前只讲前20题，现在错题：21A,28D', {}),
+    ('这次不只讲前20题，错题：21A,28D', {}),
+    ('不限于前20题，错题：21A,28D', {}),
+    ('前20题的错误：已经订正完了，错题：21A,28D', {}),
+])
+def test_quantity_scope_ignores_feedback_history_and_conflicting_limits(query, expected):
+    parsed = exercise_batch.parse_exercise_batch_request(query)
+    assert parsed['exercise_range'] == expected
+    assert [item['exercise_label'] for item in parsed['items']] == ['21', '28']
+
+
 def _start_page_fixture(monkeypatch, tmp_path):
     anchors = tmp_path / 'pdf_book_anchors'
     anchors.mkdir()
@@ -78,6 +152,41 @@ def test_page_start_uses_formal_heading_and_allows_later_question_pages(monkeypa
     assert resolved['page_start_resolution']['status'] == 'exact'
     assert [item['status'] for item in resolved['targets']] == ['exact'] * 3
     assert [item['printed_page'] for item in resolved['targets']] == [80, 81, 82]
+
+
+@pytest.mark.parametrize('requested,status', [
+    ('第8章', 'exact'), ('8.4', 'exact'),
+    ('8.5', 'blocked'), ('第9章', 'blocked'), ('第80章', 'blocked'),
+])
+@pytest.mark.parametrize('via_query', [False, True])
+def test_page_start_refines_only_compatible_real_section_scope(monkeypatch, tmp_path, requested, status, via_query):
+    query, _, _ = _start_page_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(exercise_batch, 'resolve_section_anchor', exercise_locator.resolve_section_anchor)
+    if via_query:
+        query = f'{requested} {query}'
+    resolved = exercise_batch.resolve_exercise_batch_targets(
+        subject='408', book_title='测试教材', chapter=None if via_query else requested,
+        query=query, parsed=exercise_batch.parse_exercise_batch_request(query),
+    )
+    assert [item['status'] for item in resolved['targets']] == [status] * 3
+    if status == 'exact':
+        assert resolved['section_root'] == '8.4'
+        assert resolved['page_start_resolution']['section_root'] == '8.4'
+        assert [item['printed_page'] for item in resolved['targets']] == [80, 81, 82]
+    else:
+        assert [item['reason'] for item in resolved['targets']] == ['section-start-anchor-conflict'] * 3
+
+
+def test_page_start_does_not_treat_chapter_as_string_prefix(monkeypatch, tmp_path):
+    query, parsed, path = _start_page_fixture(monkeypatch, tmp_path)
+    path.write_text(json.dumps({'anchors': [
+        {'title': '80.4.2 本节试题精选', 'page_start': 93, 'anchor_type': 'section'},
+    ]}, ensure_ascii=False), encoding='utf-8')
+    monkeypatch.setattr(exercise_batch, 'resolve_section_anchor', exercise_locator.resolve_section_anchor)
+    resolved = exercise_batch.resolve_exercise_batch_targets(
+        subject='408', book_title='测试教材', chapter='第8章', query=query, parsed=parsed,
+    )
+    assert [item['reason'] for item in resolved['targets']] == ['section-start-anchor-conflict'] * 3
 
 
 @pytest.mark.parametrize('anchors,reason', [
