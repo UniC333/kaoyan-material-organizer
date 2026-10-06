@@ -53,6 +53,10 @@ def test_quantity_is_not_added_as_a_focus_question():
     '王道数据结构 8.4 错题：21A,28D。前20题已经做完了',
     '王道数据结构 8.4 前20题没懂，错题：21A,28D，重点讲第28题',
     '王道数据结构 8.4 前20题，错题：21A,28D',
+    '王道数据结构8.4，只讲前20题以外的错题：21A,28D',
+    '王道数据结构8.4，仅讲前20题之外的错题：21A,28D',
+    '王道数据结构8.4，限定在前20题外的错题：21A,28D',
+    '王道数据结构8.4，范围为前 20 道题 以外的错题：21A,28D',
 ])
 def test_feedback_quantity_does_not_block_explicit_wrong_answers(monkeypatch, tmp_path, query):
     monkeypatch.setattr(exercise_batch, '_active_pdf_sources', lambda _: {'SRC': {}})

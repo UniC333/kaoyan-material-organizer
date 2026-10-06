@@ -38,6 +38,9 @@ def _requested_exercise_range(text: str) -> dict[str, int]:
     for clause in re.split(r"[，,。；;\n]", text):
         for quantity in QUANTITY_PATTERN.finditer(clause):
             before, after = clause[:quantity.start()], clause[quantity.end():]
+            # Excluding the first N questions does not impose a 1..N limit.
+            if re.match(r"\s*(?:以外|之外|外)", after):
+                continue
             limit = re.search(
                 r"(?:(?:只|仅)(?:讲解|讲|看|复习|分析|检查)|限定(?:在|于)?|限于|范围为)\s*$",
                 before,
