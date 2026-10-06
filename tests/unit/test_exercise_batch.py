@@ -13,6 +13,164 @@ if str(SCRIPTS) not in sys.path:
 from kaoyan_kb.domain import exercise_batch, exercise_locator
 import query_local_knowledge as query_module
 
+ORIGINAL_WRONG_ANSWERS = (
+    '刚整理了一下错题，数据结构146页起前20题的错误：1D,7C19A。'
+    '19题我没问题，这个题只花两个结点的二叉树就没问题了'
+)
+
+
+def test_compact_wrong_answers_keep_quantity_and_page_start_separate():
+    parsed = exercise_batch.parse_exercise_batch_request(ORIGINAL_WRONG_ANSWERS)
+    assert parsed['is_batch'] is True
+    assert [(item['exercise_label'], item['requested_option']) for item in parsed['items']] == [
+        ('01', 'D'), ('07', 'C'), ('19', 'A'),
+    ]
+    assert not any(item['emphasis'] for item in parsed['items'])
+    assert parsed['exercise_range'] == {'start': 1, 'end': 20}
+    assert parsed['page_start'] == {'number': 146, 'semantics': 'section_start'}
+    assert parsed['page_range'] == {}
+
+
+@pytest.mark.parametrize('text', [
+    '第1题没懂，表达式为7C19A',
+    '选项里出现2A3B + 4C',
+    '错题：2A3B + 4C',
+    '错题：2A3B^2',
+    '错题：2A3Bx',
+])
+def test_compact_formula_is_not_a_wrong_answer_list(text):
+    assert exercise_batch.parse_exercise_batch_request(text)['is_batch'] is False
+
+
+def test_quantity_is_not_added_as_a_focus_question():
+    parsed = exercise_batch.parse_exercise_batch_request('前20题没懂，错题：1D7C，重点讲第7题')
+    assert [item['exercise_label'] for item in parsed['items']] == ['01', '07']
+    assert [item['exercise_label'] for item in parsed['items'] if item['emphasis']] == ['07']
+
+
+def _start_page_fixture(monkeypatch, tmp_path):
+    anchors = tmp_path / 'pdf_book_anchors'
+    anchors.mkdir()
+    (anchors / 'SRC.json').write_text(json.dumps({'anchors': [
+        {'title': '8.4.2 本节试题精选', 'page_start': 93, 'anchor_type': 'section'},
+    ]}, ensure_ascii=False), encoding='utf-8')
+    monkeypatch.setattr(exercise_batch, 'kb_layout', lambda: {'indexes': tmp_path})
+    monkeypatch.setattr(exercise_batch, '_active_pdf_sources', lambda _: {'SRC': {}})
+    monkeypatch.setattr(exercise_batch, 'resolve_section_anchor', lambda **_: {'status': 'not_requested', 'section_root': ''})
+    monkeypatch.setattr(exercise_batch, 'load_page_locator_index', lambda: {'entries': [
+        {'source_asset_kind': 'pdf', 'subject': '408', 'book_title': '测试教材', 'source_id': 'SRC', 'printed_page': 80, 'pdf_page': 93},
+    ]})
+    monkeypatch.setattr(exercise_batch, 'load_exercise_locator_index', lambda: {'relations': [
+        {'source_id': 'SRC', 'section_root': section, 'category': 'single-choice', 'exercise_label': label,
+         'relation_status': 'exact', 'question_printed_pages': [page], 'question_pdf_pages': [page + 13]}
+        for section, label, page in [('8.4', '01', 80), ('8.4', '07', 81), ('8.4', '19', 82), ('8.5', '07', 85)]
+    ]})
+    query = '测试教材80页起前20题的错误：1D,7C19A'
+    return query, exercise_batch.parse_exercise_batch_request(query), anchors / 'SRC.json'
+
+
+def test_page_start_uses_formal_heading_and_allows_later_question_pages(monkeypatch, tmp_path):
+    query, parsed, _ = _start_page_fixture(monkeypatch, tmp_path)
+    resolved = exercise_batch.resolve_exercise_batch_targets(
+        subject='408', book_title='测试教材', chapter=None, query=query, parsed=parsed,
+    )
+    assert resolved['section_root'] == '8.4'
+    assert resolved['page_start_resolution']['status'] == 'exact'
+    assert [item['status'] for item in resolved['targets']] == ['exact'] * 3
+    assert [item['printed_page'] for item in resolved['targets']] == [80, 81, 82]
+
+
+@pytest.mark.parametrize('anchors,reason', [
+    ([], 'section-start-anchor-not-found'),
+    ([{'title': '8.4.3 答案与解析', 'page_start': 93}], 'section-start-anchor-not-found'),
+    ([{'title': '8.4.2 本节试题精选', 'page_start': 92}], 'section-start-anchor-not-found'),
+    ([{'title': '8.4.2 本节试题精选', 'page_start': 93},
+      {'title': '8.5.2 本节试题精选', 'page_start': 93}], 'section-anchor-ambiguous'),
+])
+def test_page_start_missing_or_ambiguous_heading_blocks_batch(monkeypatch, tmp_path, anchors, reason):
+    query, parsed, path = _start_page_fixture(monkeypatch, tmp_path)
+    path.write_text(json.dumps({'anchors': anchors}, ensure_ascii=False), encoding='utf-8')
+    resolved = exercise_batch.resolve_exercise_batch_targets(
+        subject='408', book_title='测试教材', chapter=None, query=query, parsed=parsed,
+    )
+    assert [item['reason'] for item in resolved['targets']] == [reason] * 3
+
+
+def test_page_start_conflict_with_explicit_section_blocks_batch(monkeypatch, tmp_path):
+    query, parsed, _ = _start_page_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(exercise_batch, 'resolve_section_anchor', lambda **_: {'status': 'not_applicable', 'section_root': '8.5'})
+    resolved = exercise_batch.resolve_exercise_batch_targets(
+        subject='408', book_title='测试教材', chapter='8.5', query=query, parsed=parsed,
+    )
+    assert [item['reason'] for item in resolved['targets']] == ['section-start-anchor-conflict'] * 3
+
+
+def test_question_outside_quantity_range_does_not_expand_scope(monkeypatch, tmp_path):
+    query, _, _ = _start_page_fixture(monkeypatch, tmp_path)
+    query = query.replace('前20题', '前10题')
+    resolved = exercise_batch.resolve_exercise_batch_targets(
+        subject='408', book_title='测试教材', chapter=None, query=query,
+        parsed=exercise_batch.parse_exercise_batch_request(query),
+    )
+    assert [item['status'] for item in resolved['targets']] == ['exact', 'exact', 'blocked']
+    assert resolved['targets'][2]['reason'] == 'exercise-outside-requested-range'
+
+
+@pytest.mark.parametrize('entries,reason', [
+    ([], 'printed-page-range-not-uniquely-mapped'),
+    ([{'source_asset_kind': 'pdf', 'subject': '408', 'book_title': '测试教材',
+       'source_id': source, 'printed_page': 80, 'pdf_page': 93} for source in ('SRC', 'OTHER')],
+     'printed-page-range-not-uniquely-mapped'),
+])
+def test_page_start_missing_or_conflicting_mapping_cannot_fall_back(monkeypatch, tmp_path, entries, reason):
+    query, parsed, _ = _start_page_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(exercise_batch, '_active_pdf_sources', lambda _: {'SRC': {}, 'OTHER': {}})
+    monkeypatch.setattr(exercise_batch, 'load_page_locator_index', lambda: {'entries': entries})
+    resolved = exercise_batch.resolve_exercise_batch_targets(
+        subject='408', book_title='测试教材', chapter=None, query=query, parsed=parsed,
+    )
+    assert [item['reason'] for item in resolved['targets']] == [reason] * 3
+
+
+def test_page_start_stale_relation_index_remains_blocked(monkeypatch, tmp_path):
+    query, parsed, _ = _start_page_fixture(monkeypatch, tmp_path)
+    monkeypatch.setattr(exercise_batch, 'load_exercise_locator_index', lambda: {
+        '_availability': {'available': False, 'reason': 'exercise_locator_index_stale'},
+    })
+    resolved = exercise_batch.resolve_exercise_batch_targets(
+        subject='408', book_title='测试教材', chapter=None, query=query, parsed=parsed,
+    )
+    assert [item['reason'] for item in resolved['targets']] == ['exercise_locator_index_stale'] * 3
+
+
+@pytest.mark.parametrize('quantity,status', [(20, 'exact'), (10, 'partial')])
+def test_batch_preserves_original_feedback_and_range_blockers(monkeypatch, tmp_path, quantity, status):
+    query, _, _ = _start_page_fixture(monkeypatch, tmp_path)
+    query = query.replace('前20题', f'前{quantity}题') + '。19题我没问题，只需画两个结点。'
+    book_queries, calls = [], []
+    def resolve_book(**kwargs):
+        book_queries.append(kwargs['query'])
+        return {'status': 'exact', 'source': 'query', 'book_title': '测试教材'}
+    def query_one(*args):
+        calls.append(args)
+        return _exact_query_result(args[-1])
+    monkeypatch.setattr(query_module, 'resolve_current_task_book', resolve_book)
+    monkeypatch.setattr(query_module, 'query_knowledge', query_one)
+    monkeypatch.setattr(query_module, 'runtime_context_payload', lambda **_: {})
+    payload = query_module.query_exercise_batch(tmp_path, '408', None, query, 3, view='teaching')
+    assert payload['batch_status'] == status
+    assert payload['request_resolution']['original_query'] == query
+    assert payload['request_resolution']['page_start']['number'] == 80
+    assert payload['request_resolution']['exercise_range'] == {'start': 1, 'end': quantity}
+    assert book_queries == [query]
+    assert all(args[2] == '8.4' and args[5] is None for args in calls)
+    assert [item['exercise_label'] for item in payload['items']] == ['01', '07', '19']
+    assert not any(item['emphasis'] for item in payload['items'])
+    if status == 'partial':
+        assert len(calls) == 2
+        assert payload['items'][2]['teaching_bundle']['problem_text'] == ''
+        assert payload['items'][2]['answer_grounding']['can_conclude'] is False
+
 
 @pytest.mark.parametrize('text', [
     '第10页第1题第（1）问：lim_{x→0}(1/sin^2x - cos^2x/x^2)。',

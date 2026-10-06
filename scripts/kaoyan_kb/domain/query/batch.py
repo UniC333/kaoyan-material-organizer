@@ -18,6 +18,9 @@ def _batch_failure_text(reason: str) -> tuple[str, str]:
         "printed-page-range-not-contiguous": ("题目页范围的正式 PDF 映射不连续。", "请先复核该页码区间的正式映射。"),
         "printed-page-range-crosses-sources": ("题目页范围跨越了多个教材来源。", "请缩小范围或明确教材版本。"),
         "section-anchor-ambiguous": ("小节定位存在多个正式候选。", "请补充准确小节编号。"),
+        "section-start-anchor-not-found": ("起始页未定位到正式习题标题锚点。", "请确认起始页或补充准确小节编号。"),
+        "section-start-anchor-conflict": ("起始页与指定小节的正式锚点冲突。", "请核对小节编号与起始页。"),
+        "exercise-outside-requested-range": ("该题号不在用户指定的练习范围内。", "请核对题号或练习范围。"),
         "exercise_locator_index_missing": ("正式习题关系索引不存在。", "请先运行 kb.py sync --indexes-only。"),
         "exercise_locator_index_stale": ("正式习题关系索引已过期。", "请先运行 kb.py sync --indexes-only。"),
         "exercise_locator_index_version_mismatch": ("正式习题关系索引版本过旧。", "请先运行 kb.py sync --indexes-only。"),
@@ -135,7 +138,7 @@ def query_exercise_batch(
         return None
     if printed_page is not None and not parsed.get("page_range"):
         parsed["page_range"] = {"start": int(printed_page), "end": int(printed_page), "semantics": "question_scope"}
-    book_resolution = resolve_book(vault_root=vault_root, subject=subject, explicit_book_title=book_title)
+    book_resolution = resolve_book(vault_root=vault_root, subject=subject, explicit_book_title=book_title, query=query)
     effective_book_title = str(book_resolution.get("book_title") or "")
     resolved = resolve_targets(
         subject=subject,
@@ -185,6 +188,9 @@ def query_exercise_batch(
             "section_root": section_root,
             "exercise_category": category,
             "page_range": dict(parsed.get("page_range") or {}),
+            "page_start": dict(parsed.get("page_start") or {}),
+            "page_start_resolution": dict(resolved.get("page_start_resolution") or {}),
+            "exercise_range": dict(parsed.get("exercise_range") or {}),
             "source_id": str(resolved.get("source_id") or ""),
             "exercise_resolution": {
                 "status": "explicit",
