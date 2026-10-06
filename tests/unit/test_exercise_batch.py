@@ -158,6 +158,74 @@ def test_page_start_uses_formal_heading_and_allows_later_question_pages(monkeypa
     assert [item['printed_page'] for item in resolved['targets']] == [80, 81, 82]
 
 
+@pytest.mark.parametrize('query,expected_page', [
+    ('昨天80页起的前20题都做对了，今天90页起前20题的错误：1D,7C', 90),
+    ('昨天90页起的前20题都做对了，今天80页起前20题的错误：1D,7C', 80),
+    ('今天90页起前20题的错误：1D,7C。昨天80页起的前20题都做对了', 90),
+    ('昨天80页起的前20题都做对了今天90页起前20题的错误：1D,7C', 90),
+    ('昨天90页起前20题的错误：1D,7C', 90),
+    ('昨天90页起，前20题的错误：1D,7C', 90),
+    ('昨天90页起前20题的错误有这些：1D,7C', 90),
+    ('昨天90页起前20题的错误如下：1D,7C', 90),
+    ('昨天90页起，重点讲第1、7题', 90),
+    ('90页起，90页开始，错题：1D,7C', 90),
+    ('80页起或90页起，错题：1D,7C', None),
+    ('80页起，90页起，错题：1D,7C', None),
+])
+def test_page_start_belongs_to_current_request_or_blocks_ambiguity(monkeypatch, tmp_path, query, expected_page):
+    _, _, anchors = _start_page_fixture(monkeypatch, tmp_path)
+    anchors.write_text(json.dumps({'anchors': [
+        {'title': f'{section}.2 本节试题精选', 'page_start': page + 13}
+        for section, page in [('8.4', 80), ('8.5', 90)]
+    ]}, ensure_ascii=False), encoding='utf-8')
+    monkeypatch.setattr(exercise_batch, 'load_page_locator_index', lambda: {'entries': [
+        {'source_asset_kind': 'pdf', 'subject': '408', 'book_title': '测试教材',
+         'source_id': 'SRC', 'printed_page': page, 'pdf_page': page + 13}
+        for page in (80, 90)
+    ]})
+    monkeypatch.setattr(exercise_batch, 'load_exercise_locator_index', lambda: {'relations': [
+        {'source_id': 'SRC', 'section_root': section, 'category': 'single-choice',
+         'exercise_label': label, 'relation_status': 'exact',
+         'question_printed_pages': [page + offset], 'question_pdf_pages': [page + offset + 13]}
+        for section, page in [('8.4', 80), ('8.5', 90)]
+        for label, offset in [('01', 0), ('07', 1)]
+    ]})
+    parsed = exercise_batch.parse_exercise_batch_request(query)
+    if expected_page is not None:
+        assert parsed['page_start'] == {'number': expected_page, 'semantics': 'section_start'}
+    else:
+        assert parsed['page_start']['status'] == 'ambiguous'
+    resolved = exercise_batch.resolve_exercise_batch_targets(
+        subject='408', book_title='测试教材', chapter=None, query=query, parsed=parsed,
+    )
+    calls = []
+    monkeypatch.setattr(query_module, 'resolve_current_task_book', lambda **_: {
+        'status': 'exact', 'source': 'query', 'book_title': '测试教材',
+    })
+    def query_one(*args):
+        calls.append(args)
+        return _exact_query_result(args[-1])
+    monkeypatch.setattr(query_module, 'query_knowledge', query_one)
+    monkeypatch.setattr(query_module, 'runtime_context_payload', lambda **_: {})
+    payload = query_module.query_exercise_batch(tmp_path, '408', None, query, 3, view='teaching')
+    assert payload['request_resolution']['original_query'] == query
+    if expected_page is not None:
+        section = '8.5' if expected_page == 90 else '8.4'
+        assert resolved['section_root'] == section
+        assert [item['status'] for item in resolved['targets']] == ['exact', 'exact']
+        assert payload['batch_status'] == 'exact'
+        assert all(args[2] == section for args in calls)
+        for item, offset in zip(payload['items'], (0, 1)):
+            assert item['textbook_location']['question_printed_pages'] == [expected_page + offset]
+            assert item['textbook_location']['question_pdf_pages'] == [expected_page + offset + 13]
+    else:
+        assert resolved['reason'] == 'page-start-ambiguous'
+        assert payload['batch_status'] == 'blocked'
+        assert calls == []
+        assert all(not item['answer_grounding']['can_conclude'] for item in payload['items'])
+        assert all('起始页' in item['answer_grounding']['failure_reason'] for item in payload['items'])
+
+
 @pytest.mark.parametrize('requested,status', [
     ('第8章', 'exact'), ('8.4', 'exact'),
     ('8.5', 'blocked'), ('第9章', 'blocked'), ('第80章', 'blocked'),

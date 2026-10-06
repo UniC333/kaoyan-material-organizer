@@ -65,12 +65,34 @@ def _requested_exercise_range(text: str) -> dict[str, int]:
     return {"start": 1, "end": next(iter(quantities))} if len(quantities) == 1 else {}
 
 
+def _requested_page_start(text: str) -> dict[str, Any]:
+    """Keep a unique request anchor, rather than the first historical page."""
+    pages: set[int] = set()
+    # Temporal transitions also delimit context when punctuation is omitted.
+    for clause in re.split(r"[。；;\n]|(?=之前|以前|此前|上次|昨天|曾经|今天|这次|本次|现在|目前)", text):
+        historical = re.match(r"之前|以前|此前|上次|昨天|曾经", clause)
+        # A dated, explicit answer list is still a request to review those
+        # exercises; a historical progress clause is only feedback.
+        explicit_exercises = re.search(
+            r"(?:错误|错题|选错的选项|选项)\s*(?:有(?:这些)?|是|如下)?\s*[:：]?\s*(?:第\s*)?\d"
+            r"|(?:讲解|讲|看|复习|分析|检查|核对)\s*第\s*[0-9、，,和及与\s]+\s*题",
+            clause,
+        )
+        if historical and not explicit_exercises:
+            continue
+        pages.update(int(match.group(1)) for match in PAGE_START_PATTERN.finditer(clause))
+    if len(pages) == 1:
+        return {"number": next(iter(pages)), "semantics": "section_start"}
+    if pages:
+        return {"status": "ambiguous", "semantics": "section_start"}
+    return {}
+
+
 def parse_exercise_batch_request(query: str) -> dict[str, Any]:
     """Parse a deterministic multi-exercise request without treating page/chapter numbers as labels."""
     text = str(query or "")
     exercise_range = _requested_exercise_range(text)
-    start_match = PAGE_START_PATTERN.search(text)
-    page_start = {"number": int(start_match.group(1)), "semantics": "section_start"} if start_match else {}
+    page_start = _requested_page_start(text)
     page_match = PAGE_RANGE_PATTERN.search(text)
     page_range: dict[str, Any] = {}
     if page_match:
@@ -241,6 +263,13 @@ def resolve_exercise_batch_targets(
     parsed: dict[str, Any],
 ) -> dict[str, Any]:
     """Resolve each requested label to one formal relation while retaining per-item blockers."""
+    if (parsed.get("page_start") or {}).get("status") == "ambiguous":
+        reason = "page-start-ambiguous"
+        return {
+            "status": "blocked", "reason": reason, "section_root": "", "source_id": "",
+            "page_start_resolution": {"status": "blocked", "reason": reason},
+            "targets": [{**item, "status": "blocked", "reason": reason} for item in parsed.get("items", [])],
+        }
     if not book_title:
         return {
             "status": "blocked",
