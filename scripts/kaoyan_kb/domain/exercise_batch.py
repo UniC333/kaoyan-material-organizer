@@ -19,15 +19,80 @@ PAGE_RANGE_PATTERN = re.compile(
     r"(?:第\s*)?(\d{1,4})\s*(?:~|～|—|–|-|至|到)\s*(?:第\s*)?(\d{1,4})\s*页",
     flags=re.IGNORECASE,
 )
+QUANTITY_PATTERN = re.compile(r"前\s*(\d{1,3})\s*(?:道|个)?题")
+PAGE_START_PATTERN = re.compile(r"(?:第\s*)?(\d{1,4})\s*页\s*(?:起|开始|开头)")
+CHOICE_LIST_PATTERN = re.compile(
+    r"(?:错题|错误|选错的选项|选项)\s*[:：]?\s*"
+    r"(?P<choices>(?:\d{1,3}\s*[A-Da-d]\s*(?:[、，,]\s*)?)+)"
+    r"(?=$|[。；;\n]|[，,]\s*[\u4e00-\u9fff])"
+)
 
 
 def _numbers(value: str) -> list[str]:
     return [normalize_exercise_label(item) for item in re.findall(r"(?<![\d.])\d{1,3}(?![\d.])", value)]
 
 
+def _requested_exercise_range(text: str) -> dict[str, int]:
+    """Only a unique, explicit request limit may constrain listed exercises."""
+    quantities: set[int] = set()
+    for clause in re.split(r"[，,。；;\n]", text):
+        for quantity in QUANTITY_PATTERN.finditer(clause):
+            before, after = clause[:quantity.start()], clause[quantity.end():]
+            # Excluding the first N questions does not impose a 1..N limit.
+            if re.match(r"\s*(?:以外|之外|外)", after):
+                continue
+            limit = re.search(
+                r"(?:(?:只|仅)(?:讲解|讲|看|复习|分析|检查)|限定(?:在|于)?|限于|范围为)\s*$",
+                before,
+            )
+            wrong_answers = re.match(
+                r"\s*(?:的\s*)?(?:错误|错题|选错的选项)\s*"
+                r"(?:有(?:这些)?|是|如下)?\s*[:：]?\s*(?=$|(?:第\s*)?\d)", after,
+            )
+            if not limit and not wrong_answers:
+                continue
+            prefix = before[:limit.start()] if limit else before
+            if re.search(r"(?:不|别|不要|无需|不用|不必|并非|不是)\s*$", prefix):
+                continue
+            # A historical limit is feedback unless an explicit current-request
+            # marker follows it in this clause.
+            markers = re.findall(r"之前|以前|此前|上次|昨天|曾经|这次|本次|现在|目前", before)
+            if not wrong_answers and markers and markers[-1] in {"之前", "以前", "此前", "上次", "昨天", "曾经"}:
+                continue
+            count = int(quantity.group(1))
+            if count > 0:
+                quantities.add(count)
+    return {"start": 1, "end": next(iter(quantities))} if len(quantities) == 1 else {}
+
+
+def _requested_page_start(text: str) -> dict[str, Any]:
+    """Keep a unique request anchor, rather than the first historical page."""
+    pages: set[int] = set()
+    # Temporal transitions also delimit context when punctuation is omitted.
+    for clause in re.split(r"[。；;\n]|(?=之前|以前|此前|上次|昨天|曾经|今天|这次|本次|现在|目前)", text):
+        historical = re.match(r"之前|以前|此前|上次|昨天|曾经", clause)
+        # A dated, explicit answer list is still a request to review those
+        # exercises; a historical progress clause is only feedback.
+        explicit_exercises = re.search(
+            r"(?:错误|错题|选错的选项|选项)\s*(?:有(?:这些)?|是|如下)?\s*[:：]?\s*(?:第\s*)?\d"
+            r"|(?:讲解|讲|看|复习|分析|检查|核对)\s*第\s*[0-9、，,和及与\s]+\s*题",
+            clause,
+        )
+        if historical and not explicit_exercises:
+            continue
+        pages.update(int(match.group(1)) for match in PAGE_START_PATTERN.finditer(clause))
+    if len(pages) == 1:
+        return {"number": next(iter(pages)), "semantics": "section_start"}
+    if pages:
+        return {"status": "ambiguous", "semantics": "section_start"}
+    return {}
+
+
 def parse_exercise_batch_request(query: str) -> dict[str, Any]:
     """Parse a deterministic multi-exercise request without treating page/chapter numbers as labels."""
     text = str(query or "")
+    exercise_range = _requested_exercise_range(text)
+    page_start = _requested_page_start(text)
     page_match = PAGE_RANGE_PATTERN.search(text)
     page_range: dict[str, Any] = {}
     if page_match:
@@ -41,12 +106,20 @@ def parse_exercise_batch_request(query: str) -> dict[str, Any]:
     selected: list[tuple[str, str]] = []
     invalid_options: dict[str, str] = {}
     choice_context = any(token in text for token in ("单选", "多选", "选择", "选项"))
+    # Only split adjoining pairs inside a complete, explicitly introduced
+    # answer list. Formula fragments retain the ordinary boundary checks.
+    selection_text = CHOICE_LIST_PATTERN.sub(
+        lambda match: match.group(0).replace(
+            match.group('choices'),
+            re.sub(r'([A-Da-d])\s*(?=\d)', r'\1、', match.group('choices')),
+        ), text,
+    )
     # A formula exponent/coefficient is not a question-option shorthand.
     # Lowercase letters and invalid options require explicit choice context.
-    for match in re.finditer(r"(?<![A-Za-z0-9.^/\\*+\-=])(\d{1,3})\s*([A-Za-z])(?![A-Za-z0-9])", text):
-        if re.search(r"[\^/\\*+\-=]\s*$", text[:match.start()]):
+    for match in re.finditer(r"(?<![A-Za-z0-9.^/\\*+\-=])(\d{1,3})\s*([A-Za-z])(?![A-Za-z0-9])", selection_text):
+        if re.search(r"[\^/\\*+\-=]\s*$", selection_text[:match.start()]):
             continue
-        if re.match(r"\s*[\^/\\*+\-=]", text[match.end():]):
+        if re.match(r"\s*[\^/\\*+\-=]", selection_text[match.end():]):
             continue
         if not choice_context and match.group(2) not in {"A", "B", "C", "D"}:
             continue
@@ -56,17 +129,18 @@ def parse_exercise_batch_request(query: str) -> dict[str, Any]:
             selected.append((label, option))
         elif (
             match.group(2).isupper()
-            and re.search(r"(?:^|第|[、，,:：\s])$", text[:match.start()])
-            and re.match(r"(?:$|题|[、，,。；;\s])", text[match.end():])
+            and re.search(r"(?:^|第|[、，,:：\s])$", selection_text[:match.start()])
+            and re.match(r"(?:$|题|[、，,。；;\s])", selection_text[match.end():])
         ):
             invalid_options[label] = option
 
     listed: list[str] = []
-    for match in re.finditer(r"第\s*([0-9、，,和及与\s]+?)\s*(?:这|两|几|个)?\s*题", text):
+    label_text = QUANTITY_PATTERN.sub(' ', text)
+    for match in re.finditer(r"第\s*([0-9、，,和及与\s]+?)\s*(?:这|两|几|个)?\s*题", label_text):
         listed.extend(_numbers(match.group(1)))
 
     focus: list[str] = []
-    for clause in re.split(r"[，,。；;\n]", text):
+    for clause in re.split(r"[，,。；;\n]", label_text):
         if any(token in clause for token in FOCUS_TOKENS):
             # Only collect an explicit question list, never all numbers in a
             # clause that may also contain pages, subquestions or formulas.
@@ -99,6 +173,8 @@ def parse_exercise_batch_request(query: str) -> dict[str, Any]:
     return {
         "is_batch": len(items) >= 2,
         "page_range": page_range,
+        "page_start": page_start,
+        "exercise_range": exercise_range,
         "exercise_category": category,
         "items": items,
     }
@@ -187,6 +263,13 @@ def resolve_exercise_batch_targets(
     parsed: dict[str, Any],
 ) -> dict[str, Any]:
     """Resolve each requested label to one formal relation while retaining per-item blockers."""
+    if (parsed.get("page_start") or {}).get("status") == "ambiguous":
+        reason = "page-start-ambiguous"
+        return {
+            "status": "blocked", "reason": reason, "section_root": "", "source_id": "",
+            "page_start_resolution": {"status": "blocked", "reason": reason},
+            "targets": [{**item, "status": "blocked", "reason": reason} for item in parsed.get("items", [])],
+        }
     if not book_title:
         return {
             "status": "blocked",
@@ -250,6 +333,45 @@ def resolve_exercise_batch_targets(
         }
 
     category = str(parsed.get("exercise_category") or "")
+    page_start_resolution = {"status": "not_requested"}
+    if parsed.get('page_start'):
+        start_page = int(parsed['page_start']['number'])
+        page_start_resolution = _resolve_range_source(
+            subject=subject, book_title=book_title,
+            page_range={'start': start_page, 'end': start_page}, allowed_source_ids=allowed_source_ids,
+        )
+        reason = str(page_start_resolution.get('reason') or '')
+        if page_start_resolution.get('status') == 'exact':
+            source_id = str(page_start_resolution['source_id'])
+            pdf_page = page_start_resolution['page_mappings'][0]['pdf_page']
+            anchors = load_json_or_default(kb_layout()['indexes'] / 'pdf_book_anchors' / f'{source_id}.json', {})
+            candidates = {
+                match.group(1)
+                for anchor in anchors.get('anchors', []) or []
+                if int(anchor.get('page_start', 0) or 0) == pdf_page
+                for match in [re.match(r'^(\d+(?:\.\d+){2,})\s+.*本节试题精选', str(anchor.get('title') or ''))]
+                if match
+            }
+            if len(candidates) != 1:
+                reason = 'section-anchor-ambiguous' if candidates else 'section-start-anchor-not-found'
+            else:
+                heading = next(iter(candidates))
+                anchored_section = heading.rsplit('.', 1)[0]
+                requested_parts = section_root.split('.') if section_root else []
+                anchored_parts = anchored_section.split('.')
+                if requested_parts and anchored_parts[:len(requested_parts)] != requested_parts:
+                    reason = 'section-start-anchor-conflict'
+                else:
+                    section_root = anchored_section
+                    allowed_source_ids = {source_id}
+                    page_start_resolution.update(section_root=section_root, requested_section=heading)
+        if reason or page_start_resolution.get('status') != 'exact':
+            reason = reason or 'section-start-anchor-not-found'
+            return {
+                'status': 'blocked', 'reason': reason, 'section_root': section_root, 'source_id': '',
+                'page_start_resolution': {**page_start_resolution, 'status': 'blocked', 'reason': reason},
+                'targets': [{**item, 'status': 'blocked', 'reason': reason} for item in parsed.get('items', [])],
+            }
     page_numbers = set(range(int(page_range["start"]), int(page_range["end"]) + 1)) if page_range else set()
     targets: list[dict[str, Any]] = []
     used_sources: set[str] = set()
@@ -258,6 +380,10 @@ def resolve_exercise_batch_targets(
             targets.append({**request_item, "status": "blocked", "reason": "invalid-requested-option"})
             continue
         label = normalize_exercise_label(request_item.get("exercise_label"))
+        exercise_range = parsed.get('exercise_range') or {}
+        if exercise_range and not int(exercise_range['start']) <= int(label) <= int(exercise_range['end']):
+            targets.append({**request_item, 'status': 'blocked', 'reason': 'exercise-outside-requested-range'})
+            continue
         matches = [
             item
             for item in index.get("relations", []) or []
@@ -301,5 +427,6 @@ def resolve_exercise_batch_targets(
         "section_anchor": section_anchor,
         "source_id": source_id,
         "page_range_resolution": range_resolution,
+        "page_start_resolution": page_start_resolution,
         "targets": targets,
     }

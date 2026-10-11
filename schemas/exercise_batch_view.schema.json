@@ -29,6 +29,9 @@
         "section_root": {"type": "string"},
         "exercise_category": {"enum": ["", "single-choice", "comprehensive"]},
         "page_range": {"type": "object"},
+        "page_start": {"type": "object"},
+        "page_start_resolution": {"type": "object"},
+        "exercise_range": {"type": "object"},
         "source_id": {"type": "string"},
         "exercise_resolution": {"type": "object"}
       },
