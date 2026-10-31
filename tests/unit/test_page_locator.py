@@ -553,6 +553,35 @@ def test_extract_exercise_block_distinguishes_question_continuation_from_answer_
     assert exercise_locator.extract_exercise_block(content, "04", category="single-choice", phase="answer") == "04. A\n第四题答案"
 
 
+def test_label_accepts_paired_bold_numbering() -> None:
+    assert exercise_locator._label("**17. B**", answer=True, category="single-choice") == "17"
+    assert exercise_locator._label("**01.【解答】**", answer=True, category="comprehensive") == "01"
+    assert exercise_locator._label("**17. B", answer=True, category="single-choice") == ""
+    assert exercise_locator._label("17. B**", answer=True, category="single-choice") == ""
+    assert exercise_locator._label("正文 **17. B** 混排", answer=True, category="single-choice") == ""
+
+
+def test_label_keeps_plain_numbering_unchanged() -> None:
+    assert exercise_locator._label("01. D", answer=True, category="single-choice") == "01"
+    assert exercise_locator._label("# 04. B", answer=True, category="single-choice") == "04"
+
+
+def test_extract_exercise_block_accepts_bold_numbered_labels() -> None:
+    content = "**17. B**\n十七题答案\n**18. D**\n十八题答案"
+    assert exercise_locator.extract_exercise_block(content, "17", category="single-choice", phase="answer") == "**17. B**\n十七题答案"
+    assert exercise_locator.extract_exercise_block(content, "18", category="single-choice", phase="answer") == "**18. D**\n十八题答案"
+
+
+def test_extract_exercise_block_treats_bold_label_as_boundary() -> None:
+    content = "09. D\n第九题答案\n**10. A**\n第十题答案"
+    assert exercise_locator.extract_exercise_block(content, "9", category="single-choice", phase="answer") == "09. D\n第九题答案"
+
+
+def test_extract_exercise_block_stops_at_next_category_heading() -> None:
+    content = "**18. D**\n十八题答案\n# 二、综合应用题\n**01.【解答】**\n综合题答案"
+    assert exercise_locator.extract_exercise_block(content, "18", category="single-choice", phase="answer") == "**18. D**\n十八题答案"
+
+
 def test_resolver_uses_book_title_and_reports_ambiguity(monkeypatch) -> None:
     entries = [_entry("a", "李正元数一", 49), _entry("b", "另一教材", 49)]
     monkeypatch.setattr(page_locator, "load_page_locator_index", lambda: {"entries": entries, "sources": []})

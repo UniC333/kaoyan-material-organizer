@@ -148,6 +148,21 @@ def normalize_exercise_category(value: Any) -> str:
     return ""
 
 
+def _normalize_numbered_line(line: str) -> str:
+    """Unwrap paired bold numbering for matching only; source text is retained.
+
+    OCR pages sometimes emit labels as ``**17. B**``. Only a paired-bold
+    wrapper around a leading number is stripped, and only for label matching;
+    callers keep slicing the original lines, so evidence text never changes.
+    """
+    return re.sub(
+        r"^(\s*#?\s*)\*\*(\d{1,3}[.．、][^*]*)\*\*",
+        r"\1\2",
+        line,
+        count=1,
+    )
+
+
 def extract_exercise_block(content: Any, exercise_label: Any, *, category: str = "", phase: str = "") -> str:
     """Return one numbered exercise block, or an empty string when it is not unique."""
     label = normalize_exercise_label(exercise_label)
@@ -158,6 +173,7 @@ def extract_exercise_block(content: Any, exercise_label: Any, *, category: str =
     starts: list[int] = []
     labels: list[tuple[int, int]] = []
     section_boundaries: list[int] = []
+    category_change_boundaries: list[int] = []
     marker = re.compile(r"^\s*#{0,6}\s*(\d{1,3})[.．、]\s*")
     requested_category = normalize_exercise_category(category)
     has_requested_category_heading = bool(requested_category) and any(
@@ -175,6 +191,11 @@ def extract_exercise_block(content: Any, exercise_label: Any, *, category: str =
         if heading_category:
             active_category = heading_category
             category_closed = False
+        if requested_category and heading_category and heading_category != requested_category:
+            # A different-category heading ends the preceding category's block
+            # (e.g. a trailing "# 二、综合应用题" must not leak into the last
+            # single-choice answer).
+            category_change_boundaries.append(index)
         elif re.match(r"^\s*#{1,6}\s*\d+(?:\.\d+)+(?:\s|$)", line):
             # A numbered textbook section can follow an answer set on the
             # same OCR page (for example, ``# 5.2 二叉树的概念``).  It is
@@ -186,7 +207,7 @@ def extract_exercise_block(content: Any, exercise_label: Any, *, category: str =
             section_boundaries.append(index)
         if is_answer_section_heading:
             in_answer_section = True
-        match = marker.match(line)
+        match = marker.match(_normalize_numbered_line(line))
         if not match:
             continue
         number = int(match.group(1))
@@ -213,6 +234,10 @@ def extract_exercise_block(content: Any, exercise_label: Any, *, category: str =
             end = index
             break
     for index in section_boundaries:
+        if index > start:
+            end = min(end, index)
+            break
+    for index in category_change_boundaries:
         if index > start:
             end = min(end, index)
             break
@@ -320,6 +345,7 @@ def _heading(line: str) -> tuple[str, str] | None:
 
 
 def _label(line: str, *, answer: bool, category: str) -> str:
+    line = _normalize_numbered_line(line)
     pattern = r"^\s*#?\s*(\d{1,3})[.．、]\s*"
     match = re.match(pattern, line)
     if not match:
