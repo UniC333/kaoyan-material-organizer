@@ -124,7 +124,7 @@ $env:MISTRAL_API_KEY = "your-key"
 
 ### 清理强杀残留的临时文件
 
-显式执行 `python scripts/kb.py --config <kaoyan.config.json> doctor --prune-tmp --format json`（也支持 `text`）。普通 doctor、只读 `doctor validate` 和 sync 均不自动清理；清理模式独立运行，不初始化 schema 或刷新索引，也不能与 validate 合用。
+显式执行 `python scripts/kb.py --config <kaoyan.config.json> doctor --prune-tmp --format json`（也支持 `text`）。普通 doctor 和 sync 均不自动清理；清理模式独立运行，不初始化 schema 或刷新索引；附加未知参数时退出 2，零清理。
 
 仅扫描所选 KB 根目录直属文件、`kb_layout` 管理目录及位于 KB 内的配置 OCR 缓存，不跟随目录链接、不清理库外文件。仅识别 `.<目标文件名>.<PID>.<32位小写十六进制UUID>.tmp` 与 `.<目标文件名>.restore.tmp`。删除前必须取得 #26 的对应目标锁并持锁至删除结束，还须确认 PID 已退出；持锁、进程存活/状态不明、未知命名及链接均保留。固定 `.restore.tmp` 没有创建者 PID，恢复写入也未采用目标锁，因此只报告跳过，人工清理时，先确认所有相关写入进程均已退出，再逐项核验文件确为恢复残留而非正在进行的写入，确认后逐项删除 `.restore.tmp` 文件；保留正式目标文件和稳定的 `.lock` 文件。每项删除/跳过均输出路径和原因，`deleted_count` 只统计实际删除；保留稳定的 `.lock` 文件。
 
@@ -334,7 +334,7 @@ Windows 分支目前仅通过模拟测试检查文件定位及 `msvcrt.locking` 
 | scripts 递归 Python 文件 | 176 | 177 |
 | kaoyan_kb 包内 Python 文件（含 `__init__.py`） | 48 | 49 |
 
-已有包的职责：`cli/` 改前 12 个 Python 文件（命令组、handler、查询同步及产物 runner）；`domain/` 改前 30 个（教材/页码/习题定位、证据发布、学习与查询领域模块）；`storage/` 4 个（原子 I/O、文件锁、快照支持）。另有包根 `__init__.py` 和 `validation.py`。query 已复用 request/topics/batch/views 及召回、权限等模块，common 已复用 atomic_io；它们是现有职责抽取，不是两套完整重复业务。
+已有包的职责：`cli/` 改前 12 个 Python 文件（命令组、handler、查询同步及产物 runner）；`domain/` 改前 30 个（教材/页码/习题定位、证据发布、学习与查询领域模块）；`storage/` 4 个（原子 I/O、文件锁、快照支持）。另有包根 `__init__.py`。query 已复用 request/topics/batch/views 及召回、权限等模块，common 已复用 atomic_io；它们是现有职责抽取，不是两套完整重复业务。
 
 调用核查：`kb.py` 经 `cli/core_commands.py` 将 ask 转发到 `ask_local_knowledge.py`；后者仍导入 `answer_local_question.py` 的答案契约、教学视图和文本呈现。`build_exercise_coverage_report.py`、`save_local_answer.py` 和包内 `query/source_targets.py` 也调用 answer。因此本次保留 answer，不将其当作废弃入口删除或改写。
 

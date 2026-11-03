@@ -286,18 +286,14 @@ def test_invalid_review_config_fails_explicitly(monkeypatch, tmp_path, overrides
         config.load_runtime_config()
 
 
-def test_review_schema_and_example_agree_with_runtime_defaults():
-    import jsonschema
-    from kaoyan_kb.domain.review_config import parse_review_config, REVIEW_SUBJECT_TOKENS
+def test_review_example_agrees_with_runtime_defaults():
+    from kaoyan_kb.domain.review_config import parse_review_config
 
     root = SCRIPTS.parent
-    schema = json.loads((root / "schemas/runtime-config.schema.json").read_text(encoding="utf-8"))
     example = json.loads((root / "kaoyan.config.example.json").read_text(encoding="utf-8"))
-    jsonschema.validate(example, schema)
     assert parse_review_config(example) == parse_review_config({})
-    assert set(schema["properties"]["review_subjects"]["items"]["enum"]) == set(REVIEW_SUBJECT_TOKENS)
     for invalid in ({"review_subjects": []}, {"review_subjects": ["unknown"]},
                     {"adaptive_review": {"max_items": -1}},
                     {"adaptive_review": {"intervals": {"very_fluent": {"multiplier": True}}}}):
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(invalid, schema)
+        with pytest.raises(ValueError):
+            parse_review_config(invalid)

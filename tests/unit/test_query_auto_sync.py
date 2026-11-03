@@ -59,7 +59,7 @@ def test_stale_missing_or_old_indexes_sync_before_query_and_answer(monkeypatch, 
 def _stub_cli(monkeypatch, module, tmp_path, *, enabled, calls, state, save=False):
     args = argparse.Namespace(vault_root=str(tmp_path), subject="数学", chapter=None, book_title=None,
                               query="导数", question="导数", topk=3, printed_page=None,
-                              exercise_label=None, format="json", recall_mode="off",
+                              exercise_label=None, format="json",
                               auto_sync=enabled, save=save, saved_at=None, confirmed_topic=None)
     monkeypatch.setattr(module, "parse_args", lambda: args)
     monkeypatch.setattr(module, "query_source_targets", lambda **kw: None)

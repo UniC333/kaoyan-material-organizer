@@ -137,3 +137,13 @@ PYTHONDONTWRITEBYTECODE=1 /tmp/issue-test-venv/bin/python -m pytest \
 
 结果 **6 passed, 0 failed，5.91s**。
 
+## 交付状态重测（分支 issue-queue-passed，#22 已撤出）
+
+本次重测在清理后的交付副本上进行（只含基线收录文件与审定待交付文件，不含本机配置、缓存与真实知识库；清除继承的 `KAOYAN_*` 与 `PYTHONHOME`；解释器为已验证的 rapidocr venv，`PYTHONPATH=scripts`）。原始逐次数据见交付副本外的 `delivery-benchmark.json`（不在本次提交内）。
+
+- 采样：2026-11-03T13:01:10Z 起，Linux-7.0.0-39-generic-x86_64-with-glibc2.39，Python 3.12.3，CPU 4 个；每条路径预热 1 次、计时 20 次。
+- query：均值 0.243s，P95 0.263s，每次 1 个子进程。
+- ask：均值 0.229s，P95 0.236s，每次 1 个子进程。
+- sync --indexes-only：均值 0.583s，P95 0.610s，每次 5 个子进程。
+- query 阈值 2.0s 未超标，结论仍为“暂不启动 in-process 重构”。
+- 与 2026-10-31 原始报告的差异说明：原始数据采自工作目录测量环境，其子进程 argv 含 `--recall-mode rules`；交付树无 `--recall-mode` 参数，本次重测的 argv 不含该参数。原始记录予以保留、不改写；两组数字适用的源码状态不同，不宜直接等同，但量级与结论一致。

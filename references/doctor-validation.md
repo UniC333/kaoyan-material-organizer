@@ -7,9 +7,9 @@ python scripts/kb.py --config <kaoyan.config.json> doctor --prune-tmp --format j
 python scripts/kb.py --config <kaoyan.config.json> doctor --prune-tmp --format text
 ```
 
-采用显式 `--prune-tmp` 策略；不带开关的 doctor 保留原诊断行为，sync 启动不清理，以保持原同步行为。清理模式直接使用选定配置，不运行普通 doctor 的 schema 初始化和 OCR 诊断，不刷新索引。不能与只读 validate 合用（组合时退出 2，零清理）。
+采用显式 `--prune-tmp` 策略；不带开关的 doctor 保留原诊断行为，sync 启动不清理，以保持原同步行为。清理模式直接使用选定配置，不运行普通 doctor 的 schema 初始化和 OCR 诊断，不刷新索引。附加未知参数时退出 2，零清理。
 
-扫描所选 `kb_root` 的直属文件，以及 `common.kb_layout()` 定义的目录（manifests、sources、evidence、syllabus、claims、conflicts、indexes、learner、runs、review-queues、schemas，含子目录）。配置的 `ocr_cache_root` 仅在 KB 内时额外扫描，含 raw/normalized/indexes/overlays；与下文 JSON 校验的缓存排除规则不同。其他目录（如 backups、snapshots、history）、整个 Vault、外部考纲/缓存和媒体不在扫描范围。目录链接不跟随，候选文件、目标或锁文件为链接时保留，防止越界。
+扫描所选 `kb_root` 的直属文件，以及 `common.kb_layout()` 定义的目录（manifests、sources、evidence、syllabus、claims、conflicts、indexes、learner、runs、review-queues、schemas，含子目录）。配置的 `ocr_cache_root` 仅在 KB 内时额外扫描，含 raw/normalized/indexes/overlays。其他目录（如 backups、snapshots、history）、整个 Vault、外部考纲/缓存和媒体不在扫描范围。目录链接不跟随，候选文件、目标或锁文件为链接时保留，防止越界。
 
 代码显式枚举两个命名模式，不盲删任意 `*.tmp`：
 

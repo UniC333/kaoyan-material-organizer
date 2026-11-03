@@ -218,11 +218,11 @@ def test_links_external_cache_and_unmanaged_directories_are_never_pruned(tmp_pat
     assert not (outside / "value.json.lock").exists()
 
 
-def test_prune_cannot_be_combined_with_read_only_validate(tmp_path, dead_pid):
+def test_prune_rejects_unknown_extra_argument_before_cleanup(tmp_path, dead_pid):
     root = tmp_path / "kb"
     temporary = temp_for(root / "indexes/value.json", dead_pid)
     completed = doctor(tmp_path, root, "--prune-tmp", "validate", "--format", "json")
-    assert completed.returncode == 2 and "cannot be combined" in completed.stderr
+    assert completed.returncode == 2 and "unrecognized arguments: validate" in completed.stderr
     assert temporary.exists() and not list(root.rglob("*.lock"))
 
 

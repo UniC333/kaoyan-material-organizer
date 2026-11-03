@@ -57,7 +57,7 @@ def test_one_cli_command_refreshes_real_fixture_indexes_and_answers(tmp_path, co
         locator.write_text(json.dumps(payload), encoding="utf-8")
 
     arguments = [command, "--subject", "数学", "--book-title", "测试教材",
-                 question_flag, "导数的定义", "--format", "json", "--recall-mode", "off"]
+                 question_flag, "导数的定义", "--format", "json"]
     def snapshot():
         return {p.relative_to(tmp_path): (p.read_bytes(), p.stat().st_mtime_ns) if p.is_file() else None
                 for p in tmp_path.rglob("*")}
