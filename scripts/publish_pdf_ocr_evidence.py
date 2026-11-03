@@ -31,6 +31,7 @@ from publication_support import (
     publication_transaction_roots,
     read_only_layout,
     require_matching_plan_fingerprint,
+    vision_transcription_inputs,
 )
 from sync_exam_kb import refresh_query_indexes
 
@@ -289,6 +290,7 @@ def _validate_pdf_page(
     overlay: dict[str, dict[str, Any]],
     overlay_path: Path,
     locator_index: dict[str, Any],
+    ocr_cache_root: Path | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], list[dict[str, Any]]]:
     del artifact_path
     pdf_page = int(page.get("pdf_page", page.get("page_start", 0)) or 0)
@@ -308,6 +310,17 @@ def _validate_pdf_page(
     if not ocr_source_path.is_file():
         blocked.append({"pdf_page": pdf_page, "page_id": page_id, "reason": "ocr-source-image-missing"})
         return None, blocked, inputs
+
+    if normalized.get("provider") == "vision":
+        vision_inputs, vision_blocked = vision_transcription_inputs(
+            normalized=normalized, source_file=ocr_source_path,
+            cache_root=ocr_cache_root if ocr_cache_root is not None else load_runtime_config().ocr_cache_root,
+            page_id=page_id,
+        )
+        inputs.extend(vision_inputs)
+        if vision_blocked:
+            blocked.extend({**item, "pdf_page": pdf_page} for item in vision_blocked)
+            return None, blocked, inputs
 
     actual_image_sha = sha256_for_file(ocr_source_path)
     normalized_image_sha = str(normalized.get("source_file_sha256") or "").strip()
@@ -403,7 +416,8 @@ def _validate_pdf_page(
         str(candidate.get("block_type") or "").lower()
         for candidate in normalized.get("chunk_candidates", []) or []
         if isinstance(candidate, dict)
-        and str(candidate.get("block_type") or "").lower() in {"table", "formula", "equation"}
+        and (str(candidate.get("block_type") or "").lower() in {"table", "formula", "equation"}
+             or normalized.get("provider") == "vision")
         and overlay.get(str(candidate.get("block_id") or ""), {}).get("review_status") != "accepted"
     }
     if sensitive:
@@ -639,6 +653,7 @@ def _prepare_plan(
             overlay=overlay,
             overlay_path=overlay_path,
             locator_index=locator_index,
+            ocr_cache_root=runtime.ocr_cache_root,
         )
         inputs.extend(page_inputs)
         if page_blocked:

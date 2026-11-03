@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 from typing import Any, Iterable
 
-from common import kb_layout, sha256_for_file, stable_fingerprint
+from common import kb_layout, load_json_or_default, sha256_for_file, stable_fingerprint
+from ocr.cache import cache_paths_for_request
+from ocr.providers.vision import transcription_path
 
 
 PUBLICATION_PLAN_VERSION = "ocr-publication-plan.v1"
@@ -22,6 +24,28 @@ def file_input(label: str, path: Path) -> dict[str, Any]:
     if path.is_file():
         return {"label": str(label), "path": str(path), "exists": True, "sha256": sha256_for_file(path)}
     return {"label": str(label), "path": str(path), "exists": False, "sha256": ""}
+
+
+def vision_transcription_inputs(
+    *, normalized: dict[str, Any], source_file: Path, cache_root: Path, page_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Bind publication to the transcription hash recorded by the vision import."""
+    if normalized.get("provider") != "vision":
+        return [], []
+    raw_path = cache_paths_for_request(cache_root, str(normalized.get("request_key") or ""))["raw"]
+    raw_input = file_input(f"raw/{page_id}", raw_path)
+    transcription_input = file_input(f"vision-transcription/{page_id}", transcription_path(source_file))
+    imported_sha = str(load_json_or_default(raw_path, {}).get("transcription_sha256") or "").strip()
+    inputs = [raw_input, transcription_input]
+    if not imported_sha or not transcription_input["exists"] or transcription_input["sha256"] != imported_sha:
+        return inputs, [{
+            "page_id": page_id,
+            "reason": "vision-transcription-hash-mismatch",
+            "imported_sha256": imported_sha,
+            "actual_sha256": transcription_input["sha256"],
+            "detail": "AI visual transcription changed or is missing; re-import with --provider vision and review again before publishing.",
+        }]
+    return inputs, []
 
 
 def fingerprint_inputs(records: Iterable[dict[str, Any]]) -> str:

@@ -30,6 +30,7 @@ from publication_support import (
     publication_transaction_roots,
     read_only_layout,
     require_matching_plan_fingerprint,
+    vision_transcription_inputs,
 )
 from sync_exam_kb import refresh_query_indexes
 
@@ -71,6 +72,7 @@ def collect_publication_items(
     classes: dict,
     locator_by_page: dict,
     chapter_ids: set[str] | None = None,
+    publication_inputs: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Preflight every registered page without allocating IDs or writing evidence."""
     status_by_page = {item.get("page_id"): item for item in status.get("items", []) if item.get("page_id")}
@@ -96,6 +98,17 @@ def collect_publication_items(
         normalized_path = Path(str(item.get("normalized_path", "")))
         norm = load_json_or_default(normalized_path, {}) if str(item.get("normalized_path", "")).strip() else {}
         request_key = str(item.get("request_key") or norm.get("request_key") or "").strip()
+        if norm.get("provider") == "vision":
+            asset = next((row for row in asset_items if row.get("page_id") == page_id), {})
+            source_file = Path(str(page.get("source_image_path") or asset.get("source_image_path") or norm.get("source_file") or ""))
+            vision_inputs, vision_blocked = vision_transcription_inputs(
+                normalized=norm, source_file=source_file, cache_root=runtime.ocr_cache_root, page_id=page_id,
+            )
+            if publication_inputs is not None:
+                publication_inputs.extend(vision_inputs)
+            if vision_blocked:
+                blocked.extend(vision_blocked)
+                continue
         overlay_path = cache_paths_for_request(runtime.ocr_cache_root, request_key)["overlay"]
         overlay = {
             row.get("block_id"): row
@@ -106,7 +119,7 @@ def collect_publication_items(
         pending = [
             candidate
             for candidate in candidates
-            if candidate.get("block_type") in SENSITIVE
+            if (candidate.get("block_type") in SENSITIVE or norm.get("provider") == "vision")
             and overlay.get(candidate.get("block_id"), {}).get("review_status") != "accepted"
         ]
         if pending:
@@ -330,6 +343,7 @@ def _prepare_plan(
     global_blockers.extend(_locator_conflicts(locator))
 
     selected_chapter_ids = {str(item).strip() for item in chapter_ids or set() if str(item).strip()}
+    vision_inputs: list[dict[str, Any]] = []
     publication_items, blocked = collect_publication_items(
         runtime=runtime,
         root=root,
@@ -338,8 +352,10 @@ def _prepare_plan(
         classes=classes,
         locator_by_page=_locator_by_page(locator),
         chapter_ids=selected_chapter_ids or None,
+        publication_inputs=vision_inputs,
     )
     inputs = [
+        *vision_inputs,
         file_input("book.yaml", root / "book.yaml"),
         file_input("page-assets", assets_path),
         file_input("page-ocr-status", status_path),

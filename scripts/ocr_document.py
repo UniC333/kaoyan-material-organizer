@@ -14,6 +14,8 @@ from ocr.normalize import NORMALIZER_VERSION, normalize_ocr_payload
 from ocr.providers.base import OCRProviderRequest
 from ocr.providers.fixture import FixtureOCRProvider
 from ocr.providers.mistral import MistralOCRProvider
+from ocr.providers.rapidocr import MODEL_ID as RAPIDOCR_MODEL_ID, RapidOCRProvider
+from ocr.providers.vision import VisionOCRProvider, transcription_model_id
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,7 +34,25 @@ def provider_for(name: str, *, allow_remote: bool, fixture_json: Path | None) ->
         return FixtureOCRProvider(fixture_json=fixture_json)
     if name == "mistral":
         return MistralOCRProvider(allow_remote=allow_remote)
+    if name == "rapidocr":
+        return RapidOCRProvider()
+    if name == "vision":
+        return VisionOCRProvider()
     raise SystemExit(f"[ERROR] unsupported OCR provider: {name}")
+
+
+def resolve_ocr_model(provider_name: str, model: str | None, runtime) -> str:
+    if model:
+        return model
+    if provider_name == "vision":
+        return ""
+    if runtime.ocr_provider == provider_name:
+        return runtime.ocr_model
+    return {"rapidocr": RAPIDOCR_MODEL_ID, "mistral": "mistral-ocr-4-0"}.get(provider_name, runtime.ocr_model)
+
+
+def model_for_file(provider_name: str, model: str, source_file: Path) -> str:
+    return transcription_model_id(source_file) if provider_name == "vision" else model
 
 
 def normalize_payload(raw_payload: dict[str, Any], request_key: str, source_file: Path) -> dict[str, Any]:
@@ -52,7 +72,9 @@ def run_ocr_for_file(
     runtime = runtime or load_runtime_config()
     ensure_kb_layout()
     resolved_provider = provider_name or runtime.ocr_provider
-    resolved_model = model or runtime.ocr_model
+    resolved_model = model_for_file(
+        resolved_provider, resolve_ocr_model(resolved_provider, model, runtime), source_file,
+    )
     resolved_allow_remote = runtime.ocr_allow_remote if allow_remote is None else allow_remote
     request_config = OCRRequestConfig(
         provider=resolved_provider,

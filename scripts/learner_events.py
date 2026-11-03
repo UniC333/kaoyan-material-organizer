@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from kaoyan_kb.storage.file_lock import file_lock
 from common import kb_root, learner_file_map, load_json_or_default, now_iso, save_json, save_text, stable_fingerprint
 from kaoyan_kb.domain.learner_model import build_learner_model_payload
 from kaoyan_kb.domain.review_scheduler import latest_review_state
@@ -162,11 +163,12 @@ def append_events(events: list[dict[str, Any]], *, default: Path | None = None) 
         return []
     files = learner_file_map(default)
     files["root"].mkdir(parents=True, exist_ok=True)
-    existing = files["events"].read_text(encoding="utf-8") if files["events"].exists() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    block = "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events)
-    save_text(files["events"], existing + block)
+    with file_lock(files["events"]):
+        existing = files["events"].read_text(encoding="utf-8") if files["events"].exists() else ""
+        if existing and not existing.endswith("\n"):
+            existing += "\n"
+        block = "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events)
+        save_text(files["events"], existing + block)
     return events
 
 
@@ -192,101 +194,102 @@ def append_event(
 
 def rebuild_views(default: Path | None = None) -> dict[str, dict[str, Any]]:
     files = learner_file_map(default)
-    events = load_events(default)
-    learner_model = build_learner_model_payload(events)
-    question_history: dict[str, Any] = {"items": []}
-    error_log: dict[str, Any] = {"items": []}
-    review_history: dict[str, Any] = {"items": []}
-    review_schedule: dict[str, Any] = {"contract_version": "adaptive-review.v1", "items": []}
-    refinement_queue = load_json_or_default(files["refinement_queue"], {"items": []})
-    distillation_candidates = load_json_or_default(
-        files["distillation_candidates"], {"contract_version": "r54.conversation-distillation.v1", "items": []}
-    )
+    with file_lock(files["events"]), file_lock(files["refinement_queue"]):
+        events = load_events(default)
+        learner_model = build_learner_model_payload(events)
+        question_history: dict[str, Any] = {"items": []}
+        error_log: dict[str, Any] = {"items": []}
+        review_history: dict[str, Any] = {"items": []}
+        review_schedule: dict[str, Any] = {"contract_version": "adaptive-review.v1", "items": []}
+        refinement_queue = load_json_or_default(files["refinement_queue"], {"items": []})
+        distillation_candidates = load_json_or_default(
+            files["distillation_candidates"], {"contract_version": "r54.conversation-distillation.v1", "items": []}
+        )
 
-    for event in events:
-        if event.get("event_type") == "exercise_logged":
-            exercise_payload = dict(event.get("payload") or {})
-            if exercise_payload.get("context") in {"chapter_review", "scheduled_review"}:
-                review_history["items"].append(
-                    {
-                        "saved_at": event.get("occurred_at", ""),
-                        "subject": event.get("subject", ""),
-                        "chapter_title": event.get("chapter_title", ""),
-                        "event": "adaptive_review_completed",
-                        "node_id": exercise_payload.get("node_id", ""),
-                        "result": exercise_payload.get("result", ""),
-                        "fluency": exercise_payload.get("fluency", ""),
-                        "effective_fluency": exercise_payload.get("effective_fluency", ""),
-                        "due_date": exercise_payload.get("due_date", ""),
-                        "review_id": exercise_payload.get("review_id", ""),
-                        "question_id": exercise_payload.get("question_id", ""),
-                        "hint_used": bool(exercise_payload.get("hint_used", False)),
-                        "source_task_id": exercise_payload.get("source_task_id", ""),
-                        "source_message_ids": list(exercise_payload.get("source_message_ids", [])),
-                    }
-                )
-        if event.get("event_type") != "question_saved":
-            continue
-        intake = dict(event.get("intake_decision") or {})
-        status = str(intake.get("status", "accepted")).strip() or "accepted"
-        if status == "blocked":
-            continue
-        payload = dict(event.get("payload") or {})
-        subject = str(event.get("subject", "")).strip()
-        chapter_title = str(event.get("chapter_title", "")).strip()
-        source_provenance = dict(event.get("source_provenance") or {})
-        question_item = {
-            "event_id": event.get("event_id", ""),
-            "saved_at": event.get("occurred_at", ""),
-            "subject": subject,
-            "chapter_title": chapter_title,
-            "question": payload.get("question", ""),
-            "intent": payload.get("intent", ""),
-            "answer_mode": payload.get("answer_mode", ""),
-            "syllabus_route": payload.get("syllabus_route", []),
-            "references": payload.get("references", []),
-            "saved_note": payload.get("saved_note", ""),
-            "intake_status": status,
-            "intake_reason": intake.get("reason", ""),
-            "source_provenance": source_provenance,
-        }
-        question_history["items"].append(question_item)
-
-        review_history["items"].append(
-            {
-                "saved_at": question_item["saved_at"],
+        for event in events:
+            if event.get("event_type") == "exercise_logged":
+                exercise_payload = dict(event.get("payload") or {})
+                if exercise_payload.get("context") in {"chapter_review", "scheduled_review"}:
+                    review_history["items"].append(
+                        {
+                            "saved_at": event.get("occurred_at", ""),
+                            "subject": event.get("subject", ""),
+                            "chapter_title": event.get("chapter_title", ""),
+                            "event": "adaptive_review_completed",
+                            "node_id": exercise_payload.get("node_id", ""),
+                            "result": exercise_payload.get("result", ""),
+                            "fluency": exercise_payload.get("fluency", ""),
+                            "effective_fluency": exercise_payload.get("effective_fluency", ""),
+                            "due_date": exercise_payload.get("due_date", ""),
+                            "review_id": exercise_payload.get("review_id", ""),
+                            "question_id": exercise_payload.get("question_id", ""),
+                            "hint_used": bool(exercise_payload.get("hint_used", False)),
+                            "source_task_id": exercise_payload.get("source_task_id", ""),
+                            "source_message_ids": list(exercise_payload.get("source_message_ids", [])),
+                        }
+                    )
+            if event.get("event_type") != "question_saved":
+                continue
+            intake = dict(event.get("intake_decision") or {})
+            status = str(intake.get("status", "accepted")).strip() or "accepted"
+            if status == "blocked":
+                continue
+            payload = dict(event.get("payload") or {})
+            subject = str(event.get("subject", "")).strip()
+            chapter_title = str(event.get("chapter_title", "")).strip()
+            source_provenance = dict(event.get("source_provenance") or {})
+            question_item = {
+                "event_id": event.get("event_id", ""),
+                "saved_at": event.get("occurred_at", ""),
                 "subject": subject,
                 "chapter_title": chapter_title,
-                "event": "question_saved",
-                "question": question_item["question"],
+                "question": payload.get("question", ""),
+                "intent": payload.get("intent", ""),
+                "answer_mode": payload.get("answer_mode", ""),
+                "syllabus_route": payload.get("syllabus_route", []),
+                "references": payload.get("references", []),
+                "saved_note": payload.get("saved_note", ""),
+                "intake_status": status,
+                "intake_reason": intake.get("reason", ""),
+                "source_provenance": source_provenance,
             }
-        )
-        if question_item["answer_mode"] == "chapter_fallback":
-            error_log["items"].append(
+            question_history["items"].append(question_item)
+
+            review_history["items"].append(
                 {
                     "saved_at": question_item["saved_at"],
                     "subject": subject,
                     "chapter_title": chapter_title,
-                    "issue_type": "fallback_only",
+                    "event": "question_saved",
                     "question": question_item["question"],
                 }
             )
+            if question_item["answer_mode"] == "chapter_fallback":
+                error_log["items"].append(
+                    {
+                        "saved_at": question_item["saved_at"],
+                        "subject": subject,
+                        "chapter_title": chapter_title,
+                        "issue_type": "fallback_only",
+                        "question": question_item["question"],
+                    }
+                )
 
-    review_schedule["items"] = list(latest_review_state(events).values())
-    payloads = {
-        "learner_model": learner_model,
-        "question_history": question_history,
-        "error_log": error_log,
-        "review_history": review_history,
-        "review_schedule": review_schedule,
-        "refinement_queue": refinement_queue,
-        "distillation_candidates": distillation_candidates,
-    }
-    for key, path in files.items():
-        if key in {"root", "events"}:
-            continue
-        save_json(path, payloads[key])
-    return payloads
+        review_schedule["items"] = list(latest_review_state(events).values())
+        payloads = {
+            "learner_model": learner_model,
+            "question_history": question_history,
+            "error_log": error_log,
+            "review_history": review_history,
+            "review_schedule": review_schedule,
+            "refinement_queue": refinement_queue,
+            "distillation_candidates": distillation_candidates,
+        }
+        for key, path in files.items():
+            if key in {"root", "events"}:
+                continue
+            save_json(path, payloads[key])
+        return payloads
 
 
 def main() -> int:

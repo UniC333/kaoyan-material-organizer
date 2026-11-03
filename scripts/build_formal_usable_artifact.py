@@ -7,11 +7,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from runtime_artifact_contracts import CONTRACTS as _CONTRACTS
+
 from build_learner_acceptance_artifact import ARTIFACT_JSON as LEARNER_ACCEPTANCE_JSON
-from build_r16_changed_only_artifact import ARTIFACT_JSON as R16_T02_ARTIFACT_JSON
-from build_r16_gray_release_artifact import ARTIFACT_JSON as R16_T04_ARTIFACT_JSON
-from build_r16_recovery_artifact import ARTIFACT_JSON as R16_T03_ARTIFACT_JSON
-from build_r16_run_manifest_artifact import ARTIFACT_JSON as R16_T01_ARTIFACT_JSON
+from build_changed_only_artifact import ARTIFACT_JSON as R16_T02_ARTIFACT_JSON
+from build_gray_release_artifact import ARTIFACT_JSON as R16_T04_ARTIFACT_JSON
+from build_recovery_artifact import ARTIFACT_JSON as R16_T03_ARTIFACT_JSON
+from build_run_manifest_artifact import ARTIFACT_JSON as R16_T01_ARTIFACT_JSON
 from common import (
     INDEX_DIRNAME,
     default_vault_root_arg,
@@ -21,10 +23,10 @@ from common import (
     save_text,
 )
 
-ARTIFACT_JSON = "25_r16_formal_usable_acceptance_artifact.json"
-ARTIFACT_MD = "25_r16_formal_usable_acceptance_artifact.md"
-ARTIFACT_ID = "r16-formal-usable-acceptance"
-ARTIFACT_CONTRACT_VERSION = "r16.formal-usable.v1"
+ARTIFACT_JSON = _CONTRACTS["formal_usable"]["artifact_json"]
+ARTIFACT_MD = _CONTRACTS["formal_usable"]["artifact_md"]
+ARTIFACT_ID = _CONTRACTS["formal_usable"]["artifact_id"]
+ARTIFACT_CONTRACT_VERSION = _CONTRACTS["formal_usable"]["contract_version"]
 RELEASE_DOC_RELATIVE_PATH = Path("docs") / "releases" / "v1.0-acceptance.md"
 POST_R16_SUCCESSOR = {
     "track_id": "R17-T01",
@@ -58,17 +60,17 @@ def build_payload(index_root: Path, workspace_root: Path) -> dict[str, Any]:
     gray_release = _load_artifact(index_root, R16_T04_ARTIFACT_JSON)
 
     gray_release_report = load_json_or_default(
-        workspace_root / "reports" / "r16_in_scope_gray_release_report.json",
+        workspace_root / "reports" / _CONTRACTS["gray_release"]["report_json"],
         {"overall_status": "missing", "release_scope": {}, "overall_summary": {}},
     )
 
     durability_status = _status_from_readiness(
         str(run_manifest.get("durability_intake_status", {}).get("status", "")).strip(),
-        ready_value="ready-for-r16-t02",
+        ready_value=_CONTRACTS["run_manifest"]["ready"],
     )
     changed_only_status = _status_from_readiness(
         str(changed_only.get("readiness_status", "")).strip(),
-        ready_value="ready-for-r16-t03",
+        ready_value=_CONTRACTS["changed_only"]["ready"],
     )
     recovery_boundary_status = dict(recovery.get("recovery_boundary_status", {}))
     recovery_status = (
@@ -79,7 +81,7 @@ def build_payload(index_root: Path, workspace_root: Path) -> dict[str, Any]:
     )
     gray_release_status = _status_from_readiness(
         str(gray_release.get("readiness_status", "")).strip(),
-        ready_value="ready-for-r16-t05",
+        ready_value=_CONTRACTS["gray_release"]["ready"],
         accepted_value="accepted-with-scope-limits",
     )
 
@@ -116,10 +118,10 @@ def build_payload(index_root: Path, workspace_root: Path) -> dict[str, Any]:
         "scope": "run durability -> changed-only rebuild -> recovery boundary -> in-scope gray release -> operator handoff -> formal usable decision",
         "input_contract_refs": [
             {"name": "r15_learner_acceptance_artifact", "version": learner_acceptance.get("artifact_contract_version", "")},
-            {"name": "r16_t01_run_manifest_artifact", "version": run_manifest.get("artifact_contract_version", "")},
-            {"name": "r16_t02_changed_only_artifact", "version": changed_only.get("artifact_contract_version", "")},
-            {"name": "r16_t03_recovery_artifact", "version": recovery.get("artifact_contract_version", "")},
-            {"name": "r16_t04_gray_release_artifact", "version": gray_release.get("artifact_contract_version", "")},
+            {"name": _CONTRACTS["run_manifest"]["ref"], "version": run_manifest.get("artifact_contract_version", "")},
+            {"name": _CONTRACTS["changed_only"]["ref"], "version": changed_only.get("artifact_contract_version", "")},
+            {"name": _CONTRACTS["recovery"]["ref"], "version": recovery.get("artifact_contract_version", "")},
+            {"name": _CONTRACTS["gray_release"]["ref"], "version": gray_release.get("artifact_contract_version", "")},
         ],
         "learner_acceptance_input": {
             "artifact_id": learner_acceptance.get("artifact_id", ""),
@@ -158,14 +160,14 @@ def build_payload(index_root: Path, workspace_root: Path) -> dict[str, Any]:
         },
         "known_gaps": known_gaps,
         "readiness_status": readiness_status,
-        "post_r16_successor": POST_R16_SUCCESSOR,
+        _CONTRACTS["formal_usable"]["successor_key"]: POST_R16_SUCCESSOR,
     }
 
 
 def render_artifact_markdown(payload: dict[str, Any]) -> str:
     formal = dict(payload.get("formal_usable_status", {}))
     release = dict(payload.get("release_decision", {}))
-    successor = dict(payload.get("post_r16_successor", {}))
+    successor = dict(payload.get(_CONTRACTS["formal_usable"]["successor_key"], {}))
     lines = [
         "# R16-T06 formal-usable acceptance artifact",
         "",
@@ -198,7 +200,7 @@ def render_artifact_markdown(payload: dict[str, Any]) -> str:
 def render_release_doc(payload: dict[str, Any]) -> str:
     release = dict(payload.get("release_decision", {}))
     formal = dict(payload.get("formal_usable_status", {}))
-    successor = dict(payload.get("post_r16_successor", {}))
+    successor = dict(payload.get(_CONTRACTS["formal_usable"]["successor_key"], {}))
     scope_subjects = "、".join(release.get("scope_limited_to_subjects", [])) or "无"
     out_of_scope = "、".join(release.get("out_of_scope_subjects", [])) or "无"
     gaps = list(payload.get("known_gaps", []))
@@ -214,22 +216,22 @@ def render_release_doc(payload: dict[str, Any]) -> str:
         "",
         f"- 当前正式范围限定为：`{scope_subjects}`",
         f"- 范围外科目：`{out_of_scope}`",
-        "- gray release 结论来自 `24_r16_gray_release_artifact` 与 `reports/r16_in_scope_gray_release_report.json`。",
+        f"- gray release 结论来自 `{Path(R16_T04_ARTIFACT_JSON).stem}` 与 `reports/{_CONTRACTS['gray_release']['report_json']}`。",
         "",
         "## 验收门槛",
         "",
         "| 门槛 | 当前状态 | 证据 |",
         "| --- | --- | --- |",
-        f"| 20次维护无数据丢失 | {formal.get('durability_status', '')} | `21_r16_run_manifest_artifact` + learner acceptance / run checkpoint evidence |",
-        f"| changed-only rebuild | {formal.get('changed_only_status', '')} | `22_r16_changed_only_boundary_artifact` |",
-        f"| 灾难恢复 | {formal.get('recovery_status', '')} | `23_r16_recovery_boundary_artifact` |",
-        f"| 当前正式范围灰度 | {formal.get('gray_release_status', '')} | `24_r16_gray_release_artifact` |",
+        f"| 20次维护无数据丢失 | {formal.get('durability_status', '')} | `{Path(R16_T01_ARTIFACT_JSON).stem}` + learner acceptance / run checkpoint evidence |",
+        f"| changed-only rebuild | {formal.get('changed_only_status', '')} | `{Path(R16_T02_ARTIFACT_JSON).stem}` |",
+        f"| 灾难恢复 | {formal.get('recovery_status', '')} | `{Path(R16_T03_ARTIFACT_JSON).stem}` |",
+        f"| 当前正式范围灰度 | {formal.get('gray_release_status', '')} | `{Path(R16_T04_ARTIFACT_JSON).stem}` |",
         "",
         "## 发布结论",
         "",
         "- 本轮 release decision 只针对当前正式范围，不要求英语、政治已经接入。",
         f"- 当前 release decision：`{release.get('status', '')}`。",
-        "- 当前正式可用验收工件：`25_r16_formal_usable_acceptance_artifact`。",
+        f"- 当前正式可用验收工件：`{Path(ARTIFACT_JSON).stem}`。",
         "",
         "## Known Gaps",
         "",
@@ -273,7 +275,7 @@ def main() -> int:
         "artifact_id": payload["artifact_id"],
         "release_decision": payload["release_decision"],
         "readiness_status": payload["readiness_status"],
-        "post_r16_successor": payload["post_r16_successor"],
+        _CONTRACTS["formal_usable"]["successor_key"]: payload[_CONTRACTS["formal_usable"]["successor_key"]],
     }
     if args.format == "json":
         print(json.dumps(result, ensure_ascii=False, indent=2))

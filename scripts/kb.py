@@ -191,6 +191,15 @@ def main() -> int:
     except RuntimeConfigError as exc:
         parser.error(str(exc))
 
+    if args.command == "doctor" and args.prune_tmp:
+        from kaoyan_kb.storage.tmp_pruning import prune_tmp, render_prune_text
+
+        runtime = load_runtime_config()
+        payload = prune_tmp(runtime.kb_root, ocr_cache_root=runtime.ocr_cache_root)
+        print(json.dumps(payload, ensure_ascii=False, indent=2) if args.format == "json"
+              else render_prune_text(payload))
+        return 0
+
     core_output = dispatch_core(args, run_script, doctor_payload, render_doctor_text)
     if core_output is not None:
         print(core_output, end="")

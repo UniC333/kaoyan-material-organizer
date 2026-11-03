@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from kaoyan_kb.storage.file_lock import file_lock
 from common import load_json_or_default, save_json, sha256_for_file
 
 
@@ -62,11 +63,12 @@ def save_cached_payloads(
     save_json(paths["raw"], raw_payload, ignored_compare_keys=())
     save_json(paths["normalized"], normalized_payload, ignored_compare_keys=())
     index_path = cache_root / "indexes" / "by-file" / f"{sha256_for_file(source_file)}.json"
-    index_payload = load_json_or_default(index_path, {"source_file": str(source_file), "request_keys": []})
-    request_keys = list(index_payload.get("request_keys", []))
-    if request_key not in request_keys:
-        request_keys.append(request_key)
-    index_payload["source_file"] = str(source_file)
-    index_payload["request_keys"] = request_keys
-    save_json(index_path, index_payload, ignored_compare_keys=())
+    with file_lock(index_path):
+        index_payload = load_json_or_default(index_path, {"source_file": str(source_file), "request_keys": []})
+        request_keys = list(index_payload.get("request_keys", []))
+        if request_key not in request_keys:
+            request_keys.append(request_key)
+        index_payload["source_file"] = str(source_file)
+        index_payload["request_keys"] = request_keys
+        save_json(index_path, index_payload, ignored_compare_keys=())
     return {**paths, "index": index_path}

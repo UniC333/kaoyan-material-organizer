@@ -56,7 +56,7 @@ def validate_chapter_review_batch(payload: dict[str, Any]) -> dict[str, Any]:
     if not subject:
         errors.append("subject is required")
     elif not is_supported_review_subject(subject):
-        errors.append("adaptive review currently supports mathematics and 408 subjects only")
+        errors.append("subject is not enabled by review_subjects in runtime config")
 
     chapter_title = _nonempty(payload.get("chapter_title") or payload.get("chapter"))
     if not chapter_title:

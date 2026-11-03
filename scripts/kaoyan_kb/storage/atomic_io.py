@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -43,15 +44,17 @@ def _strip_ignored_keys(payload: Any, ignored_keys: set[str]) -> Any:
 
 def _atomic_write_text(path: Path, content: str) -> None:
     os.makedirs(_filesystem_path(path.parent), exist_ok=True)
-    temp_path = path.with_suffix(path.suffix + ".tmp")
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    created = False
     try:
-        with open(_filesystem_path(temp_path), "w", encoding="utf-8", newline="") as handle:
+        with open(_filesystem_path(temp_path), "x", encoding="utf-8", newline="") as handle:
+            created = True
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(_filesystem_path(temp_path), _filesystem_path(path))
     finally:
-        if Path(_filesystem_path(temp_path)).exists():
+        if created:
             try:
                 os.unlink(_filesystem_path(temp_path))
             except OSError:

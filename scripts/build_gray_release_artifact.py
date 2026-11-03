@@ -9,7 +9,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from build_r16_recovery_artifact import ARTIFACT_JSON as R16_T03_ARTIFACT_JSON
+from runtime_artifact_contracts import CONTRACTS as _CONTRACTS
+
+from build_recovery_artifact import ARTIFACT_JSON as R16_T03_ARTIFACT_JSON
 from common import (
     INDEX_DIRNAME,
     default_vault_root_arg,
@@ -23,12 +25,12 @@ from common import (
     save_text,
 )
 
-REPORT_JSON = "r16_in_scope_gray_release_report.json"
-REPORT_MD = "r16_in_scope_gray_release_report.md"
-ARTIFACT_JSON = "24_r16_gray_release_artifact.json"
-ARTIFACT_MD = "24_r16_gray_release_artifact.md"
-ARTIFACT_ID = "r16-gray-release-scope"
-ARTIFACT_CONTRACT_VERSION = "r16.gray-release.v1"
+REPORT_JSON = _CONTRACTS["gray_release"]["report_json"]
+REPORT_MD = _CONTRACTS["gray_release"]["report_md"]
+ARTIFACT_JSON = _CONTRACTS["gray_release"]["artifact_json"]
+ARTIFACT_MD = _CONTRACTS["gray_release"]["artifact_md"]
+ARTIFACT_ID = _CONTRACTS["gray_release"]["artifact_id"]
+ARTIFACT_CONTRACT_VERSION = _CONTRACTS["gray_release"]["contract_version"]
 IN_SCOPE_SUBJECTS = ["数学", "408"]
 TRACKED_SUBJECTS = ["数学", "408", "英语", "政治"]
 POST_R16_T04_SUCCESSOR = {
@@ -62,12 +64,12 @@ def run_script(name: str, *args: str) -> str:
     return completed.stdout.strip()
 
 
-def _load_r16_t03_artifact(index_root: Path) -> dict[str, Any]:
+def _load_recovery_artifact(index_root: Path) -> dict[str, Any]:
     return load_json_or_default(
         index_root / R16_T03_ARTIFACT_JSON,
         {
             "artifact_id": "",
-            "readiness_status": "missing-r16-t03-artifact",
+            "readiness_status": _CONTRACTS["recovery"]["missing"],
         },
     )
 
@@ -228,16 +230,16 @@ def render_report_markdown(payload: dict[str, Any]) -> str:
 
 
 def build_artifact(index_root: Path, report_payload: dict[str, Any]) -> dict[str, Any]:
-    t03_artifact = _load_r16_t03_artifact(index_root)
+    t03_artifact = _load_recovery_artifact(index_root)
     overall_status = str(report_payload.get("overall_status", "")).strip()
-    readiness_status = "ready-for-r16-t05" if overall_status == "ready-with-scope-limits" else "not-ready-for-r16-t05"
+    readiness_status = _CONTRACTS["gray_release"]["ready"] if overall_status == "ready-with-scope-limits" else _CONTRACTS["gray_release"]["not_ready"]
     return {
         "artifact_contract_version": ARTIFACT_CONTRACT_VERSION,
         "artifact_id": ARTIFACT_ID,
         "scope": "recovery boundary -> in-scope gray release -> release-scope declaration",
         "input_contract_refs": [
-            {"name": "r16_t03_recovery_artifact", "version": t03_artifact.get("artifact_contract_version", "")},
-            {"name": "r16_t04_gray_release_report", "version": "gray-release.v1"},
+            {"name": _CONTRACTS["recovery"]["ref"], "version": t03_artifact.get("artifact_contract_version", "")},
+            {"name": _CONTRACTS["gray_release"]["report_ref"], "version": "gray-release.v1"},
         ],
         "recovery_input": {
             "artifact_id": t03_artifact.get("artifact_id", ""),
@@ -252,14 +254,14 @@ def build_artifact(index_root: Path, report_payload: dict[str, Any]) -> dict[str
             "blocked_subjects": report_payload.get("overall_summary", {}).get("blocked_subjects", []),
         },
         "readiness_status": readiness_status,
-        "remaining_gaps": [] if readiness_status == "ready-for-r16-t05" else ["Current in-scope subjects are not all ready for gray release."],
-        "post_r16_t04_successor": POST_R16_T04_SUCCESSOR,
+        "remaining_gaps": [] if readiness_status == _CONTRACTS["gray_release"]["ready"] else ["Current in-scope subjects are not all ready for gray release."],
+        _CONTRACTS["gray_release"]["successor_key"]: POST_R16_T04_SUCCESSOR,
     }
 
 
 def render_artifact_markdown(payload: dict[str, Any]) -> str:
     gray = dict(payload.get("gray_release_status", {}))
-    successor = dict(payload.get("post_r16_t04_successor", {}))
+    successor = dict(payload.get(_CONTRACTS["gray_release"]["successor_key"], {}))
     lines = [
         "# R16-T04 gray release artifact",
         "",
@@ -301,7 +303,7 @@ def main() -> int:
         "artifact_id": artifact_payload["artifact_id"],
         "overall_status": report_payload["overall_status"],
         "readiness_status": artifact_payload["readiness_status"],
-        "post_r16_t04_successor": artifact_payload["post_r16_t04_successor"],
+        _CONTRACTS["gray_release"]["successor_key"]: artifact_payload[_CONTRACTS["gray_release"]["successor_key"]],
     }
     if args.format == "json":
         print(json.dumps(result, ensure_ascii=False, indent=2))

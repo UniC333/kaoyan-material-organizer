@@ -1,0 +1,3500 @@
+{
+  "schema_version": "command-baseline.v1",
+  "environment": {
+    "measured_at_utc": "2026-10-31T05:32:33.052998+00:00",
+    "platform": "Linux-7.0.0-39-generic-x86_64-with-glibc2.39",
+    "python_version": "3.12.3",
+    "python_executable": "/tmp/issue-test-venv/bin/python",
+    "cpu_count": 4
+  },
+  "method": {
+    "samples_per_path": 20,
+    "warmups_per_path": 1,
+    "p95": "nearest-rank ceil(0.95*n)",
+    "timing": "perf_counter around subprocess.run; no probe",
+    "process_count": "sitecustomize startup records, PID/PPID tree; exclude kb.py entry",
+    "process_count_limitations": "Counts Python interpreters that inherit PYTHONPATH and load sitecustomize; -S/-I, replaced environments, native processes and fork-only children are not covered. This is startup instrumentation, not an OS-wide process tracer. Counting runs are separate from uninstrumented timing runs.",
+    "fixture": "one synthetic reviewed evidence; fresh indexes prepared before sampling",
+    "sync_state": "repeat rebuild of unchanged inputs; not full/cold rebuild"
+  },
+  "paths": {
+    "query": {
+      "arguments": [
+        "query",
+        "--subject",
+        "数学",
+        "--book-title",
+        "基线高等数学",
+        "--query",
+        "什么是导数",
+        "--format",
+        "json"
+      ],
+      "samples": [
+        {
+          "sample": 1,
+          "elapsed_seconds": 0.28669962100047997,
+          "python_subprocesses": 1,
+          "entry_pid": 16,
+          "records": [
+            {
+              "pid": 16,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 17,
+              "ppid": 16,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 2,
+          "elapsed_seconds": 0.26843092600029195,
+          "python_subprocesses": 1,
+          "entry_pid": 20,
+          "records": [
+            {
+              "pid": 20,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 21,
+              "ppid": 20,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 3,
+          "elapsed_seconds": 0.28153071500037186,
+          "python_subprocesses": 1,
+          "entry_pid": 24,
+          "records": [
+            {
+              "pid": 24,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 25,
+              "ppid": 24,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 4,
+          "elapsed_seconds": 0.2759255930004656,
+          "python_subprocesses": 1,
+          "entry_pid": 28,
+          "records": [
+            {
+              "pid": 28,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 29,
+              "ppid": 28,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 5,
+          "elapsed_seconds": 0.28648191499996756,
+          "python_subprocesses": 1,
+          "entry_pid": 32,
+          "records": [
+            {
+              "pid": 32,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 33,
+              "ppid": 32,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 6,
+          "elapsed_seconds": 0.2651702530001785,
+          "python_subprocesses": 1,
+          "entry_pid": 36,
+          "records": [
+            {
+              "pid": 36,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 37,
+              "ppid": 36,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 7,
+          "elapsed_seconds": 0.28106358400054887,
+          "python_subprocesses": 1,
+          "entry_pid": 40,
+          "records": [
+            {
+              "pid": 40,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 41,
+              "ppid": 40,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 8,
+          "elapsed_seconds": 0.2750848509995194,
+          "python_subprocesses": 1,
+          "entry_pid": 44,
+          "records": [
+            {
+              "pid": 44,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 45,
+              "ppid": 44,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 9,
+          "elapsed_seconds": 0.2872052100001383,
+          "python_subprocesses": 1,
+          "entry_pid": 48,
+          "records": [
+            {
+              "pid": 48,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 49,
+              "ppid": 48,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 10,
+          "elapsed_seconds": 0.30290638400038006,
+          "python_subprocesses": 1,
+          "entry_pid": 52,
+          "records": [
+            {
+              "pid": 52,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 53,
+              "ppid": 52,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 11,
+          "elapsed_seconds": 0.27864396199947805,
+          "python_subprocesses": 1,
+          "entry_pid": 56,
+          "records": [
+            {
+              "pid": 56,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 57,
+              "ppid": 56,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 12,
+          "elapsed_seconds": 0.279348920999837,
+          "python_subprocesses": 1,
+          "entry_pid": 60,
+          "records": [
+            {
+              "pid": 60,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 61,
+              "ppid": 60,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 13,
+          "elapsed_seconds": 0.28572514899951784,
+          "python_subprocesses": 1,
+          "entry_pid": 64,
+          "records": [
+            {
+              "pid": 64,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 65,
+              "ppid": 64,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 14,
+          "elapsed_seconds": 0.2747115419997499,
+          "python_subprocesses": 1,
+          "entry_pid": 68,
+          "records": [
+            {
+              "pid": 68,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 69,
+              "ppid": 68,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 15,
+          "elapsed_seconds": 0.31835092099936446,
+          "python_subprocesses": 1,
+          "entry_pid": 72,
+          "records": [
+            {
+              "pid": 72,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 73,
+              "ppid": 72,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 16,
+          "elapsed_seconds": 0.27544376000059856,
+          "python_subprocesses": 1,
+          "entry_pid": 76,
+          "records": [
+            {
+              "pid": 76,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 77,
+              "ppid": 76,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 17,
+          "elapsed_seconds": 0.277985974999865,
+          "python_subprocesses": 1,
+          "entry_pid": 80,
+          "records": [
+            {
+              "pid": 80,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 81,
+              "ppid": 80,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 18,
+          "elapsed_seconds": 0.2744465730002048,
+          "python_subprocesses": 1,
+          "entry_pid": 84,
+          "records": [
+            {
+              "pid": 84,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 85,
+              "ppid": 84,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 19,
+          "elapsed_seconds": 0.27391053900009865,
+          "python_subprocesses": 1,
+          "entry_pid": 88,
+          "records": [
+            {
+              "pid": 88,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 89,
+              "ppid": 88,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 20,
+          "elapsed_seconds": 0.26919071600059397,
+          "python_subprocesses": 1,
+          "entry_pid": 92,
+          "records": [
+            {
+              "pid": 92,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "query",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 93,
+              "ppid": 92,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/query_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--query",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        }
+      ],
+      "statistics": {
+        "mean_seconds": 0.2809128555000825,
+        "median_seconds": 0.2783149684996715,
+        "p95_seconds": 0.30290638400038006
+      },
+      "python_subprocesses": {
+        "min": 1,
+        "max": 1,
+        "per_sample": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    "ask": {
+      "arguments": [
+        "ask",
+        "--subject",
+        "数学",
+        "--book-title",
+        "基线高等数学",
+        "--question",
+        "什么是导数",
+        "--format",
+        "json"
+      ],
+      "samples": [
+        {
+          "sample": 1,
+          "elapsed_seconds": 0.28416519799975504,
+          "python_subprocesses": 1,
+          "entry_pid": 98,
+          "records": [
+            {
+              "pid": 98,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 99,
+              "ppid": 98,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 2,
+          "elapsed_seconds": 0.2964215009997133,
+          "python_subprocesses": 1,
+          "entry_pid": 102,
+          "records": [
+            {
+              "pid": 102,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 103,
+              "ppid": 102,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 3,
+          "elapsed_seconds": 0.30012662099943554,
+          "python_subprocesses": 1,
+          "entry_pid": 106,
+          "records": [
+            {
+              "pid": 106,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 107,
+              "ppid": 106,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 4,
+          "elapsed_seconds": 0.290371832999881,
+          "python_subprocesses": 1,
+          "entry_pid": 110,
+          "records": [
+            {
+              "pid": 110,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 111,
+              "ppid": 110,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 5,
+          "elapsed_seconds": 0.28980921800030046,
+          "python_subprocesses": 1,
+          "entry_pid": 114,
+          "records": [
+            {
+              "pid": 114,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 115,
+              "ppid": 114,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 6,
+          "elapsed_seconds": 0.28959482699974615,
+          "python_subprocesses": 1,
+          "entry_pid": 118,
+          "records": [
+            {
+              "pid": 118,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 119,
+              "ppid": 118,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 7,
+          "elapsed_seconds": 0.28811664800014114,
+          "python_subprocesses": 1,
+          "entry_pid": 122,
+          "records": [
+            {
+              "pid": 122,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 123,
+              "ppid": 122,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 8,
+          "elapsed_seconds": 0.28863068999999086,
+          "python_subprocesses": 1,
+          "entry_pid": 126,
+          "records": [
+            {
+              "pid": 126,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 127,
+              "ppid": 126,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 9,
+          "elapsed_seconds": 0.2784083690003172,
+          "python_subprocesses": 1,
+          "entry_pid": 130,
+          "records": [
+            {
+              "pid": 130,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 131,
+              "ppid": 130,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 10,
+          "elapsed_seconds": 0.27888023700052145,
+          "python_subprocesses": 1,
+          "entry_pid": 134,
+          "records": [
+            {
+              "pid": 134,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 135,
+              "ppid": 134,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 11,
+          "elapsed_seconds": 0.28155750400037505,
+          "python_subprocesses": 1,
+          "entry_pid": 138,
+          "records": [
+            {
+              "pid": 138,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 139,
+              "ppid": 138,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 12,
+          "elapsed_seconds": 0.2799335579993567,
+          "python_subprocesses": 1,
+          "entry_pid": 142,
+          "records": [
+            {
+              "pid": 142,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 143,
+              "ppid": 142,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 13,
+          "elapsed_seconds": 0.28921292399991216,
+          "python_subprocesses": 1,
+          "entry_pid": 146,
+          "records": [
+            {
+              "pid": 146,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 147,
+              "ppid": 146,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 14,
+          "elapsed_seconds": 0.2855832860004739,
+          "python_subprocesses": 1,
+          "entry_pid": 150,
+          "records": [
+            {
+              "pid": 150,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 151,
+              "ppid": 150,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 15,
+          "elapsed_seconds": 0.2821993580000708,
+          "python_subprocesses": 1,
+          "entry_pid": 154,
+          "records": [
+            {
+              "pid": 154,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 155,
+              "ppid": 154,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 16,
+          "elapsed_seconds": 0.2817574049995528,
+          "python_subprocesses": 1,
+          "entry_pid": 158,
+          "records": [
+            {
+              "pid": 158,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 159,
+              "ppid": 158,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 17,
+          "elapsed_seconds": 0.29275476800012257,
+          "python_subprocesses": 1,
+          "entry_pid": 162,
+          "records": [
+            {
+              "pid": 162,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 163,
+              "ppid": 162,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 18,
+          "elapsed_seconds": 0.3002816240004904,
+          "python_subprocesses": 1,
+          "entry_pid": 166,
+          "records": [
+            {
+              "pid": 166,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 167,
+              "ppid": 166,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 19,
+          "elapsed_seconds": 0.3428156249992753,
+          "python_subprocesses": 1,
+          "entry_pid": 170,
+          "records": [
+            {
+              "pid": 170,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 171,
+              "ppid": 170,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 20,
+          "elapsed_seconds": 0.31348118300047645,
+          "python_subprocesses": 1,
+          "entry_pid": 174,
+          "records": [
+            {
+              "pid": 174,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "ask",
+                "--subject",
+                "数学",
+                "--book-title",
+                "基线高等数学",
+                "--question",
+                "什么是导数",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 175,
+              "ppid": 174,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/ask_local_knowledge.py",
+                "--subject",
+                "数学",
+                "--question",
+                "什么是导数",
+                "--topk",
+                "3",
+                "--format",
+                "json",
+                "--recall-mode",
+                "rules",
+                "--book-title",
+                "基线高等数学"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        }
+      ],
+      "statistics": {
+        "mean_seconds": 0.2917051188499954,
+        "median_seconds": 0.2889218069999515,
+        "p95_seconds": 0.31348118300047645
+      },
+      "python_subprocesses": {
+        "min": 1,
+        "max": 1,
+        "per_sample": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ]
+      }
+    },
+    "sync_indexes_only": {
+      "arguments": [
+        "sync",
+        "--indexes-only",
+        "--format",
+        "json"
+      ],
+      "samples": [
+        {
+          "sample": 1,
+          "elapsed_seconds": 0.6283952859994315,
+          "python_subprocesses": 5,
+          "entry_pid": 188,
+          "records": [
+            {
+              "pid": 188,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 189,
+              "ppid": 188,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 190,
+              "ppid": 189,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 191,
+              "ppid": 189,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 192,
+              "ppid": 189,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 193,
+              "ppid": 189,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 2,
+          "elapsed_seconds": 0.6141555970007175,
+          "python_subprocesses": 5,
+          "entry_pid": 200,
+          "records": [
+            {
+              "pid": 200,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 201,
+              "ppid": 200,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 202,
+              "ppid": 201,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 203,
+              "ppid": 201,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 204,
+              "ppid": 201,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 205,
+              "ppid": 201,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 3,
+          "elapsed_seconds": 0.6397045379999327,
+          "python_subprocesses": 5,
+          "entry_pid": 212,
+          "records": [
+            {
+              "pid": 212,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 213,
+              "ppid": 212,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 214,
+              "ppid": 213,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 215,
+              "ppid": 213,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 216,
+              "ppid": 213,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 217,
+              "ppid": 213,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 4,
+          "elapsed_seconds": 0.747490093000124,
+          "python_subprocesses": 5,
+          "entry_pid": 224,
+          "records": [
+            {
+              "pid": 224,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 225,
+              "ppid": 224,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 226,
+              "ppid": 225,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 227,
+              "ppid": 225,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 228,
+              "ppid": 225,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 229,
+              "ppid": 225,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 5,
+          "elapsed_seconds": 0.5993689870001617,
+          "python_subprocesses": 5,
+          "entry_pid": 236,
+          "records": [
+            {
+              "pid": 236,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 237,
+              "ppid": 236,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 238,
+              "ppid": 237,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 239,
+              "ppid": 237,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 240,
+              "ppid": 237,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 241,
+              "ppid": 237,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 6,
+          "elapsed_seconds": 0.7812774170006378,
+          "python_subprocesses": 5,
+          "entry_pid": 248,
+          "records": [
+            {
+              "pid": 248,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 249,
+              "ppid": 248,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 250,
+              "ppid": 249,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 251,
+              "ppid": 249,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 252,
+              "ppid": 249,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 253,
+              "ppid": 249,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 7,
+          "elapsed_seconds": 0.6676953839996713,
+          "python_subprocesses": 5,
+          "entry_pid": 260,
+          "records": [
+            {
+              "pid": 260,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 261,
+              "ppid": 260,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 262,
+              "ppid": 261,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 263,
+              "ppid": 261,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 264,
+              "ppid": 261,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 265,
+              "ppid": 261,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 8,
+          "elapsed_seconds": 0.6666194590006853,
+          "python_subprocesses": 5,
+          "entry_pid": 272,
+          "records": [
+            {
+              "pid": 272,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 273,
+              "ppid": 272,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 274,
+              "ppid": 273,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 275,
+              "ppid": 273,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 276,
+              "ppid": 273,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 277,
+              "ppid": 273,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 9,
+          "elapsed_seconds": 0.6316681680000329,
+          "python_subprocesses": 5,
+          "entry_pid": 284,
+          "records": [
+            {
+              "pid": 284,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 285,
+              "ppid": 284,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 286,
+              "ppid": 285,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 287,
+              "ppid": 285,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 288,
+              "ppid": 285,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 289,
+              "ppid": 285,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 10,
+          "elapsed_seconds": 0.6171959989997049,
+          "python_subprocesses": 5,
+          "entry_pid": 296,
+          "records": [
+            {
+              "pid": 296,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 297,
+              "ppid": 296,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 298,
+              "ppid": 297,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 299,
+              "ppid": 297,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 300,
+              "ppid": 297,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 301,
+              "ppid": 297,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 11,
+          "elapsed_seconds": 0.6100937310002337,
+          "python_subprocesses": 5,
+          "entry_pid": 308,
+          "records": [
+            {
+              "pid": 308,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 309,
+              "ppid": 308,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 310,
+              "ppid": 309,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 311,
+              "ppid": 309,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 312,
+              "ppid": 309,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 313,
+              "ppid": 309,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 12,
+          "elapsed_seconds": 0.6221556529999361,
+          "python_subprocesses": 5,
+          "entry_pid": 320,
+          "records": [
+            {
+              "pid": 320,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 321,
+              "ppid": 320,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 322,
+              "ppid": 321,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 323,
+              "ppid": 321,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 324,
+              "ppid": 321,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 325,
+              "ppid": 321,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 13,
+          "elapsed_seconds": 0.6646702739999455,
+          "python_subprocesses": 5,
+          "entry_pid": 332,
+          "records": [
+            {
+              "pid": 332,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 333,
+              "ppid": 332,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 334,
+              "ppid": 333,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 335,
+              "ppid": 333,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 336,
+              "ppid": 333,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 337,
+              "ppid": 333,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 14,
+          "elapsed_seconds": 0.6066325559995676,
+          "python_subprocesses": 5,
+          "entry_pid": 344,
+          "records": [
+            {
+              "pid": 344,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 345,
+              "ppid": 344,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 346,
+              "ppid": 345,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 347,
+              "ppid": 345,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 348,
+              "ppid": 345,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 349,
+              "ppid": 345,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 15,
+          "elapsed_seconds": 0.6378469210003459,
+          "python_subprocesses": 5,
+          "entry_pid": 356,
+          "records": [
+            {
+              "pid": 356,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 357,
+              "ppid": 356,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 358,
+              "ppid": 357,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 359,
+              "ppid": 357,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 360,
+              "ppid": 357,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 361,
+              "ppid": 357,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 16,
+          "elapsed_seconds": 0.6269689959999596,
+          "python_subprocesses": 5,
+          "entry_pid": 368,
+          "records": [
+            {
+              "pid": 368,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 369,
+              "ppid": 368,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 370,
+              "ppid": 369,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 371,
+              "ppid": 369,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 372,
+              "ppid": 369,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 373,
+              "ppid": 369,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 17,
+          "elapsed_seconds": 0.6191095610001867,
+          "python_subprocesses": 5,
+          "entry_pid": 380,
+          "records": [
+            {
+              "pid": 380,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 381,
+              "ppid": 380,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 382,
+              "ppid": 381,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 383,
+              "ppid": 381,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 384,
+              "ppid": 381,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 385,
+              "ppid": 381,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 18,
+          "elapsed_seconds": 0.6211565029998383,
+          "python_subprocesses": 5,
+          "entry_pid": 392,
+          "records": [
+            {
+              "pid": 392,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 393,
+              "ppid": 392,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 394,
+              "ppid": 393,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 395,
+              "ppid": 393,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 396,
+              "ppid": 393,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 397,
+              "ppid": 393,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 19,
+          "elapsed_seconds": 0.632249430000229,
+          "python_subprocesses": 5,
+          "entry_pid": 404,
+          "records": [
+            {
+              "pid": 404,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 405,
+              "ppid": 404,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 406,
+              "ppid": 405,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 407,
+              "ppid": 405,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 408,
+              "ppid": 405,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 409,
+              "ppid": 405,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        },
+        {
+          "sample": 20,
+          "elapsed_seconds": 0.6421366679996936,
+          "python_subprocesses": 5,
+          "entry_pid": 416,
+          "records": [
+            {
+              "pid": 416,
+              "ppid": 4,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/kb.py",
+                "--config",
+                "/tmp/kaoyan-kb-baseline-20v02g4d/baseline.config.json",
+                "sync",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 417,
+              "ppid": 416,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/sync_exam_kb.py",
+                "--indexes-only",
+                "--format",
+                "json"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 418,
+              "ppid": 417,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_page_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 419,
+              "ppid": 417,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_exercise_locator_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 420,
+              "ppid": 417,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_search_index.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            },
+            {
+              "pid": 421,
+              "ppid": 417,
+              "argv": [
+                "/home/hatch/workspace/kaoyan-system/tool/scripts/build_book_series_indexes.py",
+                "--format",
+                "quiet"
+              ],
+              "executable": "/tmp/issue-test-venv/bin/python"
+            }
+          ]
+        }
+      ],
+      "statistics": {
+        "mean_seconds": 0.6438295610500517,
+        "median_seconds": 0.6300317269997322,
+        "p95_seconds": 0.747490093000124
+      },
+      "python_subprocesses": {
+        "min": 5,
+        "max": 5,
+        "per_sample": [
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5,
+          5
+        ]
+      }
+    }
+  },
+  "query_threshold": {
+    "seconds": 2.0,
+    "exceeded": false,
+    "conclusion": "暂不启动 in-process 重构"
+  }
+}

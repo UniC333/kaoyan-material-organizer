@@ -29,8 +29,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--vault-root", default=default_vault_root_arg())
     parser.add_argument("--plan-date", required=True)
-    parser.add_argument("--time-budget-minutes", type=int, default=20)
-    parser.add_argument("--max-items", type=int, default=3)
+    parser.add_argument("--time-budget-minutes", type=int, default=None)
+    parser.add_argument("--max-items", type=int, default=None)
     parser.add_argument("--format", choices=("json", "quiet"), default="json")
     return parser.parse_args()
 
@@ -120,8 +120,8 @@ def build_payload(
     plan_date: str,
     *,
     events: list[dict[str, Any]] | None = None,
-    time_budget_minutes: int = 20,
-    max_items: int = 3,
+    time_budget_minutes: int | None = None,
+    max_items: int | None = None,
 ) -> dict[str, Any]:
     daily_card = _load_daily_card(index_root)
     formal_follow_ups: list[dict[str, Any]] = []

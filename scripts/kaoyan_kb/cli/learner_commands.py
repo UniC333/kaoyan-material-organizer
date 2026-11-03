@@ -8,7 +8,7 @@ from collections.abc import Callable
 ARTIFACT_COMMANDS = (
     ('orchestration-context', 'build_study_orchestration_context.py', False, (("--as-of", {}), ("--freshness-days", {"type": int, "default": 14}))),
     ('daily-card', 'build_daily_study_card.py', True, ()),
-    ('review-followups', 'build_review_followups.py', True, (("--time-budget-minutes", {"type": int, "default": 20}), ("--max-items", {"type": int, "default": 3}))),
+    ('review-followups', 'build_review_followups.py', True, (("--time-budget-minutes", {"type": int, "default": None}), ("--max-items", {"type": int, "default": None}))),
     ('weekly-orchestration', 'build_weekly_orchestration.py', True, (("--override-json", {}),)),
     ('teacher-loop-artifact', 'build_r17_teacher_loop_artifact.py', True, ()),
     ('adaptive-coaching-context', 'build_adaptive_coaching_context.py', True, (("--stale-signal-days", {"type": int, "default": 21}),)),
@@ -164,7 +164,10 @@ def dispatch_learner(args: argparse.Namespace, run_script: Callable[..., str], e
         return None
     extra = ["--plan-date", args.plan_date]
     if command == "review-followups":
-        extra.extend(["--time-budget-minutes", str(args.time_budget_minutes), "--max-items", str(args.max_items)])
+        if args.time_budget_minutes is not None:
+            extra.extend(["--time-budget-minutes", str(args.time_budget_minutes)])
+        if args.max_items is not None:
+            extra.extend(["--max-items", str(args.max_items)])
     if command == "adaptive-coaching-context":
         extra.extend(["--stale-signal-days", str(args.stale_signal_days)])
     elif command == "longitudinal-tutoring-context":

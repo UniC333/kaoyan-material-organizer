@@ -1,0 +1,482 @@
+{
+  "description": "Pre-rename public API and SHA-256 of exact generated UTF-8 files/stdout; only temporary root paths normalize to <ROOT>. Captured before issue #27 edits.",
+  "inputs": {
+    "missing": {
+      "report.json": {
+        "task_id": "M7-T04",
+        "audit_date": "2026-11-03",
+        "overall_status": "review-needed",
+        "release_scope": {
+          "in_scope_subjects": [
+            "数学",
+            "408"
+          ],
+          "tracked_subjects": [
+            "数学",
+            "408",
+            "英语",
+            "政治"
+          ]
+        },
+        "overall_summary": {
+          "in_scope_ready_subjects": [
+            "数学",
+            "408"
+          ],
+          "out_of_scope_subjects": [
+            "英语"
+          ],
+          "source_missing_subjects": [
+            "政治"
+          ],
+          "review_needed_subjects": [],
+          "blocked_subjects": []
+        },
+        "subjects": [
+          {
+            "subject": "数学",
+            "scope_status": "in-scope",
+            "status": "ready",
+            "chapter_bodies": 1,
+            "qa_entries": 1,
+            "canonical_cards": 1
+          }
+        ]
+      }
+    },
+    "ready": {
+      "kb/indexes/search_manifest.json": {
+        "doc_count": 3,
+        "changed_count": 1,
+        "rebuild_mode": "changed-only",
+        "performance_boundary": {
+          "status": "ok",
+          "reasons": []
+        },
+        "manifest_delta": {
+          "added_count": 1,
+          "updated_count": 0,
+          "removed_count": 0
+        }
+      },
+      "kb/runs/RUN-fixture.json": {
+        "run_id": "RUN-fixture",
+        "run_type": "maintain",
+        "status": "running",
+        "resume_key": "fixture",
+        "steps": {
+          "index": {
+            "checkpoint": {
+              "done": 1
+            }
+          }
+        }
+      },
+      "backup/snapshots/recovery/latest_restore_summary.json": {
+        "restored": true,
+        "recovery_status": "restored_with_cleanup_boundary",
+        "cleanup_summary": {
+          "machine_owned_pruned_count": 1,
+          "human_owned_protected_count": 1,
+          "pruned_relative_paths": [
+            "machine.json"
+          ],
+          "protected_relative_paths": [
+            "human.md"
+          ]
+        },
+        "resume_boundary": {
+          "resume_only_checkpoint_available": true,
+          "checkpoint_relative_paths": [
+            "step.json"
+          ]
+        }
+      },
+      "workspace/reports/r16_in_scope_gray_release_report.json": {
+        "task_id": "M7-T04",
+        "audit_date": "2026-11-03",
+        "overall_status": "ready-with-scope-limits",
+        "release_scope": {
+          "in_scope_subjects": [
+            "数学",
+            "408"
+          ],
+          "tracked_subjects": [
+            "数学",
+            "408",
+            "英语",
+            "政治"
+          ]
+        },
+        "overall_summary": {
+          "in_scope_ready_subjects": [
+            "数学",
+            "408"
+          ],
+          "out_of_scope_subjects": [
+            "英语"
+          ],
+          "source_missing_subjects": [
+            "政治"
+          ],
+          "review_needed_subjects": [],
+          "blocked_subjects": []
+        },
+        "subjects": [
+          {
+            "subject": "数学",
+            "scope_status": "in-scope",
+            "status": "ready",
+            "chapter_bodies": 1,
+            "qa_entries": 1,
+            "canonical_cards": 1
+          }
+        ]
+      },
+      "report.json": {
+        "task_id": "M7-T04",
+        "audit_date": "2026-11-03",
+        "overall_status": "ready-with-scope-limits",
+        "release_scope": {
+          "in_scope_subjects": [
+            "数学",
+            "408"
+          ],
+          "tracked_subjects": [
+            "数学",
+            "408",
+            "英语",
+            "政治"
+          ]
+        },
+        "overall_summary": {
+          "in_scope_ready_subjects": [
+            "数学",
+            "408"
+          ],
+          "out_of_scope_subjects": [
+            "英语"
+          ],
+          "source_missing_subjects": [
+            "政治"
+          ],
+          "review_needed_subjects": [],
+          "blocked_subjects": []
+        },
+        "subjects": [
+          {
+            "subject": "数学",
+            "scope_status": "in-scope",
+            "status": "ready",
+            "chapter_bodies": 1,
+            "qa_entries": 1,
+            "canonical_cards": 1
+          }
+        ]
+      },
+      "vault/99_索引与状态/20_learner_layer_acceptance_artifact.json": {
+        "artifact_id": "r15-learner-layer-acceptance",
+        "artifact_contract_version": "r15.learner.v1",
+        "readiness_status": "ready-for-post-r15-planning",
+        "fact_safety_status": {
+          "status": "fact_layer_protected"
+        }
+      },
+      "kb/runs/resume_index.json": {
+        "fixture": "RUN-fixture"
+      },
+      "vault/99_索引与状态/21_r16_run_manifest_artifact.json": {
+        "artifact_id": "r16-run-manifest-reset",
+        "artifact_contract_version": "r16.run-manifest.v1",
+        "durability_intake_status": {
+          "status": "ready-for-r16-t02"
+        }
+      },
+      "vault/99_索引与状态/22_r16_changed_only_boundary_artifact.json": {
+        "artifact_id": "r16-changed-only-boundary",
+        "artifact_contract_version": "r16.changed-only.v1",
+        "readiness_status": "ready-for-r16-t03"
+      },
+      "vault/99_索引与状态/23_r16_recovery_boundary_artifact.json": {
+        "artifact_id": "r16-recovery-boundary",
+        "artifact_contract_version": "r16.recovery.v1",
+        "readiness_status": "ready-for-r16-t04",
+        "recovery_boundary_status": {
+          "latest_restore_status": "restored_with_cleanup_boundary",
+          "resume_only_checkpoint_available": true
+        }
+      },
+      "vault/99_索引与状态/24_r16_gray_release_artifact.json": {
+        "artifact_id": "r16-gray-release-scope",
+        "artifact_contract_version": "r16.gray-release.v1",
+        "readiness_status": "ready-for-r16-t05"
+      },
+      "vault/99_索引与状态/25_r16_formal_usable_acceptance_artifact.json": {
+        "artifact_id": "r16-formal-usable-acceptance",
+        "artifact_contract_version": "r16.formal-usable.v1",
+        "readiness_status": "ready-for-r17-t01",
+        "release_decision": {
+          "status": "accepted-with-current-scope",
+          "scope_limited_to_subjects": [
+            "数学",
+            "408"
+          ],
+          "out_of_scope_subjects": [
+            "英语",
+            "政治"
+          ]
+        }
+      }
+    }
+  },
+  "public_api": {
+    "build_run_manifest_artifact": {
+      "LEARNER_ACCEPTANCE_JSON": "20_learner_layer_acceptance_artifact.json",
+      "INDEX_DIRNAME": "99_索引与状态",
+      "RUN_INDEX_JSON": "resume_index.json",
+      "RUN_SCHEMA_VERSION": "1.0",
+      "ARTIFACT_JSON": "21_r16_run_manifest_artifact.json",
+      "ARTIFACT_MD": "21_r16_run_manifest_artifact.md",
+      "ARTIFACT_ID": "r16-run-manifest-reset",
+      "ARTIFACT_CONTRACT_VERSION": "r16.run-manifest.v1",
+      "POST_R16_T01_SUCCESSOR": {
+        "track_id": "R16-T02",
+        "title": "changed-only rebuild and operational performance boundary",
+        "scope": "run-manifest -> changed-only rebuild -> performance-warning boundary",
+        "machine_readable_entry_point": "R16-T02 -> M7-T02",
+        "status": "defined_not_started"
+      },
+      "parse_args": "() -> 'argparse.Namespace'",
+      "build_payload": "(index_root: 'Path') -> 'dict[str, Any]'",
+      "render_markdown": "(payload: 'dict[str, Any]') -> 'str'",
+      "main": "() -> 'int'"
+    },
+    "build_changed_only_artifact": {
+      "R16_T01_ARTIFACT_JSON": "21_r16_run_manifest_artifact.json",
+      "INDEX_DIRNAME": "99_索引与状态",
+      "ARTIFACT_JSON": "22_r16_changed_only_boundary_artifact.json",
+      "ARTIFACT_MD": "22_r16_changed_only_boundary_artifact.md",
+      "ARTIFACT_ID": "r16-changed-only-boundary",
+      "ARTIFACT_CONTRACT_VERSION": "r16.changed-only.v1",
+      "POST_R16_T02_SUCCESSOR": {
+        "track_id": "R16-T03",
+        "title": "disaster recovery, snapshot restore, and machine-owned cleanup boundary",
+        "scope": "changed-only rebuild -> recovery rehearsal -> machine-owned cleanup boundary",
+        "machine_readable_entry_point": "R16-T03 -> M7-T03",
+        "status": "defined_not_started"
+      },
+      "parse_args": "() -> 'argparse.Namespace'",
+      "build_payload": "(index_root: 'Path') -> 'dict[str, Any]'",
+      "render_markdown": "(payload: 'dict[str, Any]') -> 'str'",
+      "main": "() -> 'int'"
+    },
+    "build_recovery_artifact": {
+      "R16_T02_ARTIFACT_JSON": "22_r16_changed_only_boundary_artifact.json",
+      "INDEX_DIRNAME": "99_索引与状态",
+      "ARTIFACT_JSON": "23_r16_recovery_boundary_artifact.json",
+      "ARTIFACT_MD": "23_r16_recovery_boundary_artifact.md",
+      "ARTIFACT_ID": "r16-recovery-boundary",
+      "ARTIFACT_CONTRACT_VERSION": "r16.recovery.v1",
+      "POST_R16_T03_SUCCESSOR": {
+        "track_id": "R16-T04",
+        "title": "in-scope real-material gray release and release-scope boundary",
+        "scope": "recovery boundary -> gray release -> release-scope reporting",
+        "machine_readable_entry_point": "R16-T04 -> M7-T04",
+        "status": "defined_not_started"
+      },
+      "parse_args": "() -> 'argparse.Namespace'",
+      "build_payload": "(index_root: 'Path') -> 'dict[str, Any]'",
+      "render_markdown": "(payload: 'dict[str, Any]') -> 'str'",
+      "main": "() -> 'int'"
+    },
+    "build_gray_release_artifact": {
+      "R16_T03_ARTIFACT_JSON": "23_r16_recovery_boundary_artifact.json",
+      "INDEX_DIRNAME": "99_索引与状态",
+      "REPORT_JSON": "r16_in_scope_gray_release_report.json",
+      "REPORT_MD": "r16_in_scope_gray_release_report.md",
+      "ARTIFACT_JSON": "24_r16_gray_release_artifact.json",
+      "ARTIFACT_MD": "24_r16_gray_release_artifact.md",
+      "ARTIFACT_ID": "r16-gray-release-scope",
+      "ARTIFACT_CONTRACT_VERSION": "r16.gray-release.v1",
+      "IN_SCOPE_SUBJECTS": [
+        "数学",
+        "408"
+      ],
+      "TRACKED_SUBJECTS": [
+        "数学",
+        "408",
+        "英语",
+        "政治"
+      ],
+      "POST_R16_T04_SUCCESSOR": {
+        "track_id": "R16-T05",
+        "title": "install, daily-use, review, and recovery handoff boundary",
+        "scope": "gray release -> release-scope -> operator and learner handoff",
+        "machine_readable_entry_point": "R16-T05 -> M7-T05",
+        "status": "defined_not_started"
+      },
+      "parse_args": "() -> 'argparse.Namespace'",
+      "script_path": "(name: 'str') -> 'Path'",
+      "run_script": "(name: 'str', *args: 'str') -> 'str'",
+      "build_report": "(vault_root: 'Path') -> 'dict[str, Any]'",
+      "render_report_markdown": "(payload: 'dict[str, Any]') -> 'str'",
+      "build_artifact": "(index_root: 'Path', report_payload: 'dict[str, Any]') -> 'dict[str, Any]'",
+      "render_artifact_markdown": "(payload: 'dict[str, Any]') -> 'str'",
+      "main": "() -> 'int'"
+    },
+    "build_formal_usable_artifact": {
+      "LEARNER_ACCEPTANCE_JSON": "20_learner_layer_acceptance_artifact.json",
+      "R16_T02_ARTIFACT_JSON": "22_r16_changed_only_boundary_artifact.json",
+      "R16_T04_ARTIFACT_JSON": "24_r16_gray_release_artifact.json",
+      "R16_T03_ARTIFACT_JSON": "23_r16_recovery_boundary_artifact.json",
+      "R16_T01_ARTIFACT_JSON": "21_r16_run_manifest_artifact.json",
+      "INDEX_DIRNAME": "99_索引与状态",
+      "ARTIFACT_JSON": "25_r16_formal_usable_acceptance_artifact.json",
+      "ARTIFACT_MD": "25_r16_formal_usable_acceptance_artifact.md",
+      "ARTIFACT_ID": "r16-formal-usable-acceptance",
+      "ARTIFACT_CONTRACT_VERSION": "r16.formal-usable.v1",
+      "RELEASE_DOC_RELATIVE_PATH": "docs/releases/v1.0-acceptance.md",
+      "POST_R16_SUCCESSOR": {
+        "track_id": "R17-T01",
+        "title": "study orchestration and teacher-loop reset",
+        "scope": "formal-usable local study engine -> study orchestration -> teacher-loop entry",
+        "machine_readable_entry_point": "R17-T01 -> M8-T01",
+        "status": "defined_not_started"
+      },
+      "parse_args": "() -> 'argparse.Namespace'",
+      "build_payload": "(index_root: 'Path', workspace_root: 'Path') -> 'dict[str, Any]'",
+      "render_artifact_markdown": "(payload: 'dict[str, Any]') -> 'str'",
+      "render_release_doc": "(payload: 'dict[str, Any]') -> 'str'",
+      "main": "() -> 'int'"
+    },
+    "build_study_orchestration_context": {
+      "LEARNER_ACCEPTANCE_JSON": "20_learner_layer_acceptance_artifact.json",
+      "R16_T02_ARTIFACT_JSON": "22_r16_changed_only_boundary_artifact.json",
+      "R16_T06_ARTIFACT_JSON": "25_r16_formal_usable_acceptance_artifact.json",
+      "INDEX_DIRNAME": "99_索引与状态",
+      "ARTIFACT_JSON": "26_r17_study_orchestration_context.json",
+      "ARTIFACT_MD": "26_r17_study_orchestration_context.md",
+      "ARTIFACT_ID": "r17-study-orchestration-context",
+      "ARTIFACT_CONTRACT_VERSION": "r17.orchestration-context.v1",
+      "POST_R17_T02_SUCCESSOR": {
+        "track_id": "R17-T03",
+        "title": "daily recommendation, study card, and scope-aware action packaging boundary",
+        "scope": "orchestration input -> learner-day context -> daily study card packaging",
+        "machine_readable_entry_point": "R17-T03 -> M8-T03",
+        "status": "defined_not_started"
+      },
+      "parse_args": "() -> 'argparse.Namespace'",
+      "build_payload": "(index_root: 'Path', *, as_of: 'datetime', freshness_days: 'int') -> 'dict[str, Any]'",
+      "render_markdown": "(payload: 'dict[str, Any]') -> 'str'",
+      "main": "() -> 'int'"
+    }
+  },
+  "outputs": {
+    "missing": {
+      "build_run_manifest_artifact": {
+        "files": {
+          "vault/99_索引与状态/21_r16_run_manifest_artifact.json": "37bf92ce168b88ff9cd4ac21d5485fbfae27ec07ce92f9925c6f463e47d194f3",
+          "vault/99_索引与状态/21_r16_run_manifest_artifact.md": "fbcb7bbc3ee15b9e9fab4bd664a1230a4db7ff35d1db5d9ac360ef6a84b76e1f"
+        },
+        "stdout": "0d51bb5a2320069fb4a2ccff5eb140baf5f0c7ea0c18739fe5d1d6ab3bcfcd8d",
+        "readiness": "intake-gaps-remain"
+      },
+      "build_changed_only_artifact": {
+        "files": {
+          "vault/99_索引与状态/22_r16_changed_only_boundary_artifact.json": "a76aa3315ecb0e98918bfd9c7e90d4b661a97f48d750ebbccdf4bdc1c7e465c1",
+          "vault/99_索引与状态/22_r16_changed_only_boundary_artifact.md": "7aa32a6d5d5f1a7e107a94ec4facfb01b14719e95be39dae19ea2aee8aa6f024"
+        },
+        "stdout": "adef45636c624dd81a70779c5717133ef85329907e299847b1fdf82b2cdde987",
+        "readiness": "not-ready-for-r16-t03"
+      },
+      "build_recovery_artifact": {
+        "files": {
+          "vault/99_索引与状态/23_r16_recovery_boundary_artifact.json": "58328e3b89ad0a193037fba9e11ec780441e00807bfd5ee8c3c78dc42790d107",
+          "vault/99_索引与状态/23_r16_recovery_boundary_artifact.md": "9f7185a4040f2da3773980f3278aa0a2c50239c93d8090d617734ba25bd1b9cc"
+        },
+        "stdout": "a4aab14eedbde46b3cb7787572e339148c3e5eed428b8be0c11e9e80e6a8f3e4",
+        "readiness": "not-ready-for-r16-t04"
+      },
+      "build_gray_release_artifact": {
+        "files": {
+          "vault/99_索引与状态/24_r16_gray_release_artifact.json": "62cb70a6b87a1f0e7413086985b9172e5ee38cce68de88ccef8329c9b5e01801",
+          "vault/99_索引与状态/24_r16_gray_release_artifact.md": "ea27bacd707cdd7204729badb7869b61d09cb8e892ee7e8421c6938b11e50d49",
+          "workspace/reports/r16_in_scope_gray_release_report.json": "03c7b5b36380260b23dd588d6586804586148a245e9c1780de3090f7178568e8",
+          "workspace/reports/r16_in_scope_gray_release_report.md": "886079b8a6ea68e035bffc3f65309a7be8c26ee6c2762ef842a29b905c5d2b90"
+        },
+        "stdout": "40f8d18d1d618462410de0d9544927c99690452db36aea6c9a51368ebded4942",
+        "readiness": "not-ready-for-r16-t05"
+      },
+      "build_formal_usable_artifact": {
+        "files": {
+          "vault/99_索引与状态/25_r16_formal_usable_acceptance_artifact.json": "d5585eec1b746db09314f30b46b4e394ef155b9827409fc5028c105d79894580",
+          "vault/99_索引与状态/25_r16_formal_usable_acceptance_artifact.md": "384369bbdf5f191c772e454d4e2f13d75f19cd8d1b6e803058a5ce47121ea6b8",
+          "workspace/docs/releases/v1.0-acceptance.md": "83c2fb8558e6f80c5185e374c32bdaf337f236369a99660166c7593b132a8f07"
+        },
+        "stdout": "7349aeade90d93a4405a05413a7cdd2d652c3d09e199760633c0cd7d325e2c01",
+        "readiness": "not-ready-for-r17-t01"
+      },
+      "build_study_orchestration_context": {
+        "files": {
+          "vault/99_索引与状态/26_r17_study_orchestration_context.json": "b0f74cc980c05c0538940ae8838af7b7dffb90fcf0c43e5d9b72463881e43653",
+          "vault/99_索引与状态/26_r17_study_orchestration_context.md": "4708c841017d6f2cf23c192f8050cdcd2efe0b0b3915ae0b5d93ba3d17a14e87"
+        },
+        "stdout": "c0d033cde65dd673ea8cfaa48bc32e3d9b310cc77a516fd8b9fb6251d8551d83",
+        "readiness": "not-ready-for-r17-t03"
+      }
+    },
+    "ready": {
+      "build_run_manifest_artifact": {
+        "files": {
+          "vault/99_索引与状态/21_r16_run_manifest_artifact.json": "5951dd434d5bf96d0f9083ad15efbca49823ef9614d4c25bacee7228af15df61",
+          "vault/99_索引与状态/21_r16_run_manifest_artifact.md": "f0ed2e1d0086de882851df59d7cf259011de89db28ea91807baec3ee2e0b37a1"
+        },
+        "stdout": "191395d9eb2066e0aea73c0c54156b2ce08064b7ac1cbf1ec0a1fe70c874b7e3",
+        "readiness": "ready-for-r16-t02"
+      },
+      "build_changed_only_artifact": {
+        "files": {
+          "vault/99_索引与状态/22_r16_changed_only_boundary_artifact.json": "df4ce63e7032e025477c3fa70a266f9e151fc7fffbc750a2a4483cc3281eef57",
+          "vault/99_索引与状态/22_r16_changed_only_boundary_artifact.md": "9b953a33aafe930897d900a2ff74ff18d7ec9392c74b35e2a900a57c99291cb6"
+        },
+        "stdout": "0560fd32805b7485331e2c5f7ffb87c8516ed22addcc0ec89c1ae660a6de2f16",
+        "readiness": "ready-for-r16-t03"
+      },
+      "build_recovery_artifact": {
+        "files": {
+          "vault/99_索引与状态/23_r16_recovery_boundary_artifact.json": "4a648edcde081223a5173abdf7e4ea0f715c1521f91fc47d5bfb4d0e81a1e6c7",
+          "vault/99_索引与状态/23_r16_recovery_boundary_artifact.md": "b77f3aef0204ec09dddc71849d77ee17fc223cda18fbb404dfd335f7c4c95c67"
+        },
+        "stdout": "4ca8d88b293711c5d904f2b169bf3d0ccdd9b2c20adcd2ac39fe8ffb94748791",
+        "readiness": "ready-for-r16-t04"
+      },
+      "build_gray_release_artifact": {
+        "files": {
+          "vault/99_索引与状态/24_r16_gray_release_artifact.json": "e90b58e90bba26e39e35de233e2444bfe3c6dd99faf26853c3c4f55caef477dc",
+          "vault/99_索引与状态/24_r16_gray_release_artifact.md": "4f648739fe11d530f154f0350c915d54128185727be75610fe6825eda729901b",
+          "workspace/reports/r16_in_scope_gray_release_report.json": "3a4ba4c1fb5e110ff272b1fc801a6d6e0f23a1d28161d2830a1674a322961ad8",
+          "workspace/reports/r16_in_scope_gray_release_report.md": "e10248a9dfb388d18c36905af661924f24ac274c45cce06873ca727bd67dfb53"
+        },
+        "stdout": "2c341b4bbed98757bbf4cfff3a7e57260279443bdb2632cdfc97f1474887712b",
+        "readiness": "ready-for-r16-t05"
+      },
+      "build_formal_usable_artifact": {
+        "files": {
+          "vault/99_索引与状态/25_r16_formal_usable_acceptance_artifact.json": "ca981a3cc3ab1641da97cbd606ac7168b7eeb9562d9c694930ed3f07b56c93af",
+          "vault/99_索引与状态/25_r16_formal_usable_acceptance_artifact.md": "3210391abf76ba4321d5e4d19c0fb10de43ecf85c578570ed2b1ce27e15f73b5",
+          "workspace/docs/releases/v1.0-acceptance.md": "fc75c73ef8d79b72095d32be7fcfa19a0a5aa6d9ba8039dd5f69ee08f0656270"
+        },
+        "stdout": "ad0f146fed5a40d483b288e367f2fd2aec002aa6785070ba34de3e2183f33cf3",
+        "readiness": "ready-for-r17-t01"
+      },
+      "build_study_orchestration_context": {
+        "files": {
+          "vault/99_索引与状态/26_r17_study_orchestration_context.json": "6ea00f9ef28bf1d9da619644e1602f155e46fe03f8e3573bd607bd6a4f4c38c6",
+          "vault/99_索引与状态/26_r17_study_orchestration_context.md": "98723a6c35c2a511cf9ad6a9a09b9338dcc6c276681d4f374a304db389e4d20e"
+        },
+        "stdout": "b836230eee974883ef5ccdc85035b525866c5d2ca6aef31e37ae8e3b60df9473",
+        "readiness": "ready-for-r17-t03"
+      }
+    }
+  }
+}

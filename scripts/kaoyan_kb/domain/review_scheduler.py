@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any, Iterable
 
+from config import load_runtime_config
+from kaoyan_kb.domain.review_config import REVIEW_SUBJECT_TOKENS
+
 
 FLUENCY_LEVELS = (
     "very_fluent",
@@ -11,12 +14,6 @@ FLUENCY_LEVELS = (
     "needs_remediation",
 )
 REVIEW_CONTEXTS = {"chapter_review", "scheduled_review"}
-INITIAL_INTERVALS = {
-    "very_fluent": 14,
-    "fairly_fluent": 7,
-    "not_fluent": 3,
-    "needs_remediation": 1,
-}
 PRIORITY = {
     "needs_remediation": 0,
     "not_fluent": 1,
@@ -31,11 +28,16 @@ def _as_date(value: str) -> date:
 
 def is_supported_review_subject(subject: str) -> bool:
     normalized = subject.strip().lower()
-    excluded = ("英语", "english", "洛谷", "算法竞赛")
-    if any(token in normalized for token in excluded):
-        return False
-    allowed = ("数学", "408", "数据结构", "计算机组成", "操作系统", "计算机网络")
-    return any(token in normalized for token in allowed)
+    enabled = load_runtime_config().review_subjects
+    matches = [
+        name for name, tokens in REVIEW_SUBJECT_TOKENS.items()
+        if any(token in normalized for token in tokens)
+    ]
+    # Preserve classification of legacy mixed labels, but let config enable them.
+    for name in ("英语", "洛谷", "算法竞赛"):
+        if name in matches:
+            return name in enabled
+    return any(name in enabled for name in matches)
 
 
 def effective_fluency(result: str, fluency: str) -> str:
@@ -51,13 +53,14 @@ def effective_fluency(result: str, fluency: str) -> str:
 def next_interval_days(fluency: str, previous_interval: int | None = None) -> int:
     if fluency not in FLUENCY_LEVELS:
         raise ValueError(f"unsupported fluency: {fluency}")
-    if previous_interval is None or previous_interval <= 0:
-        return INITIAL_INTERVALS[fluency]
-    if fluency == "very_fluent":
-        return min(45, max(1, previous_interval * 2))
-    if fluency == "fairly_fluent":
-        return min(21, max(1, round(previous_interval * 1.5)))
-    return INITIAL_INTERVALS[fluency]
+    settings = load_runtime_config().adaptive_review
+    rule = settings["intervals"][fluency]
+    if previous_interval is None or previous_interval <= 0 or rule["multiplier"] == 0:
+        return rule["initial_days"]
+    return min(
+        rule["max_days"],
+        max(settings["min_interval_days"], round(previous_interval * rule["multiplier"])),
+    )
 
 
 def review_identity(subject: str, payload: dict[str, Any]) -> tuple[str, str]:
@@ -144,13 +147,14 @@ def schedule_fields(
     effective = effective_fluency(result, fluency)
     interval = next_interval_days(effective, previous_interval)
     reviewed_on = _as_date(occurred_at)
-    default_minutes = 10 if "数学" in subject else 5
+    settings = load_runtime_config().adaptive_review
+    default_minutes = settings["math_default_minutes"] if "数学" in subject else settings["default_minutes"]
     estimate = duration_minutes if duration_minutes and duration_minutes > 0 else default_minutes
     return {
         "effective_fluency": effective,
         "interval_days": interval,
         "due_date": (reviewed_on + timedelta(days=interval)).isoformat(),
-        "estimated_minutes": min(12, max(3, int(estimate))),
+        "estimated_minutes": min(settings["max_estimated_minutes"], max(settings["min_estimated_minutes"], int(estimate))),
     }
 
 
@@ -158,9 +162,15 @@ def build_due_queue(
     events: Iterable[dict[str, Any]],
     *,
     plan_date: str,
-    time_budget_minutes: int = 20,
-    max_items: int = 3,
+    time_budget_minutes: int | None = None,
+    max_items: int | None = None,
 ) -> dict[str, Any]:
+    settings = load_runtime_config().adaptive_review
+    time_budget_minutes = settings["time_budget_minutes"] if time_budget_minutes is None else time_budget_minutes
+    max_items = settings["max_items"] if max_items is None else max_items
+    for name, value in (("time_budget_minutes", time_budget_minutes), ("max_items", max_items)):
+        if type(value) is not int or value < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
     today = _as_date(plan_date)
     states = list(latest_review_state(events).values())
     due: list[dict[str, Any]] = []
@@ -184,13 +194,14 @@ def build_due_queue(
     )
     selected: list[dict[str, Any]] = []
     used = 0
-    full_math_selected = False
+    full_math_selected = 0
     for item in due:
-        estimate = int(item.get("estimated_minutes", 0) or 5)
+        estimate = item.get("estimated_minutes")
+        estimate = int(settings["default_minutes"] if estimate is None else estimate)
         is_full_math = "数学" in str(item.get("subject", "")) and "full_calculation" in item.get("tags", [])
-        if len(selected) >= max(0, max_items):
+        if len(selected) >= max(0, max_items) or time_budget_minutes == 0:
             break
-        if is_full_math and full_math_selected:
+        if is_full_math and full_math_selected >= settings["max_full_math_items"]:
             continue
         if selected and used + estimate > max(0, time_budget_minutes):
             continue
@@ -198,7 +209,7 @@ def build_due_queue(
             continue
         selected.append(item)
         used += estimate
-        full_math_selected = full_math_selected or is_full_math
+        full_math_selected += int(is_full_math)
     selected_ids = {item["event_id"] for item in selected}
     deferred = [item for item in due if item["event_id"] not in selected_ids]
     future_dates = sorted(

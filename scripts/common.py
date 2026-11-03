@@ -22,6 +22,7 @@ from config import (
     RuntimeConfig,
     load_runtime_config,
 )
+from kaoyan_kb.storage.file_lock import file_lock
 from kaoyan_kb.storage.atomic_io import load_json, load_json_or_default, save_json, save_text
 from kaoyan_kb.domain.evidence_publication import (
     ACCEPTED_EVIDENCE_REVIEW_STATUSES,
@@ -702,17 +703,18 @@ def ensure_kb_layout(default: Path | None = None) -> dict[str, Path]:
     for path in paths.values():
         path.mkdir(parents=True, exist_ok=True)
     schema_version_path = root / "schema-version.json"
-    existing_schema_version = load_json_or_default(schema_version_path, {})
-    save_json(
-        schema_version_path,
-        {
-            "schema_version": SCHEMA_VERSION,
-            "created_at": existing_schema_version.get("created_at") or now_iso(),
-            "updated_at": now_iso(),
-            "root_policy": "machine-side metadata only; learning-facing outputs stay in Obsidian vault",
-            "migration_state": "provenance-contract-enabled",
-        },
-    )
+    with file_lock(schema_version_path):
+        existing_schema_version = load_json_or_default(schema_version_path, {})
+        save_json(
+            schema_version_path,
+            {
+                "schema_version": SCHEMA_VERSION,
+                "created_at": existing_schema_version.get("created_at") or now_iso(),
+                "updated_at": now_iso(),
+                "root_policy": "machine-side metadata only; learning-facing outputs stay in Obsidian vault",
+                "migration_state": "provenance-contract-enabled",
+            },
+        )
     for name, payload in load_core_schema_templates().items():
         schema_path = paths["schemas"] / name
         save_json(schema_path, payload, ignored_compare_keys=())
@@ -779,39 +781,41 @@ def _max_existing_id_number(kind: str, subject: str, layout: dict[str, Path]) ->
 def allocate_kb_id(kind: str, subject: str, default: Path | None = None) -> str:
     layout = ensure_kb_layout(default)
     counter_path = layout["indexes"] / "id_counters.json"
-    counters = load_json_or_default(counter_path, {})
-    key = _counter_key(kind, subject)
-    current_counter = int(counters.get(key, 0) or 0)
-    existing_max = _max_existing_id_number(kind, subject, layout)
-    counters[key] = max(current_counter, existing_max) + 1
-    save_json(counter_path, counters)
-    code = subject_id_code(subject)
-    number = counters[key]
-    if kind == "source":
-        return f"SRC-{code}-{number:04d}"
-    if kind == "file":
-        return f"FILE-{code}-{number:06d}"
-    if kind == "chapter":
-        return f"CH-{code}-{number:04d}"
-    if kind == "chunk":
-        return f"CHUNK-{code}-{number:06d}"
-    if kind == "evidence":
-        return f"EV-{code}-{number:06d}"
-    if kind == "claim":
-        return f"CLAIM-{code}-{number:06d}"
-    if kind == "conflict":
-        return f"CONFLICT-{code}-{number:06d}"
-    raise ValueError(f"unsupported kb id kind: {kind}")
+    with file_lock(counter_path):
+        counters = load_json_or_default(counter_path, {})
+        key = _counter_key(kind, subject)
+        current_counter = int(counters.get(key, 0) or 0)
+        existing_max = _max_existing_id_number(kind, subject, layout)
+        counters[key] = max(current_counter, existing_max) + 1
+        save_json(counter_path, counters)
+        code = subject_id_code(subject)
+        number = counters[key]
+        if kind == "source":
+            return f"SRC-{code}-{number:04d}"
+        if kind == "file":
+            return f"FILE-{code}-{number:06d}"
+        if kind == "chapter":
+            return f"CH-{code}-{number:04d}"
+        if kind == "chunk":
+            return f"CHUNK-{code}-{number:06d}"
+        if kind == "evidence":
+            return f"EV-{code}-{number:06d}"
+        if kind == "claim":
+            return f"CLAIM-{code}-{number:06d}"
+        if kind == "conflict":
+            return f"CONFLICT-{code}-{number:06d}"
+        raise ValueError(f"unsupported kb id kind: {kind}")
 
 
 def allocate_run_id(default: Path | None = None) -> str:
     layout = ensure_kb_layout(default)
     counter_path = layout["indexes"] / "run_counters.json"
-    counters = load_json_or_default(counter_path, {})
-    stamp = datetime.now().strftime("%Y%m%d")
-    counters[stamp] = int(counters.get(stamp, 0)) + 1
-    save_json(counter_path, counters)
-    return f"RUN-{stamp}-{counters[stamp]:03d}"
+    with file_lock(counter_path):
+        counters = load_json_or_default(counter_path, {})
+        stamp = datetime.now().strftime("%Y%m%d")
+        counters[stamp] = int(counters.get(stamp, 0)) + 1
+        save_json(counter_path, counters)
+        return f"RUN-{stamp}-{counters[stamp]:03d}"
 
 
 def sha256_for_file(path: Path) -> str:

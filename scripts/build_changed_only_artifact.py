@@ -7,13 +7,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from build_r16_run_manifest_artifact import ARTIFACT_JSON as R16_T01_ARTIFACT_JSON
+from runtime_artifact_contracts import CONTRACTS as _CONTRACTS
+
+from build_run_manifest_artifact import ARTIFACT_JSON as R16_T01_ARTIFACT_JSON
 from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, load_json_or_default, save_json, save_text
 
-ARTIFACT_JSON = "22_r16_changed_only_boundary_artifact.json"
-ARTIFACT_MD = "22_r16_changed_only_boundary_artifact.md"
-ARTIFACT_ID = "r16-changed-only-boundary"
-ARTIFACT_CONTRACT_VERSION = "r16.changed-only.v1"
+ARTIFACT_JSON = _CONTRACTS["changed_only"]["artifact_json"]
+ARTIFACT_MD = _CONTRACTS["changed_only"]["artifact_md"]
+ARTIFACT_ID = _CONTRACTS["changed_only"]["artifact_id"]
+ARTIFACT_CONTRACT_VERSION = _CONTRACTS["changed_only"]["contract_version"]
 POST_R16_T02_SUCCESSOR = {
     "track_id": "R16-T03",
     "title": "disaster recovery, snapshot restore, and machine-owned cleanup boundary",
@@ -30,12 +32,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_r16_t01_artifact(index_root: Path) -> dict[str, Any]:
+def _load_run_manifest_artifact(index_root: Path) -> dict[str, Any]:
     return load_json_or_default(
         index_root / R16_T01_ARTIFACT_JSON,
         {
             "artifact_id": "",
-            "durability_intake_status": {"status": "missing-r16-t01-artifact"},
+            "durability_intake_status": {"status": _CONTRACTS["run_manifest"]["missing"]},
         },
     )
 
@@ -61,11 +63,11 @@ def _load_search_manifest() -> dict[str, Any]:
 
 
 def build_payload(index_root: Path) -> dict[str, Any]:
-    t01_artifact = _load_r16_t01_artifact(index_root)
+    t01_artifact = _load_run_manifest_artifact(index_root)
     search_manifest = _load_search_manifest()
     performance_boundary = dict(search_manifest.get("performance_boundary", {}))
     remaining_gaps: list[str] = []
-    t01_ready = dict(t01_artifact.get("durability_intake_status", {})).get("status") == "ready-for-r16-t02"
+    t01_ready = dict(t01_artifact.get("durability_intake_status", {})).get("status") == _CONTRACTS["run_manifest"]["ready"]
     if not t01_ready:
         remaining_gaps.append("R16-T01 run-entry artifact is not ready, so changed-only boundary is not grounded.")
     rebuild_mode = str(search_manifest.get("rebuild_mode", "")).strip()
@@ -74,13 +76,13 @@ def build_payload(index_root: Path) -> dict[str, Any]:
     perf_status = str(performance_boundary.get("status", "")).strip()
     if perf_status == "hard_failure":
         remaining_gaps.append("Search-index performance boundary has crossed the hard-failure threshold.")
-    readiness_status = "ready-for-r16-t03" if not remaining_gaps else "not-ready-for-r16-t03"
+    readiness_status = _CONTRACTS["changed_only"]["ready"] if not remaining_gaps else _CONTRACTS["changed_only"]["not_ready"]
     return {
         "artifact_contract_version": ARTIFACT_CONTRACT_VERSION,
         "artifact_id": ARTIFACT_ID,
         "scope": "run-manifest -> changed-only rebuild -> manifest delta -> performance warning boundary",
         "input_contract_refs": [
-            {"name": "r16_t01_run_manifest_artifact", "version": t01_artifact.get("artifact_contract_version", "")},
+            {"name": _CONTRACTS["run_manifest"]["ref"], "version": t01_artifact.get("artifact_contract_version", "")},
             {"name": "search_manifest", "version": "search-index.v1"},
         ],
         "run_entry_input": {
@@ -96,7 +98,7 @@ def build_payload(index_root: Path) -> dict[str, Any]:
         },
         "remaining_gaps": remaining_gaps,
         "readiness_status": readiness_status,
-        "post_r16_t02_successor": POST_R16_T02_SUCCESSOR,
+        _CONTRACTS["changed_only"]["successor_key"]: POST_R16_T02_SUCCESSOR,
     }
 
 
@@ -105,7 +107,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
     rebuild = dict(payload.get("changed_only_rebuild_status", {}))
     delta = dict(rebuild.get("manifest_delta", {}))
     perf = dict(rebuild.get("performance_boundary", {}))
-    successor = dict(payload.get("post_r16_t02_successor", {}))
+    successor = dict(payload.get(_CONTRACTS["changed_only"]["successor_key"], {}))
     lines = [
         "# R16-T02 changed-only boundary artifact",
         "",
@@ -163,7 +165,7 @@ def main() -> int:
         "artifact_id": payload["artifact_id"],
         "readiness_status": payload["readiness_status"],
         "remaining_gaps": payload["remaining_gaps"],
-        "post_r16_t02_successor": payload["post_r16_t02_successor"],
+        _CONTRACTS["changed_only"]["successor_key"]: payload[_CONTRACTS["changed_only"]["successor_key"]],
     }
     if args.format == "json":
         print(json.dumps(result, ensure_ascii=False, indent=2))

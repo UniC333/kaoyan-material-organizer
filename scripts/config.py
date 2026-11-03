@@ -4,10 +4,15 @@ from __future__ import annotations
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+from ocr.providers.rapidocr import MODEL_ID as RAPIDOCR_MODEL_ID
+from kaoyan_kb.domain.review_config import (
+    DEFAULT_REVIEW_SUBJECTS, default_adaptive_review, parse_review_config,
+)
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_VAULT_ROOT = SKILL_ROOT / "vault"
@@ -50,6 +55,8 @@ class RuntimeConfig:
     paper_book_min_height: int
     paper_book_blur_threshold: float
     paper_book_phash_distance: int
+    review_subjects: tuple[str, ...] = DEFAULT_REVIEW_SUBJECTS
+    adaptive_review: dict[str, Any] = field(default_factory=default_adaptive_review)
     config_path: Path | None = None
     config_source: str = "default"
     configured: bool = False
@@ -106,6 +113,10 @@ def _discover_config_path() -> tuple[Path | None, str]:
 def load_runtime_config(default_workspace: str | None = None) -> RuntimeConfig:
     config_path, config_source = _discover_config_path()
     config_payload = _read_json(config_path) if config_path else {}
+    try:
+        review_subjects, adaptive_review = parse_review_config(config_payload)
+    except ValueError as exc:
+        raise RuntimeConfigError(f"invalid review config: {exc}") from exc
     if default_workspace:
         # Keep runtime policy from a discovered config, but derive storage roots from the explicit test/workspace root.
         config_payload = dict(config_payload)
@@ -156,7 +167,8 @@ def load_runtime_config(default_workspace: str | None = None) -> RuntimeConfig:
         or DEFAULT_SYLLABUS_VERSION
     )
     ocr_provider = str(config_payload.get("ocr_provider") or os.environ.get("KAOYAN_OCR_PROVIDER") or "mistral")
-    ocr_model = str(config_payload.get("ocr_model") or os.environ.get("KAOYAN_OCR_MODEL") or "mistral-ocr-4-0")
+    default_ocr_model = RAPIDOCR_MODEL_ID if ocr_provider == "rapidocr" else "mistral-ocr-4-0"
+    ocr_model = str(config_payload.get("ocr_model") or os.environ.get("KAOYAN_OCR_MODEL") or default_ocr_model)
     ocr_cache_root = (
         _resolve_path(config_payload.get("ocr_cache_root"), base_dir=base_dir)
         or _resolve_path(os.environ.get("KAOYAN_OCR_CACHE_ROOT"))
@@ -252,6 +264,8 @@ def load_runtime_config(default_workspace: str | None = None) -> RuntimeConfig:
         paper_book_min_height=paper_book_min_height,
         paper_book_blur_threshold=paper_book_blur_threshold,
         paper_book_phash_distance=paper_book_phash_distance,
+        review_subjects=review_subjects,
+        adaptive_review=adaptive_review,
         config_path=config_path,
         config_source=config_source,
         configured=configured,

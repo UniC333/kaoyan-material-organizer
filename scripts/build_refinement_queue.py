@@ -7,6 +7,7 @@ import sys
 from collections import defaultdict
 from typing import Any
 
+from kaoyan_kb.storage.file_lock import file_lock
 from common import learner_file_map, load_json_or_default, now_iso, save_json, stable_fingerprint
 
 VALID_STATUSES = {"open", "accepted", "implemented", "verified", "rejected"}
@@ -162,23 +163,24 @@ def build_refinement_queue(
     limit: int = 20,
 ) -> dict[str, Any]:
     files = learner_file_map()
-    history = load_json_or_default(files["question_history"], {"items": []}).get("items", [])
-    existing_queue = load_json_or_default(files["refinement_queue"], {"items": []})
-    items = build_refinement_items(
-        list(history),
-        list(existing_queue.get("items", [])),
-        subject_filter=subject,
-        chapter_filter=chapter,
-        limit=limit,
-    )
-    payload = {
-        "refinement_contract_version": REFINEMENT_CONTRACT_VERSION,
-        "derived_from_question_history_count": len(list(history)),
-        "updated_at": now_iso(),
-        "items": items,
-    }
-    save_json(files["refinement_queue"], payload)
-    return payload
+    with file_lock(files["refinement_queue"]):
+        history = load_json_or_default(files["question_history"], {"items": []}).get("items", [])
+        existing_queue = load_json_or_default(files["refinement_queue"], {"items": []})
+        items = build_refinement_items(
+            list(history),
+            list(existing_queue.get("items", [])),
+            subject_filter=subject,
+            chapter_filter=chapter,
+            limit=limit,
+        )
+        payload = {
+            "refinement_contract_version": REFINEMENT_CONTRACT_VERSION,
+            "derived_from_question_history_count": len(list(history)),
+            "updated_at": now_iso(),
+            "items": items,
+        }
+        save_json(files["refinement_queue"], payload)
+        return payload
 
 
 def render_text(payload: dict[str, Any]) -> str:

@@ -15,7 +15,7 @@ from PIL import Image
 from kaoyan_kb.domain.pdf_sources import resolve_pdf_source_id as _resolve_pdf_source_id
 from common import ensure_kb_layout, load_all_json, load_json_or_default, now_iso, run_utf8_subprocess, sanitize_name, save_json, sha256_for_file
 from config import load_runtime_config
-from ocr_document import run_ocr_for_file
+from ocr_document import resolve_ocr_model, run_ocr_for_file
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -138,7 +138,7 @@ def ocr_pdf_book_source(
     runtime = load_runtime_config()
     layout = ensure_kb_layout()
     resolved_provider = provider_name or runtime.ocr_provider
-    resolved_model = model or runtime.ocr_model
+    resolved_model = resolve_ocr_model(resolved_provider, model, runtime)
     remote_enabled = _allowed_remote(resolved_provider, runtime, allow_remote=allow_remote, yes=yes)
     if not remote_enabled:
         if resolved_provider == "mistral":

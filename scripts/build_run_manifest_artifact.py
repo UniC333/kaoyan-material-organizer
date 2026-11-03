@@ -7,14 +7,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from runtime_artifact_contracts import CONTRACTS as _CONTRACTS
+
 from build_learner_acceptance_artifact import ARTIFACT_JSON as LEARNER_ACCEPTANCE_JSON
 from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, load_json_or_default, save_json, save_text
 from run_manager import RESUMABLE_STATUSES, RUN_INDEX_JSON, RUN_SCHEMA_VERSION
 
-ARTIFACT_JSON = "21_r16_run_manifest_artifact.json"
-ARTIFACT_MD = "21_r16_run_manifest_artifact.md"
-ARTIFACT_ID = "r16-run-manifest-reset"
-ARTIFACT_CONTRACT_VERSION = "r16.run-manifest.v1"
+ARTIFACT_JSON = _CONTRACTS["run_manifest"]["artifact_json"]
+ARTIFACT_MD = _CONTRACTS["run_manifest"]["artifact_md"]
+ARTIFACT_ID = _CONTRACTS["run_manifest"]["artifact_id"]
+ARTIFACT_CONTRACT_VERSION = _CONTRACTS["run_manifest"]["contract_version"]
 POST_R16_T01_SUCCESSOR = {
     "track_id": "R16-T02",
     "title": "changed-only rebuild and operational performance boundary",
@@ -102,7 +104,7 @@ def _durability_intake_status(
     if not resume_index:
         remaining_gaps.append("Resume index is empty, so resume lookup has not been exercised yet.")
 
-    status = "ready-for-r16-t02" if not remaining_gaps else "intake-gaps-remain"
+    status = _CONTRACTS["run_manifest"]["ready"] if not remaining_gaps else "intake-gaps-remain"
     return (
         {
             "status": status,
@@ -141,7 +143,7 @@ def build_payload(index_root: Path) -> dict[str, Any]:
         "run_manifest_summary": run_summary,
         "durability_intake_status": durability_status,
         "remaining_gaps": remaining_gaps,
-        "post_r16_t01_successor": POST_R16_T01_SUCCESSOR,
+        _CONTRACTS["run_manifest"]["successor_key"]: POST_R16_T01_SUCCESSOR,
     }
 
 
@@ -149,7 +151,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
     learner_input = dict(payload.get("learner_layer_input", {}))
     run_summary = dict(payload.get("run_manifest_summary", {}))
     durability = dict(payload.get("durability_intake_status", {}))
-    successor = dict(payload.get("post_r16_t01_successor", {}))
+    successor = dict(payload.get(_CONTRACTS["run_manifest"]["successor_key"], {}))
     lines = [
         "# R16-T01 run-manifest artifact",
         "",
@@ -205,7 +207,7 @@ def main() -> int:
         "artifact_id": payload["artifact_id"],
         "durability_intake_status": payload["durability_intake_status"],
         "remaining_gaps": payload["remaining_gaps"],
-        "post_r16_t01_successor": payload["post_r16_t01_successor"],
+        _CONTRACTS["run_manifest"]["successor_key"]: payload[_CONTRACTS["run_manifest"]["successor_key"]],
     }
     if args.format == "json":
         print(json.dumps(result, ensure_ascii=False, indent=2))

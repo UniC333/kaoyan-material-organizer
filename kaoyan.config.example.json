@@ -1,4 +1,40 @@
 {
+  "review_subjects": [
+    "数学",
+    "408"
+  ],
+  "adaptive_review": {
+    "intervals": {
+      "very_fluent": {
+        "initial_days": 14,
+        "multiplier": 2,
+        "max_days": 45
+      },
+      "fairly_fluent": {
+        "initial_days": 7,
+        "multiplier": 1.5,
+        "max_days": 21
+      },
+      "not_fluent": {
+        "initial_days": 3,
+        "multiplier": 0,
+        "max_days": 3
+      },
+      "needs_remediation": {
+        "initial_days": 1,
+        "multiplier": 0,
+        "max_days": 1
+      }
+    },
+    "time_budget_minutes": 20,
+    "max_items": 3,
+    "max_full_math_items": 1,
+    "math_default_minutes": 10,
+    "default_minutes": 5,
+    "min_estimated_minutes": 3,
+    "max_estimated_minutes": 12,
+    "min_interval_days": 1
+  },
   "workspace_root": ".",
   "vault_root": "vault",
   "kb_root": ".kaoyan-kb",

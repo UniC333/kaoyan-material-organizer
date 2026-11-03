@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     question.add_argument("--question", dest="question")
     question.add_argument("--query", dest="question", help="compatibility alias for --question")
     parser.add_argument("--topk", type=int, default=3)
+    parser.add_argument("--auto-sync", action="store_true", help="refresh missing/stale query indexes before answering (writes indexes)")
     parser.add_argument("--printed-page", type=int)
     parser.add_argument("--exercise-label")
     parser.add_argument("--format", choices=("text", "json", "teaching-json"), default="text")
@@ -48,6 +49,9 @@ def main() -> int:
         raise SystemExit("[ERROR] multi-target answers cannot be saved; no saved-QA write was made")
     vault_root = Path(args.vault_root or default_vault_root_arg())
     subject, _ = resolve_subject(args.subject)
+    if getattr(args, "auto_sync", False):
+        from kaoyan_kb.cli.query_auto_sync import ensure_query_indexes
+        ensure_query_indexes()
     with read_scope():
         multiple = query_source_targets(query_one=query_knowledge, vault_root=vault_root, subject=subject, chapter=args.chapter, query=args.question, topk=args.topk, book_title=args.book_title, printed_page=args.printed_page, exercise_label=args.exercise_label)
         if multiple is not None:

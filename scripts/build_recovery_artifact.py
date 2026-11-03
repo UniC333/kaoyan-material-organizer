@@ -7,14 +7,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from build_r16_changed_only_artifact import ARTIFACT_JSON as R16_T02_ARTIFACT_JSON
+from runtime_artifact_contracts import CONTRACTS as _CONTRACTS
+
+from build_changed_only_artifact import ARTIFACT_JSON as R16_T02_ARTIFACT_JSON
 from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, load_json_or_default, save_json, save_text
 from config import load_runtime_config
 
-ARTIFACT_JSON = "23_r16_recovery_boundary_artifact.json"
-ARTIFACT_MD = "23_r16_recovery_boundary_artifact.md"
-ARTIFACT_ID = "r16-recovery-boundary"
-ARTIFACT_CONTRACT_VERSION = "r16.recovery.v1"
+ARTIFACT_JSON = _CONTRACTS["recovery"]["artifact_json"]
+ARTIFACT_MD = _CONTRACTS["recovery"]["artifact_md"]
+ARTIFACT_ID = _CONTRACTS["recovery"]["artifact_id"]
+ARTIFACT_CONTRACT_VERSION = _CONTRACTS["recovery"]["contract_version"]
 POST_R16_T03_SUCCESSOR = {
     "track_id": "R16-T04",
     "title": "in-scope real-material gray release and release-scope boundary",
@@ -31,12 +33,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_r16_t02_artifact(index_root: Path) -> dict[str, Any]:
+def _load_changed_only_artifact(index_root: Path) -> dict[str, Any]:
     return load_json_or_default(
         index_root / R16_T02_ARTIFACT_JSON,
         {
             "artifact_id": "",
-            "readiness_status": "missing-r16-t02-artifact",
+            "readiness_status": _CONTRACTS["changed_only"]["missing"],
         },
     )
 
@@ -60,12 +62,12 @@ def _load_latest_restore_summary() -> dict[str, Any]:
 
 
 def build_payload(index_root: Path) -> dict[str, Any]:
-    t02_artifact = _load_r16_t02_artifact(index_root)
+    t02_artifact = _load_changed_only_artifact(index_root)
     restore_summary = _load_latest_restore_summary()
     cleanup_summary = dict(restore_summary.get("cleanup_summary", {}))
     resume_boundary = dict(restore_summary.get("resume_boundary", {}))
     remaining_gaps: list[str] = []
-    t02_ready = t02_artifact.get("readiness_status") == "ready-for-r16-t03"
+    t02_ready = t02_artifact.get("readiness_status") == _CONTRACTS["changed_only"]["ready"]
     if not t02_ready:
         remaining_gaps.append("R16-T02 changed-only artifact is not ready, so recovery rehearsal is not grounded.")
     if not bool(restore_summary.get("restored", False)):
@@ -74,13 +76,13 @@ def build_payload(index_root: Path) -> dict[str, Any]:
         remaining_gaps.append("Resume-only checkpoint boundary has not been exercised yet.")
     if int(cleanup_summary.get("machine_owned_pruned_count", 0)) <= 0:
         remaining_gaps.append("No machine-owned cleanup candidate has been pruned yet.")
-    readiness_status = "ready-for-r16-t04" if not remaining_gaps else "not-ready-for-r16-t04"
+    readiness_status = _CONTRACTS["recovery"]["ready"] if not remaining_gaps else _CONTRACTS["recovery"]["not_ready"]
     return {
         "artifact_contract_version": ARTIFACT_CONTRACT_VERSION,
         "artifact_id": ARTIFACT_ID,
         "scope": "snapshot restore -> checkpoint resume -> machine-owned cleanup -> human-owned protection boundary",
         "input_contract_refs": [
-            {"name": "r16_t02_changed_only_artifact", "version": t02_artifact.get("artifact_contract_version", "")},
+            {"name": _CONTRACTS["changed_only"]["ref"], "version": t02_artifact.get("artifact_contract_version", "")},
             {"name": "latest_restore_summary", "version": "snapshot-restore.v1"},
         ],
         "changed_only_input": {
@@ -99,14 +101,14 @@ def build_payload(index_root: Path) -> dict[str, Any]:
         },
         "remaining_gaps": remaining_gaps,
         "readiness_status": readiness_status,
-        "post_r16_t03_successor": POST_R16_T03_SUCCESSOR,
+        _CONTRACTS["recovery"]["successor_key"]: POST_R16_T03_SUCCESSOR,
     }
 
 
 def render_markdown(payload: dict[str, Any]) -> str:
     changed_only = dict(payload.get("changed_only_input", {}))
     recovery = dict(payload.get("recovery_boundary_status", {}))
-    successor = dict(payload.get("post_r16_t03_successor", {}))
+    successor = dict(payload.get(_CONTRACTS["recovery"]["successor_key"], {}))
     lines = [
         "# R16-T03 recovery boundary artifact",
         "",
@@ -161,7 +163,7 @@ def main() -> int:
         "artifact_id": payload["artifact_id"],
         "readiness_status": payload["readiness_status"],
         "remaining_gaps": payload["remaining_gaps"],
-        "post_r16_t03_successor": payload["post_r16_t03_successor"],
+        _CONTRACTS["recovery"]["successor_key"]: payload[_CONTRACTS["recovery"]["successor_key"]],
     }
     if args.format == "json":
         print(json.dumps(result, ensure_ascii=False, indent=2))

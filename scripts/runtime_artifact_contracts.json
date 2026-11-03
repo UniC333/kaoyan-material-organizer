@@ -1,0 +1,56 @@
+{
+  "run_manifest": {
+    "artifact_json": "21_r16_run_manifest_artifact.json",
+    "artifact_md": "21_r16_run_manifest_artifact.md",
+    "artifact_id": "r16-run-manifest-reset",
+    "contract_version": "r16.run-manifest.v1",
+    "ref": "r16_t01_run_manifest_artifact",
+    "successor_key": "post_r16_t01_successor",
+    "missing": "missing-r16-t01-artifact",
+    "ready": "ready-for-r16-t02"
+  },
+  "changed_only": {
+    "artifact_json": "22_r16_changed_only_boundary_artifact.json",
+    "artifact_md": "22_r16_changed_only_boundary_artifact.md",
+    "artifact_id": "r16-changed-only-boundary",
+    "contract_version": "r16.changed-only.v1",
+    "ref": "r16_t02_changed_only_artifact",
+    "successor_key": "post_r16_t02_successor",
+    "missing": "missing-r16-t02-artifact",
+    "ready": "ready-for-r16-t03",
+    "not_ready": "not-ready-for-r16-t03"
+  },
+  "recovery": {
+    "artifact_json": "23_r16_recovery_boundary_artifact.json",
+    "artifact_md": "23_r16_recovery_boundary_artifact.md",
+    "artifact_id": "r16-recovery-boundary",
+    "contract_version": "r16.recovery.v1",
+    "ref": "r16_t03_recovery_artifact",
+    "successor_key": "post_r16_t03_successor",
+    "missing": "missing-r16-t03-artifact",
+    "ready": "ready-for-r16-t04",
+    "not_ready": "not-ready-for-r16-t04"
+  },
+  "gray_release": {
+    "artifact_json": "24_r16_gray_release_artifact.json",
+    "artifact_md": "24_r16_gray_release_artifact.md",
+    "artifact_id": "r16-gray-release-scope",
+    "contract_version": "r16.gray-release.v1",
+    "ref": "r16_t04_gray_release_artifact",
+    "successor_key": "post_r16_t04_successor",
+    "ready": "ready-for-r16-t05",
+    "not_ready": "not-ready-for-r16-t05",
+    "report_json": "r16_in_scope_gray_release_report.json",
+    "report_md": "r16_in_scope_gray_release_report.md",
+    "report_ref": "r16_t04_gray_release_report"
+  },
+  "formal_usable": {
+    "artifact_json": "25_r16_formal_usable_acceptance_artifact.json",
+    "artifact_md": "25_r16_formal_usable_acceptance_artifact.md",
+    "artifact_id": "r16-formal-usable-acceptance",
+    "contract_version": "r16.formal-usable.v1",
+    "ref": "r16_t06_formal_usable_acceptance_artifact",
+    "successor_key": "post_r16_successor",
+    "missing": "missing-r16-t06-artifact"
+  }
+}

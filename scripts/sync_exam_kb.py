@@ -7,7 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from common import preferred_python_executable, run_utf8_subprocess, runtime_subprocess_env
+from common import kb_layout, preferred_python_executable, run_utf8_subprocess, runtime_subprocess_env
+from kaoyan_kb.storage.file_lock import file_lock
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,8 +42,10 @@ def run_script(name: str, *args: str) -> None:
 def refresh_query_indexes() -> list[str]:
     """Rebuild only the indexes required by page-grounded retrieval."""
     steps = ["build_page_locator_index", "build_exercise_locator_index", "build_search_index", "build_book_series_indexes"]
-    for step in steps:
-        run_script(f"{step}.py", "--format", "quiet")
+    # Shared by explicit sync and query/ask --auto-sync; never replace/delete the sidecar.
+    with file_lock(kb_layout()["indexes"] / "query-indexes"):
+        for step in steps:
+            run_script(f"{step}.py", "--format", "quiet")
     return steps
 
 

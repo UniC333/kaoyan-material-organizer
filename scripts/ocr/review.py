@@ -10,6 +10,7 @@ SCRIPT_DIR = Path(__file__).resolve().parents[1]
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from kaoyan_kb.storage.file_lock import file_lock
 from common import load_json_or_default, now_iso, save_json
 from config import load_runtime_config
 from ocr.cache import cache_paths_for_request
@@ -174,44 +175,45 @@ def apply_overlay(
     if block_id not in candidate_by_block:
         raise SystemExit(f"unknown block_id for request_key={request_key}: {block_id}")
 
-    overlay_payload = _load_overlay(runtime.ocr_cache_root, request_key)
-    items = [item for item in overlay_payload.get("items", []) if isinstance(item, dict)]
-    existing_index = {
-        str(item.get("block_id", "")).strip(): idx
-        for idx, item in enumerate(items)
-        if item.get("block_id")
-    }
-    created_at = overlay_payload.get("created_at") or now_iso()
-    overlay_item = {
-        "block_id": block_id,
-        "review_status": review_status,
-        "corrected_text": corrected_text,
-        "note": note,
-        "updated_at": now_iso(),
-    }
-    if block_id in existing_index:
-        previous = items[existing_index[block_id]]
-        if (
-            str(previous.get("review_status", "")) == review_status
-            and str(previous.get("corrected_text", "")) == corrected_text
-            and str(previous.get("note", "")) == note
-        ):
-            overlay_item["updated_at"] = previous.get("updated_at", overlay_item["updated_at"])
-        items[existing_index[block_id]] = overlay_item
-    else:
-        items.append(overlay_item)
-
-    save_json(
-        paths["overlay"],
-        {
-            "request_key": request_key,
-            "source_file_sha256": normalized_payload.get("source_file_sha256", ""),
-            "created_at": created_at,
+    with file_lock(paths["overlay"]):
+        overlay_payload = _load_overlay(runtime.ocr_cache_root, request_key)
+        items = [item for item in overlay_payload.get("items", []) if isinstance(item, dict)]
+        existing_index = {
+            str(item.get("block_id", "")).strip(): idx
+            for idx, item in enumerate(items)
+            if item.get("block_id")
+        }
+        created_at = overlay_payload.get("created_at") or now_iso()
+        overlay_item = {
+            "block_id": block_id,
+            "review_status": review_status,
+            "corrected_text": corrected_text,
+            "note": note,
             "updated_at": now_iso(),
-            "items": items,
-        },
-        ignored_compare_keys=(),
-    )
+        }
+        if block_id in existing_index:
+            previous = items[existing_index[block_id]]
+            if (
+                str(previous.get("review_status", "")) == review_status
+                and str(previous.get("corrected_text", "")) == corrected_text
+                and str(previous.get("note", "")) == note
+            ):
+                overlay_item["updated_at"] = previous.get("updated_at", overlay_item["updated_at"])
+            items[existing_index[block_id]] = overlay_item
+        else:
+            items.append(overlay_item)
+
+        save_json(
+            paths["overlay"],
+            {
+                "request_key": request_key,
+                "source_file_sha256": normalized_payload.get("source_file_sha256", ""),
+                "created_at": created_at,
+                "updated_at": now_iso(),
+                "items": items,
+            },
+            ignored_compare_keys=(),
+        )
     return {
         "saved": True,
         "request_key": request_key,

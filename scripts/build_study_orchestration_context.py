@@ -8,9 +8,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from runtime_artifact_contracts import CONTRACTS as _CONTRACTS
+
 from build_learner_acceptance_artifact import ARTIFACT_JSON as LEARNER_ACCEPTANCE_JSON
-from build_r16_changed_only_artifact import ARTIFACT_JSON as R16_T02_ARTIFACT_JSON
-from build_r16_formal_usable_artifact import ARTIFACT_JSON as R16_T06_ARTIFACT_JSON
+from build_changed_only_artifact import ARTIFACT_JSON as R16_T02_ARTIFACT_JSON
+from build_formal_usable_artifact import ARTIFACT_JSON as R16_T06_ARTIFACT_JSON
 from common import INDEX_DIRNAME, default_vault_root_arg, ensure_kb_layout, learner_file_map, load_json_or_default, save_json, save_text
 from learner_events import load_events
 
@@ -60,7 +62,7 @@ def _build_formal_inputs(index_root: Path) -> tuple[dict[str, Any], dict[str, An
         R16_T06_ARTIFACT_JSON,
         {
             "artifact_id": "",
-            "readiness_status": "missing-r16-t06-artifact",
+            "readiness_status": _CONTRACTS["formal_usable"]["missing"],
             "release_decision": {},
         },
     )
@@ -78,7 +80,7 @@ def _build_formal_inputs(index_root: Path) -> tuple[dict[str, Any], dict[str, An
         R16_T02_ARTIFACT_JSON,
         {
             "artifact_id": "",
-            "readiness_status": "missing-r16-t02-artifact",
+            "readiness_status": _CONTRACTS["changed_only"]["missing"],
         },
     )
     layout = ensure_kb_layout()
@@ -99,7 +101,7 @@ def _build_formal_inputs(index_root: Path) -> tuple[dict[str, Any], dict[str, An
     retrieval_ready = (
         int(search_manifest.get("doc_count", 0)) > 0
         and str(search_manifest.get("performance_boundary", {}).get("status", "")).strip() != "hard_failure"
-        and str(changed_only.get("readiness_status", "")).strip() == "ready-for-r16-t03"
+        and str(changed_only.get("readiness_status", "")).strip() == _CONTRACTS["changed_only"]["ready"]
     )
 
     remaining_gaps: list[str] = []
@@ -297,7 +299,7 @@ def build_payload(index_root: Path, *, as_of: datetime, freshness_days: int) -> 
         "artifact_id": ARTIFACT_ID,
         "scope": "formal retrieval input -> learner-day context -> recommendation eligibility boundary",
         "input_contract_refs": [
-            {"name": "r16_t06_formal_usable_acceptance_artifact", "version": runtime_input.get("artifact_id", "")},
+            {"name": _CONTRACTS["formal_usable"]["ref"], "version": runtime_input.get("artifact_id", "")},
             {"name": "r15_t06_learner_layer_acceptance_artifact", "version": learner_input.get("artifact_id", "")},
             {"name": "search_manifest", "version": retrieval_input.get("rebuild_mode", "")},
         ],

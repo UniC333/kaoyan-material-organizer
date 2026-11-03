@@ -12,7 +12,7 @@ from typing import Any
 from common import allocate_run_id, load_json_or_default, now_iso, save_json
 from config import load_runtime_config
 from ocr.cache import OCRRequestConfig, load_cached_normalized, request_key_for_file
-from ocr_document import run_ocr_for_file
+from ocr_document import model_for_file, resolve_ocr_model, run_ocr_for_file
 
 
 def _metadata_paths(book_root: Path, metadata_dirname: str) -> dict[str, Path]:
@@ -62,6 +62,7 @@ def _allowed_remote(provider_name: str, runtime, *, allow_remote: bool, yes: boo
 
 
 def _request_key_for_page(page: dict[str, Any], runtime, provider_name: str, model: str) -> str:
+    model = model_for_file(provider_name, model, Path(page["source_image_path"]))
     config = OCRRequestConfig(
         provider=provider_name,
         model=model,
@@ -186,7 +187,7 @@ def run_book_ocr(
             raise SystemExit(f"quality gate failed: {report_path}")
 
     resolved_provider = provider_name or runtime.ocr_provider
-    resolved_model = model or runtime.ocr_model
+    resolved_model = resolve_ocr_model(resolved_provider, model, runtime)
     remote_enabled = _allowed_remote(resolved_provider, runtime, allow_remote=allow_remote, yes=yes)
     if not dry_run and not remote_enabled:
         if resolved_provider == "mistral":

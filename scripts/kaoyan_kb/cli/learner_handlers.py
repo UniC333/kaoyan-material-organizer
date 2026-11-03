@@ -193,7 +193,7 @@ def _learner_exercise_output(args: argparse.Namespace) -> str:
         if not args.review_id or not args.question_id or not args.fluency:
             raise SystemExit("review exercise requires --review-id, --question-id, and --fluency")
         if not is_supported_review_subject(subject):
-            raise SystemExit("adaptive review currently supports mathematics and 408 subjects only")
+            raise SystemExit("subject is not enabled by review_subjects in runtime config")
         duplicate = is_duplicate_review_event(
             events,
             subject=subject,

@@ -27,7 +27,10 @@ SKILL_ROOT\.venv\Scripts\python.exe SKILL_ROOT\scripts\kb.py --config SKILL_ROOT
 - 教材页码、章节、题号、选项、原文或有来源题目的首轮及追问，第一项实质操作是本地 `query/ask`，先核验再讲解；具体契约见教材问答参考。独立普通概念问答不强行构造教材定位。
 - 有来源题目须唯一确认原题与原书答案，同时满足 `answer_grounding.status=exact_answer`、`can_conclude=true`、`teaching_bundle.status=exact` 才能判断过程、给结论或补充推导。缺答案停止解题，不以“补充讲解”绕过；原题或原图定位不等于答案确认。
 - 原页代码、定义、公式、段落须 `page_content_bundle.status=exact` 才能按审核正文讲解；不套用习题答案门禁。仅定位原图时报告正文未确认，只有用户继续明确要求才人工阅图并标注，不冒充 OCR 引用。
-- 来源绑定的问答不得跨书补证据。入口失败、配置无效或 `unavailable` 时报告证据链不可用，不另找知识库、不自动阅图/OCR、不猜教材结论。索引 stale 时先 `sync --indexes-only` 再重查，不能沿用旧结果。
+- 已授权的资料接入可按[资料接入参考](references/material-intake.md#无-api-key-的接入)使用正式 AI 视觉转录路径，经原图哈希绑定、独立页码映射、人工复核及现有发布链路入库；普通讲题的临时阅图仍不触发写入。
+- 来源绑定的问答不得跨书补证据。入口失败、配置无效或 `unavailable` 时报告证据链不可用，不另找知识库、不自动阅图/OCR、不猜教材结论。索引 stale 时先 `sync --indexes-only` 再重查，或在用户显式授权索引同步时为本次 `query/ask` 添加 `--auto-sync`：检测索引过期、缺失或习题索引版本不匹配后复用同一带锁同步入口，再重新核验并查询；失败即停止，不沿用旧结果。普通只读意图不添加开关；默认仍只读并保留原有提示与阻断，不做每日首次隐式刷新或记录同步时间戳。`ask --save --auto-sync` 先同步再查询、校验和保存，同步失败零保存，保存门禁不变；保存失败不撤销已完成的索引刷新。带开关按写命令串行执行，锁边界见 README。
+
+开发与职责抽取规则见 [README：开发分层与增量收敛](README.md#开发分层与增量收敛)。
 
 ## 按需读取
 

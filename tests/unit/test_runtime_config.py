@@ -173,6 +173,9 @@ def test_remote_ocr_defaults_to_disabled_when_config_and_environment_are_absent(
 
 
 def test_remote_ocr_environment_override_is_explicit(monkeypatch, tmp_path: Path) -> None:
+    # Exercise the environment fallback without inheriting a developer's config.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(config, "SKILL_ROOT", tmp_path)
     monkeypatch.setattr(config, "_discover_config_path", lambda: (None, "default"))
     monkeypatch.setenv("KAOYAN_OCR_ALLOW_REMOTE", "true")
 
@@ -205,3 +208,96 @@ def test_remote_ocr_config_true_remains_persistent(monkeypatch, tmp_path: Path) 
     runtime = config.load_runtime_config()
 
     assert runtime.ocr_allow_remote is True
+
+
+def test_review_config_defaults_and_partial_overrides(monkeypatch, tmp_path: Path) -> None:
+    config_path = tmp_path / "kaoyan.config.json"
+    write_config(config_path)
+    monkeypatch.setenv("KAOYAN_CONFIG_FILE", str(config_path))
+    runtime = config.load_runtime_config()
+    assert runtime.review_subjects == ("数学", "408")
+    assert runtime.adaptive_review == {
+        "intervals": {
+            "very_fluent": {"initial_days": 14, "multiplier": 2, "max_days": 45},
+            "fairly_fluent": {"initial_days": 7, "multiplier": 1.5, "max_days": 21},
+            "not_fluent": {"initial_days": 3, "multiplier": 0, "max_days": 3},
+            "needs_remediation": {"initial_days": 1, "multiplier": 0, "max_days": 1},
+        },
+        "time_budget_minutes": 20, "max_items": 3, "max_full_math_items": 1,
+        "math_default_minutes": 10, "default_minutes": 5,
+        "min_estimated_minutes": 3, "max_estimated_minutes": 12, "min_interval_days": 1,
+    }
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    payload.update(review_subjects=["英语"], adaptive_review={
+        "max_items": 0, "intervals": {"very_fluent": {"initial_days": 2}},
+    })
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    config.reset_runtime_config_cache()
+    custom = config.load_runtime_config()
+    assert custom.review_subjects == ("英语",)
+    assert custom.adaptive_review["max_items"] == 0
+    assert custom.adaptive_review["intervals"]["very_fluent"] == {
+        "initial_days": 2, "multiplier": 2, "max_days": 45,
+    }
+    assert runtime.adaptive_review["intervals"]["very_fluent"]["initial_days"] == 14
+
+
+@pytest.mark.parametrize("overrides, message", [
+    ({"review_subjects": []}, "review_subjects"),
+    ({"review_subjects": None}, "review_subjects"),
+    ({"review_subjects": "英语"}, "review_subjects"),
+    ({"review_subjects": ["物理"]}, "unknown subject"),
+    ({"review_subjects": [""]}, "unknown subject"),
+    ({"review_subjects": [False]}, "unknown subject"),
+    ({"review_subjects": ["数学", "数学"]}, "duplicate subject"),
+    ({"adaptive_review": None}, "adaptive_review must be an object"),
+    ({"adaptive_review": []}, "adaptive_review must be an object"),
+    ({"adaptive_review": {"max_itmes": 2}}, "unknown review config item"),
+    ({"adaptive_review": {"max_items": -1}}, "max_items"),
+    ({"adaptive_review": {"max_items": True}}, "max_items"),
+    ({"adaptive_review": {"max_items": 1.5}}, "max_items"),
+    ({"adaptive_review": {"time_budget_minutes": "20"}}, "time_budget_minutes"),
+    ({"adaptive_review": {"max_full_math_items": -1}}, "max_full_math_items"),
+    ({"adaptive_review": {"default_minutes": -1}}, "default_minutes"),
+    ({"adaptive_review": {"math_default_minutes": None}}, "math_default_minutes"),
+    ({"adaptive_review": {"min_estimated_minutes": 13}}, "must not exceed"),
+    ({"adaptive_review": {"max_estimated_minutes": -1}}, "max_estimated_minutes"),
+    ({"adaptive_review": {"min_interval_days": -1}}, "min_interval_days"),
+    ({"adaptive_review": {"intervals": []}}, "intervals must be an object"),
+    ({"adaptive_review": {"intervals": {"unknown": {}}}}, "unknown fluency"),
+    ({"adaptive_review": {"intervals": {"very_fluent": 2}}}, "must be an object"),
+    ({"adaptive_review": {"intervals": {"very_fluent": {"days": 2}}}}, "unknown review config item"),
+    ({"adaptive_review": {"intervals": {"very_fluent": {"initial_days": -1}}}}, "initial_days"),
+    ({"adaptive_review": {"intervals": {"very_fluent": {"initial_days": 1.5}}}}, "initial_days"),
+    ({"adaptive_review": {"intervals": {"very_fluent": {"multiplier": False}}}}, "multiplier"),
+    ({"adaptive_review": {"intervals": {"very_fluent": {"multiplier": -1}}}}, "multiplier"),
+    ({"adaptive_review": {"intervals": {"very_fluent": {"multiplier": float("inf")}}}}, "multiplier"),
+    ({"adaptive_review": {"intervals": {"very_fluent": {"multiplier": float("nan")}}}}, "multiplier"),
+    ({"adaptive_review": {"intervals": {"very_fluent": {"max_days": 0}}}}, "must be >= min_interval_days"),
+])
+def test_invalid_review_config_fails_explicitly(monkeypatch, tmp_path, overrides, message):
+    config_path = tmp_path / "kaoyan.config.json"
+    write_config(config_path)
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    payload.update(overrides)
+    config_path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setenv("KAOYAN_CONFIG_FILE", str(config_path))
+    with pytest.raises(config.RuntimeConfigError, match=message):
+        config.load_runtime_config()
+
+
+def test_review_schema_and_example_agree_with_runtime_defaults():
+    import jsonschema
+    from kaoyan_kb.domain.review_config import parse_review_config, REVIEW_SUBJECT_TOKENS
+
+    root = SCRIPTS.parent
+    schema = json.loads((root / "schemas/runtime-config.schema.json").read_text(encoding="utf-8"))
+    example = json.loads((root / "kaoyan.config.example.json").read_text(encoding="utf-8"))
+    jsonschema.validate(example, schema)
+    assert parse_review_config(example) == parse_review_config({})
+    assert set(schema["properties"]["review_subjects"]["items"]["enum"]) == set(REVIEW_SUBJECT_TOKENS)
+    for invalid in ({"review_subjects": []}, {"review_subjects": ["unknown"]},
+                    {"adaptive_review": {"max_items": -1}},
+                    {"adaptive_review": {"intervals": {"very_fluent": {"multiplier": True}}}}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(invalid, schema)

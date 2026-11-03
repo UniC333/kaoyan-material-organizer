@@ -1198,7 +1198,8 @@ def test_smoke_and_test_paths_are_not_formal_sources() -> None:
     assert page_locator._is_formal_evidence_ref({"book_id": "li-zhengyuan-math1-ch2"})
 
 
-def test_sync_rebuilds_page_locator_index(monkeypatch) -> None:
+def test_sync_rebuilds_page_locator_index(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(sync_exam_kb, "kb_layout", lambda: {"indexes": tmp_path})
     calls: list[tuple[str, tuple[str, ...]]] = []
     monkeypatch.setattr(sync_exam_kb, "run_script", lambda name, *args: calls.append((name, args)))
     monkeypatch.setattr(sys, "argv", ["sync_exam_kb.py", "--format", "quiet"])
@@ -1207,7 +1208,8 @@ def test_sync_rebuilds_page_locator_index(monkeypatch) -> None:
     assert ("build_search_index.py", ("--format", "quiet")) in calls
 
 
-def test_indexes_only_runs_no_full_sync_steps(monkeypatch) -> None:
+def test_indexes_only_runs_no_full_sync_steps(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(sync_exam_kb, "kb_layout", lambda: {"indexes": tmp_path})
     calls: list[tuple[str, tuple[str, ...]]] = []
     monkeypatch.setattr(sync_exam_kb, "run_script", lambda name, *args: calls.append((name, args)))
     monkeypatch.setattr(sys, "argv", ["sync_exam_kb.py", "--indexes-only", "--format", "quiet"])

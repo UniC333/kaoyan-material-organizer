@@ -9,6 +9,8 @@ from typing import Any
 def add_core_commands(subparsers: argparse._SubParsersAction, *, formatter_class: type[argparse.HelpFormatter]) -> None:
     doctor = subparsers.add_parser("doctor", help="inspect runtime paths, OCR readiness, and terminal encoding guidance", description="Inspect runtime paths, OCR readiness, and terminal encoding guidance.", formatter_class=formatter_class)
     doctor.add_argument("--format", choices=("json", "text"), default="text")
+    doctor.add_argument("--prune-tmp", action="store_true",
+                        help="prune confirmed orphan write temps in managed KB directories; report every deletion/skip")
 
     ask = subparsers.add_parser("ask", help="answer a saved/local question with optional handoff into learner history", description="Answer a local question and optionally save the result into learner history.", formatter_class=formatter_class)
     ask.add_argument("--vault-root")
@@ -27,6 +29,7 @@ def add_core_commands(subparsers: argparse._SubParsersAction, *, formatter_class
     ask.add_argument("--exercise-label")
     ask.add_argument("--format", choices=("text", "json", "teaching-json"), default="json")
     ask.add_argument("--save", action="store_true")
+    ask.add_argument("--auto-sync", action="store_true", help="refresh missing/stale query indexes before answering (writes indexes)")
     ask.add_argument("--saved-at")
 
     sync = subparsers.add_parser("sync", help="run the wrapped sync flow for fact sync, publish, and learner refresh", description="Run the wrapped sync flow for fact sync, publish, and learner refresh.", formatter_class=formatter_class)
@@ -51,6 +54,7 @@ def add_core_commands(subparsers: argparse._SubParsersAction, *, formatter_class
     query.add_argument("--printed-page", type=int)
     query.add_argument("--exercise-label")
     query.add_argument("--format", choices=("text", "json"), default="json")
+    query.add_argument("--auto-sync", action="store_true", help="refresh missing/stale query indexes before querying (writes indexes)")
 
 
 def dispatch_core(
@@ -73,6 +77,8 @@ def dispatch_core(
                 forwarded.extend([f"--{key.replace('_', '-')}", str(value)])
         if args.save:
             forwarded.append("--save")
+        if getattr(args, "auto_sync", False):
+            forwarded.append("--auto-sync")
         return run_script("ask_local_knowledge.py", *forwarded)
 
     if args.command == "sync":
@@ -88,6 +94,8 @@ def dispatch_core(
 
     if args.command == "query":
         forwarded = []
+        if getattr(args, "auto_sync", False):
+            forwarded.append("--auto-sync")
         for key in ("vault_root", "subject", "chapter", "book_title", "query", "printed_page", "exercise_label"):
             value = getattr(args, key)
             if value:
