@@ -8,7 +8,7 @@ from typing import Any
 from common import ensure_kb_layout, load_json_or_default, save_json
 from config import load_runtime_config
 from kaoyan_kb.domain.evidence_publication import is_publishable_source_evidence
-from kaoyan_kb.domain.exercise_locator import container_path_from_query, normalize_container_label, stable_container_label
+from kaoyan_kb.domain.exercise_locator import container_path_from_query, normalize_container_label, stable_container_label, requested_chapter_id, analyze_exercise_content
 
 
 BOOK_SERIES_INDEX_NAME = "book_series_index.json"
@@ -26,7 +26,7 @@ WORKED_ANSWER_BOUNDARY_PATTERN = re.compile(
     r"(?m)^\s*(?:(?:定理|定义)\s*\d*|\(\s*\d+\s*\)\s*若函数|本章学习诊断)"
 )
 CONTAINER_HEADING_PATTERN = re.compile(
-    r"^(?:题型|专题|方法|模型|考点|类型)\s*(?:[0-9]+|[零一二三四五六七八九十两]+)(?:\s*[：:、-]?\s*.*)?$"
+    r"^(?:题型|题理|专题|方法|模型|考点|类型)\s*(?:[0-9]+|[零一二三四五六七八九十两]+)(?:\s*[：:、-]?\s*.*)?$"
 )
 SOURCE_REQUEST_TOKENS = ("教材", "讲义", "题集", "题目照片", "照片", "图中", "书上", "书里", "原书")
 SELF_AUTHORED_TOKENS = ("自拟", "我编", "原创题")
@@ -450,6 +450,73 @@ def _answer_grounding_base(*, required: bool) -> dict[str, Any]:
     }
 
 
+def _filter_exercise_candidates(items: list[dict[str, Any]], *, request: dict[str, Any], query: str, book_title: str = "", diagnostics: list[dict[str, Any]] | None = None) -> tuple[list[dict[str, Any]], str, str]:
+    """Reject chapter conflicts before content and before unique selection."""
+    requested_container = [normalize_container_label(value) for value in container_path_from_query(query)]
+    if requested_container:
+        items = [item for item in items if len(item.get("container_path") or []) == len(requested_container)
+                 and all(normalize_container_label(actual).startswith(expected)
+                         for expected, actual in zip(requested_container, item["container_path"]))]
+    chapter_matches = []
+    conflicts = []
+    number = request.get("chapter_number")
+    for item in items:
+        expected = requested_chapter_id(
+            chapter_number=number, book_id=str(item.get("book_id") or ""),
+            book_title=str(item.get("book_title") or book_title),
+        )
+        if expected and item.get("chapter_id") != expected:
+            conflicts.append(str(item.get("chapter_id") or "缺失"))
+        else:
+            chapter_matches.append(item)
+    if items and not chapter_matches:
+        names = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八", 9: "九", 10: "十"}
+        requested = f"第{names.get(number, number)}章"
+        actual = conflicts[0] if len(set(conflicts)) == 1 else "、".join(sorted(set(conflicts)))
+        match = re.fullmatch(r"CH-TANG2027-B-CALC-(\d{2})", actual)
+        actual = f"第{names.get(int(match.group(1)), int(match.group(1)))}章" if match else actual
+        unique = "唯一候选在" if len(items) == 1 else "候选章节为"
+        return [], f"章节冲突：请求{requested}、{unique}{actual}；不确立原题—题解精确配对。", "content_conflict"
+    matched = []
+    for item in chapter_matches:
+        analysis = analyze_exercise_content(query, item, book_title=book_title)
+        expected = requested_chapter_id(chapter_number=number, book_id=str(item.get("book_id") or ""),
+                                        book_title=str(item.get("book_title") or book_title))
+        chapter_match = bool(number is not None and (
+            (expected and item.get("chapter_id") == expected)
+            or (not expected and item.get("chapter_number") == number)))
+        container_match = bool(requested_container and
+                               len(item.get("container_path") or []) == len(requested_container) and
+                               all(normalize_container_label(actual).startswith(expected)
+                                   for expected, actual in zip(requested_container, item["container_path"])))
+        label_match = bool(request.get("exercise_label") and
+                           str(item.get("exercise_label") or "").replace(" ", "") ==
+                           str(request["exercise_label"]).replace(" ", ""))
+        triple_unique = chapter_match and container_match and label_match and len(chapter_matches) == 1
+        page_match = bool(request.get("printed_page") is not None and
+                          request["printed_page"] in ((item.get("question") or {}).get("printed_pages") or [])
+                          and label_match and len(chapter_matches) == 1)
+        state = analysis["state"]
+        supported = (state == "no_content" or (state == "generic_only" and triple_unique)
+                     or (state == "has_anchor" and (analysis["question_hit"] or
+                         (analysis["solution_hit"] and ((chapter_match and container_match) or page_match)))))
+        analysis.update(
+            chapter_id=item.get("chapter_id"), exercise_key=item.get("exercise_key"),
+            location_evidence={"chapter_match": chapter_match, "container_match": container_match,
+                               "label_match": label_match, "chapter_candidate_count": len(chapter_matches),
+                               "triple_unique": triple_unique, "page_match": page_match},
+            decision="supported" if supported else "content_evidence_insufficient",
+        )
+        if diagnostics is not None:
+            diagnostics.append(analysis)
+        if supported:
+            matched.append(item)
+    if chapter_matches and not matched:
+        actual = "、".join(sorted({str(item.get("chapter_id") or "缺失") for item in chapter_matches}))
+        return [], f"内容证据不足：未找到合格内容锚点支持或仅题解命中而缺少章节及容器定位或页码定位，无法确认原题—题解精确配对（请求章节={number or '缺失'}，候选章节={actual}）。", "content_evidence_insufficient"
+    return matched, "", ""
+
+
 def resolve_answer_grounding(
     *,
     query: str,
@@ -490,6 +557,7 @@ def resolve_answer_grounding(
         return grounding
 
     if exercise_route.get("match_status") == "exact_exercise":
+        grounding["content_analysis"] = list(exercise_route.get("content_analysis") or [])
         pair_status = str(exercise_route.get("pair_status") or "")
         # Published photo-book exercise records use one ``evidence_id`` per
         # side, while the teaching contract and the query/ask gates consume
@@ -549,15 +617,27 @@ def resolve_answer_grounding(
             )
         ]
 
+    diagnostics: list[dict[str, Any]] = []
+    items, failure_reason, failure_code = _filter_exercise_candidates(items, request=request, query=query, book_title=str(book_title or ""), diagnostics=diagnostics)
+    grounding["content_analysis"] = diagnostics
+    if failure_reason:
+        grounding["failure_code"] = failure_code
     if len(items) > 1:
         candidates = [
             " / ".join(item.get("container_path") or []) or f"P{(item.get('question') or {}).get('printed_pages', ['?'])[0]}"
             for item in items
         ]
         grounding.update(status="answer_ambiguous", failure_reason="找到多个可能的原题—题解关系。", next_action=f"请补充结构标题，例如：{'、'.join(candidates)}。")
+        grounding["candidate_locations"] = [{"chapter_id": item.get("chapter_id"), "container_path": item.get("container_path", []), "printed_pages": (item.get("question") or {}).get("printed_pages", [])} for item in items]
         return grounding
     if not items:
-        if page_status == "exact_asset":
+        if failure_reason:
+            grounding.update(failure_reason=failure_reason, next_action="请核对请求章节、结构标题或题目内容。")
+        elif exercise_route.get("failure_reason"):
+            grounding.update(failure_reason=exercise_route["failure_reason"])
+            if exercise_route.get("failure_code"):
+                grounding["failure_code"] = exercise_route["failure_code"]
+        elif page_status == "exact_asset":
             grounding.update(status="answer_asset_only", failure_reason="只定位到原题图片，尚未确认原书答案正文。", next_action="如需继续，请明确允许人工核对答案原图，或先发布题解证据。")
         return grounding
 
@@ -655,7 +735,6 @@ def resolve_exercise_route(*, query: str, book_route: dict[str, Any], request: d
     filters = {
         "stage": stage,
         "part": request["part"],
-        "chapter_number": request["chapter_number"],
         "exercise_type": request["exercise_type"],
         "exercise_number": request["exercise_number"],
         "exercise_label": request["exercise_label"],
@@ -663,9 +742,20 @@ def resolve_exercise_route(*, query: str, book_route: dict[str, Any], request: d
     for key, value in filters.items():
         if value not in (None, ""):
             items = [item for item in items if item.get(key) == value]
+    if request.get("chapter_number") is not None:
+        # The 131 numbered series pairs use chapter_number; the 408 worked
+        # example pairs use chapter_id. Do not erase either representation.
+        items = [item for item in items if item.get("pair_kind") == "same_book_worked_example"
+                 or item.get("chapter_number") == request["chapter_number"]]
     if request["printed_page"] is not None:
         page = int(request["printed_page"])
         items = [item for item in items if page in list((item.get("question") or {}).get("printed_pages", []))]
+    diagnostics: list[dict[str, Any]] = []
+    items, failure_reason, failure_code = _filter_exercise_candidates(items, request=request, query=query, diagnostics=diagnostics)
+    result["content_analysis"] = diagnostics
+    if failure_reason:
+        result["failure_code"] = failure_code
+        result["failure_reason"] = failure_reason
     if len(items) == 1:
         item = items[0]
         result.update(

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from common import INDEX_DIRNAME, default_vault_root_arg, kb_layout, is_publishable_claim, is_publishable_source_evidence, learner_file_map, resolve_subject, runtime_context_payload, validate_entity_contract
-from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator
+from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator, resolve_page_from_accepted_evidence
 from kaoyan_kb.domain.exercise_locator import assemble_exact_relation, container_path_from_query, find_exact_relation, find_exact_worked_example_relation, find_unique_relation_for_scope, list_exact_relations_for_question_page, list_exact_worked_example_relations, normalize_exercise_category, normalize_exercise_label, resolve_section_anchor
 from kaoyan_kb.domain.book_series import classify_source_request, has_exercise_request_signal, parse_exercise_request, resolve_answer_grounding, resolve_book_route, resolve_exercise_route
 from kaoyan_kb.domain.exercise_batch import BATCH_CONTRACT_VERSION, parse_exercise_batch_request, resolve_exercise_batch_targets
@@ -296,7 +296,9 @@ def apply_hard_page_route(
     )
     locator["requested_position"] = request.get("requested_position")
     locator["requested_container_path"] = list(request.get("requested_container_path") or [])
-    if locator["match_status"] != "exact_asset":
+    if locator["match_status"] in {"not_found", "unmapped"} and request.get("source_request_kind") == "exercise":
+        locator = resolve_page_from_accepted_evidence(subject=subject, book_title=book_title, printed_page=int(request["requested_page"]), locator=locator)
+    if locator["match_status"] not in {"exact_asset", "exact_evidence"}:
         return locator, [], [], []
 
     exact_evidences = exact_evidence_hits_for_locator(subject, chapter, locator)
@@ -1405,6 +1407,7 @@ def _query_single(
                 request_resolution['book_title'] = effective_book_title
     request_resolution.setdefault('field_sources', {})['book_title'] = book_resolution.get('source', '')
     page_anchor_request = {
+        "source_request_kind": request_resolution.get("source_request_kind"),
         "requested_page": request_resolution["page"]["number"],
         "requested_position": request_resolution.get("requested_position"),
         "requested_exercise_label": request_resolution["exercise_label"],

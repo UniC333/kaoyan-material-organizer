@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from functools import wraps
 
+from common import kb_layout
+from kaoyan_kb.domain.exercise_locator import requested_chapter_id
+from .read_session import read_json
+
 
 def teaching_permission(payload: dict) -> bool:
     request = payload.get('request_resolution') or {}
@@ -33,6 +37,19 @@ def teaching_permission(payload: dict) -> bool:
     requested_book_id = (payload.get('book_resolution') or {}).get('book_id') or page.get('book_id')
     if requested_book_id and problem.get('book_id') and requested_book_id != problem['book_id']:
         return False
+    scope = request.get('exercise_scope') or {}
+    expected_chapter = request.get('chapter_id') or scope.get('chapter_id') or page.get('chapter_id') or requested_chapter_id(
+        chapter_number=scope.get('chapter_number', request.get('chapter_number')), book_id=str(requested_book_id or problem.get('book_id') or ''),
+        book_title=str(request.get('book_title') or payload.get('book_title') or ''),
+        chapter=str(request.get('chapter_input') or ''),
+    )
+    if expected_chapter:
+        ids = problem.get('evidence_ids') or ([problem['evidence_id']] if problem.get('evidence_id') else [])
+        for evidence_id in ids:
+            path = kb_layout()['evidence'] / f'{evidence_id}.json'
+            actual_chapter = read_json(path).get('chapter_id') if path.is_file() else None
+            if actual_chapter and actual_chapter != expected_chapter:
+                return False
     if page.get('requested_page') is not None and page.get('match_status') != 'exact_evidence':
         return False
     if page.get('match_status') in {'unavailable', 'stale', 'unmapped', 'ambiguous'}:

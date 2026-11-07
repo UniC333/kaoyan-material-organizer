@@ -18,7 +18,12 @@ CURRENT_TASK_PATH = Path("01_任务") / "当前任务.md"
 CONCEPT_SUFFIXES = ("定理", "法则", "公式", "定义")
 
 def normalize_text(value: Any) -> str:
-    text = str(value or "").strip().lower()
+    # Fold only deterministic typography, not mathematical equivalence.
+    text = str(value or "").translate(str.maketrans({
+        **{chr(code): chr(code - 0xFEE0) for code in range(0xFF01, 0xFF5F)},
+        "′": "'", "ʼ": "'", "−": "-", "–": "-",
+        **dict(zip("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")),
+    })).strip().lower()
     text = re.sub(r"\s+", " ", text)
     return text
 
@@ -254,7 +259,7 @@ def resolve_request(
         requested_option=requested_option,
     )
     from kaoyan_kb.domain.book_series import parse_exercise_request
-    exercise_scope = parse_exercise_request(' '.join([str(book_title or ''), text]))
+    exercise_scope = parse_exercise_request(' '.join([str(book_title or ''), str(chapter or ''), text]))
     exercise_scope['printed_page'] = page
     if label:
         exercise_scope['exercise_label'] = label if label.startswith('例') else ''
