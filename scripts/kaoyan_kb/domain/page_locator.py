@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from common import ensure_kb_layout, kb_layout, load_json_or_default, now_iso, save_json
+from common import ensure_kb_layout, kb_layout, load_json_or_default, now_iso, save_json, sha256_for_file
 from config import load_runtime_config
 from kaoyan_kb.domain.evidence_publication import is_publishable_source_evidence
 from kaoyan_kb.domain.index_freshness import directory_json_inputs, fingerprint_index_inputs
@@ -557,9 +557,104 @@ def resolve_page_locator(*, subject: str, book_title: str | None, printed_page: 
     return base
 
 
+def resolve_page_from_accepted_evidence(*, subject: str, book_title: str | None, printed_page: int, locator: dict[str, Any]) -> dict[str, Any]:
+    """Anchor an absent formal page only by one accepted, current photo record.
+
+    Page asset metadata supplies identity/version, never its page mapping.
+    The printed-page pin belongs to reviewed evidence; PDF pages are untouched.
+    """
+    if locator.get("match_status") not in {"not_found", "unmapped"} or not book_title:
+        return locator
+    from kaoyan_kb.domain.query.read_session import read_json, read_all_json
+    layout = kb_layout()
+    runtime = load_runtime_config()
+    sources = {}
+    for source in read_all_json(layout["manifests"] / "sources"):
+        if source.get("status") != "active" or source.get("subject") != subject or source.get("material_type") != "chapter-photo":
+            continue
+        metadata = Path(str(source.get("source_path") or "")) / runtime.paper_book_metadata_dir
+        book_path, assets_path = metadata / "book_asset.json", metadata / "page_assets.json"
+        if not book_path.is_file() or not assets_path.is_file():
+            continue
+        book, assets = read_json(book_path), read_json(assets_path)
+        if not book.get("book_id") or not _book_title_matches(book_title, str(book.get("book_title") or "")):
+            continue
+        if assets.get("book_id") != book["book_id"]:
+            continue
+        sources[source["source_id"]] = (source, book, assets)
+    candidates = []
+    for evidence in read_all_json(layout["evidence"]):
+        if (evidence.get("subject") != subject or evidence.get("review_status") != "accepted"
+                or evidence.get("verification_status") != "source_grounded" or not is_publishable_source_evidence(evidence)):
+            continue
+        source_info = sources.get(str(evidence.get("source_id") or ""))
+        if not source_info:
+            continue
+        source, book, assets = source_info
+        if evidence.get("book_id") and evidence["book_id"] != book["book_id"]:
+            continue
+        refs = [ref for ref in evidence.get("page_classification_refs", []) if isinstance(ref, dict)]
+        root = evidence.get("locator") or {}
+        if not refs and _is_explicit_printed_page(root.get("page_start")) and _printed_page(root["page_start"]) == printed_page:
+            # Locator-only legacy photo records still need an unambiguous
+            # current asset hash. The page number comes only from this pin.
+            hashes = {span.get("source_file_sha256") for span in evidence.get("source_spans", []) or []}
+            pinned_assets = [asset for asset in assets.get("items", []) if asset.get("source_image_sha256") in hashes]
+            if len(hashes) == len(pinned_assets) == 1:
+                asset = pinned_assets[0]
+                refs = [{"book_id": book["book_id"], "source_id": source["source_id"], "printed_page": printed_page,
+                         "page_id": asset.get("page_id"), "source_file_sha256": asset.get("source_image_sha256")}]
+        # A page-level record must not mix pins, books or source versions.
+        if not refs or any(ref.get("printed_page") != printed_page or ref.get("book_id") != book["book_id"]
+                           or ref.get("source_id") != source["source_id"] for ref in refs):
+            continue
+        if root.get("page_start") and (not _is_explicit_printed_page(root["page_start"]) or _printed_page(root["page_start"]) != printed_page):
+            continue
+        if root.get("page_end") and (not _is_explicit_printed_page(root["page_end"]) or _printed_page(root["page_end"]) != printed_page):
+            continue
+        current = []
+        for ref in refs:
+            sha = str(ref.get("source_file_sha256") or "")
+            page_assets = [asset for asset in assets.get("items", []) if asset.get("page_id") == ref.get("page_id")]
+            files = [file for file in source.get("files", []) if file.get("sha256") == sha]
+            if not sha or len(page_assets) != 1 or len(files) != 1 or page_assets[0].get("source_image_sha256") != sha:
+                break
+            spans = evidence.get("source_spans") or []
+            if not spans or any(span.get("source_id") != source["source_id"] or span.get("source_file_sha256") != sha for span in spans):
+                break
+            if any(_is_explicit_printed_page((span.get("locator") or {}).get(key))
+                   and _printed_page(span["locator"][key]) != printed_page
+                   for span in spans for key in ("page_start", "page_end")):
+                break
+            image = Path(str(files[0].get("absolute_path") or ""))
+            if not image.is_file() or sha256_for_file(image) != sha:
+                break
+            current.append({**ref, "source_image_path": str(image)})
+        if len(current) == len(refs):
+            candidates.append((evidence, book, current[0]))
+    if len(candidates) != 1:
+        return locator
+    evidence, book, ref = candidates[0]
+    return {**locator, "match_status": "exact_evidence", "book_id": book["book_id"], "book_title": book["book_title"],
+            "source_id": evidence["source_id"], "page_id": ref["page_id"],
+            "source_image_path": ref.get("source_image_path", ""), "source_image_sha256": ref["source_file_sha256"],
+            "source_asset_kind": "image", "source_asset_path": ref.get("source_image_path", ""),
+            "evidence_ids": [evidence["evidence_id"]], "match_basis": "accepted_page_evidence_direct_anchor（已验收页级证据直锚，非正式页码索引）"}
+
+
 def evidence_matches_locator(evidence: dict[str, Any], locator: dict[str, Any]) -> bool:
     evidence_id = str(evidence.get("evidence_id") or "")
     if evidence_id and evidence_id in set(locator.get("evidence_ids", []) or []):
+        if str(locator.get("match_basis") or "").startswith("accepted_page_evidence_direct_anchor"):
+            refs = evidence.get("page_classification_refs", []) or []
+            if refs:
+                return any(ref.get("printed_page") == locator.get("requested_page")
+                           and ref.get("book_id") == locator.get("book_id")
+                           and ref.get("source_file_sha256") == locator.get("source_image_sha256") for ref in refs)
+            pin = (evidence.get("locator") or {}).get("page_start")
+            return (_is_explicit_printed_page(pin) and _printed_page(pin) == locator.get("requested_page")
+                    and any(span.get("source_file_sha256") == locator.get("source_image_sha256")
+                            for span in evidence.get("source_spans", []) or []))
         requested_pdf_page = int(locator.get("pdf_page", 0) or 0)
         actual_pdf_page = evidence_pdf_page(evidence)
         return not requested_pdf_page or actual_pdf_page == requested_pdf_page

@@ -18,9 +18,25 @@ CURRENT_TASK_PATH = Path("01_任务") / "当前任务.md"
 CONCEPT_SUFFIXES = ("定理", "法则", "公式", "定义")
 
 def normalize_text(value: Any) -> str:
-    text = str(value or "").strip().lower()
+    # Fold only deterministic typography, not mathematical equivalence.
+    text = str(value or "").translate(str.maketrans({
+        **{chr(code): chr(code - 0xFEE0) for code in range(0xFF01, 0xFF5F)},
+        "′": "'", "ʼ": "'", "−": "-", "–": "-",
+        **dict(zip("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")),
+    })).strip().lower()
     text = re.sub(r"\s+", " ", text)
     return text
+
+
+from .teaching_intent import (
+    TEACHING_ACTION_PHRASES, TEACHING_MODIFIERS,
+    split_teaching_requirement as _split_teaching_requirement,
+)
+
+
+def split_teaching_requirement(text):
+    """Delegate to the pure closed-clause parser; preserve the public triple."""
+    return _split_teaching_requirement(text)
 
 
 def resolve_current_task_book(*, vault_root: Path, subject: str, explicit_book_title: str | None, query: str = '', confirmed_book_title: str | None = None) -> dict[str, Any]:
@@ -213,15 +229,16 @@ def resolve_request(
 ) -> dict[str, Any]:
     """Resolve routing hints while preserving explicit CLI overrides."""
     text = str(query or "")
-    parsed = parse_page_anchor(text)
+    teaching_action, teaching_fragments, problem_text = split_teaching_requirement(text)
+    parsed = parse_page_anchor(problem_text)
     page = int(printed_page) if printed_page is not None else parsed.get("requested_page")
     if printed_page is not None:
         page_semantics = "exact_page"
     elif page is None:
         page_semantics = "none"
-    elif re.search(rf"(?:从\s*)?(?:第\s*)?{page}\s*页\s*(?:起|开始|开头)", text):
+    elif re.search(rf"(?:从\s*)?(?:第\s*)?{page}\s*页\s*(?:起|开始|开头)", problem_text):
         page_semantics = "section_start"
-    elif any(token in text for token in ("附近", "左右", "前后", "大约", "约在", "以后", "往后", "之后", "后面")):
+    elif any(token in problem_text for token in ("附近", "左右", "前后", "大约", "约在", "以后", "往后", "之后", "后面")):
         page_semantics = "approximate_page"
     else:
         page_semantics = "exact_page"
@@ -238,29 +255,32 @@ def resolve_request(
         # the request down the numbered-exercise/PDF path and leaves a valid
         # photo-page example incorrectly marked unverified.
         label = parse_exercise_label(parsed_label) or normalize_exercise_label(parsed_label)
-    requested_option = parse_requested_option(text, label)
-    section_anchor = resolve_section_anchor(book_title=str(book_title or ""), chapter=str(chapter or ""), query=text)
+    requested_option = parse_requested_option(problem_text, label)
+    section_anchor = resolve_section_anchor(book_title=str(book_title or ""), chapter=str(chapter or ""), query=problem_text)
     section_scope = str(section_anchor.get("section_root") or "")
-    category = normalize_exercise_category(text)
+    category = normalize_exercise_category(problem_text)
     if requested_option and not category:
         category = "single-choice"
     label_source = "cli" if exercise_label and label else "query" if label else ""
-    container_path = container_path_from_query(text)
+    container_path = container_path_from_query(problem_text)
     source_request_kind = classify_source_request(
-        query=text,
+        query=problem_text,
         book_title=book_title,
         page_anchor={"requested_page": page, "requested_exercise_label": label},
         exercise_label=label,
         requested_option=requested_option,
     )
     from kaoyan_kb.domain.book_series import parse_exercise_request
-    exercise_scope = parse_exercise_request(' '.join([str(book_title or ''), text]))
+    exercise_scope = parse_exercise_request(' '.join([str(book_title or ''), str(chapter or ''), problem_text]))
     exercise_scope['printed_page'] = page
     if label:
         exercise_scope['exercise_label'] = label if label.startswith('例') else ''
         exercise_scope['exercise_number'] = int(label) if label.isdigit() else None
     return {
         "original_query": text,
+        "teaching_action": teaching_action,
+        "teaching_fragments": teaching_fragments,
+        "problem_query": problem_text,
         "exercise_scope": exercise_scope,
         "requested_position": parsed.get('requested_position'),
         "field_sources": {"book_title": "cli_or_resolved", "printed_page": "cli" if printed_page is not None else "query" if page is not None else "", "exercise_label": label_source},

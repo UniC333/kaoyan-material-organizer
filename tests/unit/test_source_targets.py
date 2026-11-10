@@ -321,3 +321,142 @@ def test_exact_and_soft_page_targets_do_not_share_cached_result(books, tmp_path,
     assert [item["result"]["request_resolution"]["page"]["semantics"] for item in multiple["items"]] == ["exact_page", "approximate_page"]
     assert multiple["items"][1]["result"]["page_crosscheck"]["required"]
     assert not multiple["comparison_allowed"]
+
+
+# Scheme D: teaching metadata isolation; keep all existing main tests above.
+CACHE_PAIRS = [
+    ('只给提示', '直接给答案'), ('直接给答案', '只给提示'),
+    ('只给提示', '老师只给提示'), ('直接给答案', '老师直接给答案'),
+    ('只给提示', '提示一下'),
+    ('珂只给提示', '珂别只给提示'),
+    ('只给提示', '珂只给提示'), ('直接给答案', '珂只给提示'),
+    ('珂只给提示', '只给提示'), ('珂只给提示', '直接给答案'),
+    ('只给提示', '第一题和第二题，只给提示'),
+    ('第一题和第二题，只给提示', '只给提示'),
+    ('直接给答案', '这题与另一题，直接给完整答案'),
+    ('这题与另一题，直接给完整答案', '直接给答案'),
+]
+
+
+@pytest.mark.parametrize('left,right', CACHE_PAIRS)
+@pytest.mark.parametrize('anchor', ['高数基础篇65页例1', '高数基础篇65页', '高数基础篇65页第一问'])
+def test_cache_raw_fragments_match_independent_results(books, monkeypatch, tmp_path, left, right, anchor):
+    monkeypatch.setattr(common, 'runtime_context_payload', lambda **kwargs: {})
+    calls = []
+    def independent(*args):
+        assert args[5] is None  # preserve main's natural-language page semantics
+        resolved = request.resolve_request(
+            query=args[3], book_title=args[6], chapter=None, printed_page=None, exercise_label=None)
+        result = exact_result(resolved['page']['number'])
+        result['book_resolution']['book_title'] = args[6]
+        result['request_resolution'] = resolved
+        # Stand in for query_one's evidence decision, deliberately differing for
+        # unresolved input. No new rule for clarify is added to production.
+        if result['request_resolution']['teaching_action'] == 'clarify':
+            result['page_anchor']['match_status'] = 'unmapped'
+            finalize_result(result)
+        return result
+    def query_one(*args):
+        calls.append(args)
+        return independent(*args)
+    raw = f'{anchor}，{left}；{anchor}，{right}；'
+    payload = targets.query_source_targets(query_one=query_one, vault_root=tmp_path,
+        subject='数学', chapter=None, query=raw, topk=3)
+    assert len(calls) == 2
+    for item, args in zip(payload['items'], calls):
+        expected = independent(*args)
+        actual = item['result']
+        for field in ('teaching_action', 'teaching_fragments', 'problem_query'):
+            assert actual['request_resolution'][field] == expected['request_resolution'][field]
+        for field in ('answer_grounding', 'teaching_bundle', 'page_verification'):
+            assert actual.get(field) == expected.get(field)
+        assert teaching_permission(actual) == teaching_permission(expected)
+        assert raw[slice(*item['span'])] == item['fragment'] == actual['query']
+        for fragment in actual['request_resolution']['teaching_fragments']:
+            assert item['fragment'][fragment['start']:fragment['end']] == fragment['phrase']
+
+
+def test_identical_raw_fragment_cache_deepcopy_and_request_lifetime(books, monkeypatch, tmp_path):
+    monkeypatch.setattr(common, 'runtime_context_payload', lambda **kwargs: {})
+    calls, originals = [], []
+    def query_one(*args):
+        calls.append(args)
+        assert args[5] is None
+        result = exact_result(65)
+        result['request_resolution'] = request.resolve_request(
+            query=args[3], book_title=args[6], chapter=None, printed_page=None, exercise_label=None)
+        originals.append(result)
+        return result
+    kwargs = dict(query_one=query_one, vault_root=tmp_path, subject='数学', chapter=None,
+        query='高数基础篇65页例1，只给提示；高数基础篇65页例1，只给提示；', topk=3)
+    payload = targets.query_source_targets(**kwargs)
+    assert len(calls) == 1
+    first, second = [i['result'] for i in payload['items']]
+    before = deepcopy(first)
+    second['request_resolution']['teaching_fragments'][0]['phrase'] = 'changed'
+    second['request_resolution']['page']['number'] = 999
+    second['teaching_bundle']['source_answer_text'] = 'changed'
+    assert first == before
+    assert originals[0]['request_resolution']['teaching_fragments'][0]['phrase'] == '只给提示'
+    assert originals[0]['request_resolution']['page']['number'] == 65
+    assert originals[0]['teaching_bundle']['source_answer_text'] == '答案'
+    fresh = targets.query_source_targets(**kwargs)
+    assert len(calls) == 2
+    assert fresh['items'][0]['result'] == before
+
+
+@pytest.mark.parametrize('ending', ['； ', '；\t', ';', '；\n'])
+def test_cache_does_not_normalize_whitespace_or_punctuation(books, monkeypatch, tmp_path, ending):
+    monkeypatch.setattr(common, 'runtime_context_payload', lambda **kwargs: {})
+    calls = []
+    def query_one(*args):
+        calls.append(args[3])
+        assert args[5] is None
+        return exact_result(65)
+    raw = '高数基础篇65页例1，只给提示；高数基础篇65页例1，只给提示' + ending
+    payload = targets.query_source_targets(query_one=query_one, vault_root=tmp_path,
+        subject='数学', chapter=None, query=raw, topk=3)
+    assert len(calls) == 2
+    assert calls == [i['fragment'] for i in payload['items']]
+
+
+@pytest.mark.parametrize('raw,expected', [
+    ('高数基础篇65页例1，只给提示；高数基础篇66页例1，直接给答案；', [(65, '例1'), (66, '例1')]),
+    ('高数基础篇65页例1，只给提示；高数基础篇65页例2，只给提示；', [(65, '例1'), (65, '例2')]),
+    ('高数基础篇65页例1，直接给答案；高数基础篇65页例2，只给提示；', [(65, '例1'), (65, '例2')]),
+    ('高数基础篇65页例1，只给提示；65页例1，老师只给提示；', [(65, '例1'), (65, '例1')]),
+    ('高数基础篇65页例1，只给提示；练习1800基础篇题解17页第3题，直接给答案；', [(65, '例1'), (17, '03')]),
+])
+def test_cache_identity_controls_and_inherited_book(books, monkeypatch, tmp_path, raw, expected):
+    monkeypatch.setattr(common, 'runtime_context_payload', lambda **kwargs: {})
+    calls = []
+    def query_one(*args):
+        calls.append(args)
+        assert args[5] is None  # preserve main's natural-language page semantics
+        resolved = request.resolve_request(
+            query=args[3], book_title=args[6], chapter=None, printed_page=None, exercise_label=None)
+        result = exact_result(resolved['page']['number'])
+        result['book_resolution']['book_title'] = args[6]
+        result['request_resolution'] = resolved
+        return result
+    payload = targets.query_source_targets(query_one=query_one, vault_root=tmp_path,
+        subject='数学', chapter=None, query=raw, topk=3)
+    assert len(calls) == 2
+    assert [(i['printed_page'], i['result']['request_resolution']['exercise_label'])
+            for i in payload['items']] == expected
+    for item, args in zip(payload['items'], calls):
+        result = item['result']
+        assert item['binding']['status'] == 'exact'
+        assert result['book_resolution']['book_title'] == args[6]
+        assert result['request_resolution']['original_query'] == item['fragment']
+        for fragment in result['request_resolution']['teaching_fragments']:
+            assert item['fragment'][fragment['start']:fragment['end']] == fragment['phrase']
+
+
+@pytest.mark.parametrize('override', [dict(printed_page=65), dict(exercise_label='1')])
+def test_both_global_overrides_stop_before_cache_query(books, monkeypatch, tmp_path, override):
+    monkeypatch.setattr(common, 'runtime_context_payload', lambda **kwargs: {})
+    payload = targets.query_source_targets(query_one=lambda *a: pytest.fail('must not query'),
+        vault_root=tmp_path, subject='数学', chapter=None,
+        query='高数基础篇65页例1，只给提示；高数基础篇65页例1，直接给答案；', topk=3, **override)
+    assert all(i['failure_reason'] == 'global-target-override-ambiguous' for i in payload['items'])

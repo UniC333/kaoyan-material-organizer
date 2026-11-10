@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import logging
 from collections import defaultdict
 from typing import Any
 
@@ -22,12 +23,158 @@ WORKED_ANSWER_BOUNDARY_PATTERN = re.compile(
     r"(?m)^\s*(?:(?:定理|定义)\s*\d*|\(\s*\d+\s*\)\s*若函数|本章学习诊断)"
 )
 CONTAINER_HEADING_PATTERN = re.compile(
-    r"^(?:题型|专题|方法|模型|考点|类型)\s*(?:[0-9]+|[零一二三四五六七八九十两]+)(?:\s*[：:、-]?\s*.*)?$"
+    r"^(?:题型|题理|专题|方法|模型|考点|类型)\s*(?:[0-9]+|[零一二三四五六七八九十两]+)(?:\s*[：:、-]?\s*.*)?$"
 )
 CONTAINER_ORDINAL_PATTERN = re.compile(
-    r"^(?P<kind>题型|专题|方法|模型|考点|类型)\s*(?P<ordinal>[0-9]+|[零一二三四五六七八九十两]+)(?=\s|[：:、\-]|$)"
+    r"^(?P<kind>题型|题理|专题|方法|模型|考点|类型)\s*(?P<ordinal>[0-9]+|[零一二三四五六七八九十两]+)(?=\s|[：:、\-]|$)"
 )
 CHINESE_DIGITS = {"零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "两": 2}
+
+
+def requested_chapter_id(*, chapter_number: Any = None, book_id: str = "", book_title: str = "", chapter: str = "") -> str:
+    """Resolve only an observed book's numbered chapter naming convention.
+
+    The series index has no chapter table. CH-TANG2027-B-CALC-NN is
+    evidenced by the published pair records, not by an ordinal manifest ID.
+    Unknown conventions remain unresolved; never interpret CH-MATH-0001 as
+    the first chapter of a book.
+    """
+    if chapter_number is None:
+        match = re.search(r"第\s*([0-9零一二三四五六七八九十两]+)\s*章", chapter)
+        chapter_number = _container_ordinal_value(match.group(1)) if match else None
+    if chapter_number is None:
+        return ""
+    from kaoyan_kb.domain.query.read_session import read_json
+    path = kb_layout()["indexes"] / "exercise_pair_index.json"
+    if not path.is_file():
+        return ""
+    normalize = lambda value: re.sub(r"[\s《》]+", "", str(value or "")).lower()
+    items = [item for item in read_json(path).get("items", [])
+             if (book_id and item.get("book_id") == book_id)
+             or (not book_id and book_title and normalize(item.get("book_title")) == normalize(book_title))]
+    stems = {match.group(1) for item in items
+             if (match := re.fullmatch(r"(CH-TANG2027-B-CALC)-\d{2}", str(item.get("chapter_id") or "")))}
+    return f"{next(iter(stems))}-{int(chapter_number):02d}" if len(stems) == 1 else ""
+
+
+# Evidence roles are defined here once; anchors are the remaining distinctive
+# tokens. 收敛 (DF=12/3 chapters) and 发散 (4/2) do not meet 20/4.
+CONTENT_EVIDENCE_USE = {
+    "instruction": frozenset({
+        "讲一下", "解释一下", "检查过程", "核对过程", "问答验收", "帮我", "请问",
+        "讲解", "解释", "证明", "判断", "是否", "选择题", "填空题", "解答题",
+        "选择", "求解", "怎么做", "如何做", "教材", "讲义", "基础篇", "强化篇",
+        "高等数学", "高数", "书上", "原书", "答案", "题解", "这道题", "例题",
+        "存在", "设", "求", "的", "第", "写", "吗",
+    }),
+    "generic_math": frozenset({
+        "lim", "sin", "cos", "tan", "ln", "log", "exp", "inf",
+        "函数", "连续", "积分", "极限", "可导", "导数", "微分", "单调",
+    }),
+    "anchor": "remaining_distinctive_tokens",
+}
+GENERIC_MATH_CONTENT_STOPLIST = CONTENT_EVIDENCE_USE["generic_math"]
+DIRECTION_ATTRIBUTES = {
+    "单调递减": "decreasing", "单调递增": "increasing",
+    "单调不减": "nondecreasing", "单调不增": "nonincreasing",
+}
+BOUND_ATTRIBUTES = {"有界": "bounded", "有上界": "upper_bounded", "有下界": "lower_bounded"}
+
+
+def analyze_exercise_content(query: str, item: dict[str, Any], *, book_title: str = "") -> dict[str, Any]:
+    """Analyze support, never infer contradiction from missing substring hits.
+
+    All results are ephemeral diagnostics. Direction and boundedness associations
+    do not count as anchor hits; no algebraic or conceptual equivalence is used.
+    """
+    from build_search_index import tokenize
+    from kaoyan_kb.domain.query.request import normalize_text
+    from kaoyan_kb.domain.query.source_targets import catalogue
+    text = normalize_text(query)
+    titles = [book_title, str(item.get("book_title") or "")]
+    for series in catalogue():
+        titles.extend([series.get("canonical_title", ""), *series.get("aliases", [])])
+        for volume in series.get("volumes", []):
+            titles.extend([volume.get("title", ""), *volume.get("aliases", [])])
+    for title in sorted(set(titles), key=len, reverse=True):
+        if title:
+            text = text.replace(normalize_text(title), " ")
+    text = re.sub(r"第?\s*[0-9零一二三四五六七八九十两]+\s*[章节页]|[0-9]+\s*页", " ", text)
+    for container in container_path_from_query(text):
+        text = text.replace(container, " ")
+    text = re.sub(r"例\s*\d+(?:\.\d+)*|第?\s*\d+\s*题", " ", text)
+    text = re.sub(r"\bp\s*\d+\b|第?\s*[零一二三四五六七八九十两0-9]+\s*问", " ", text)
+    before = []
+
+    def add(token: str, category: str, kind: str = "term") -> None:
+        entry = {"token": token, "category": category, "kind": kind}
+        if entry not in before:
+            before.append(entry)
+
+    for word in sorted(CONTENT_EVIDENCE_USE["instruction"], key=lambda w: (-len(w), w)):
+        if word in text:
+            add(word, "instruction")
+            text = text.replace(word, " ")
+    has_content = bool(re.search(r"[a-z0-9\u4e00-\u9fffα-ω]", text))
+    content_text = text
+    for phrase in DIRECTION_ATTRIBUTES:
+        if phrase in text:
+            add(phrase, "diagnostic", "direction")
+            add("单调", "generic_math")
+            text = text.replace(phrase, " ")
+    # Keep each continuous relation whole; never admit its isolated function or
+    # prime fragments as independent anchors. Whitespace is layout only.
+    compact = re.sub(r"\s+", "", text)
+    for match in re.finditer(r"[a-zα-ω0-9_'().{}^+*/=→<>!\-]+", compact):
+        fragment = match.group().strip(".")
+        if re.search(r"[a-zα-ω]", fragment) and re.search(r"[/=→+*<>-]", fragment):
+            add(fragment, "anchor", "formula_relation")
+    for word in sorted(GENERIC_MATH_CONTENT_STOPLIST, key=lambda w: (-len(w), w)):
+        pattern = (r"(?<![a-z])" + re.escape(word) + r"(?![a-z])") if word.isascii() else re.escape(word) + r"(?:性)?"
+        if re.search(pattern, text):
+            add(word, "generic_math")
+            text = re.sub(pattern, " ", text)
+    # Identity support keeps each Chinese run whole. Search still uses the
+    # existing tokenizer's default n-grams; their substrings are not identities.
+    for token in tokenize(text, chinese_ngrams=False):
+        if len(token) >= 2 and not token.isdigit():
+            add(token, "anchor")
+    after = [entry for entry in before if entry["category"] == "anchor"]
+    state = "no_content" if not has_content else "has_anchor" if after else "generic_only"
+    sides = {
+        side: re.sub(r"\s+", "", normalize_text("\n".join(
+            str((item.get(side) or {}).get(key) or "") for key in ("content", "text"))))
+        for side in ("question", "solution", "answer")
+    }
+    hits = []
+    for entry in after:
+        locations = [side for side, haystack in sides.items() if entry["token"] in haystack]
+        if locations:
+            hits.append({**entry, "locations": locations})
+    question_hit = any("question" in hit["locations"] for hit in hits)
+    solution_hit = any(set(hit["locations"]) & {"solution", "answer"} for hit in hits)
+    attributes = lambda value: [kind for phrase, kind in {**BOUND_ATTRIBUTES, **DIRECTION_ATTRIBUTES}.items() if phrase in value]
+    requested_attributes = attributes(content_text)
+    candidate_attributes = {side: attributes(value) for side, value in sides.items()}
+    bounded_kinds = set(BOUND_ATTRIBUTES.values())
+    weak = bool(bounded_kinds.intersection(requested_attributes) and any(
+        bounded_kinds.intersection(values) for values in candidate_attributes.values()))
+    return {
+        "has_content_description": has_content, "tokens_before_filter": before,
+        "tokens_after_filter": after, "state": state, "anchor_hits": hits,
+        "hit_location": "question" if question_hit else "solution" if solution_hit else "none",
+        "question_hit": question_hit, "solution_hit": solution_hit,
+        "direction_matches": [phrase for phrase in DIRECTION_ATTRIBUTES if phrase in content_text
+                              and any(phrase in value for value in sides.values())],
+        "requested_attributes": requested_attributes, "candidate_attributes": candidate_attributes,
+        "weak_associations": ["boundedness"] if weak else [],
+    }
+
+
+def exercise_content_matches(query: str, item: dict[str, Any], *, book_title: str = "") -> bool:
+    """Compatibility support check; locating exceptions belong to the route gate."""
+    analysis = analyze_exercise_content(query, item, book_title=book_title)
+    return analysis["state"] == "no_content" or bool(analysis["anchor_hits"])
 
 
 def normalize_exercise_label(value: Any) -> str:
@@ -97,7 +244,7 @@ def container_path_from_query(query: str) -> list[str]:
     """Extract the learner-facing structural heading before an example label."""
     text = str(query or "")
     match = re.search(
-        r"((?:题型|专题|方法|模型|考点|类型)\s*(?:[0-9]+|[零一二三四五六七八九十两]+)(?:\s*[：:、-]?\s*[^例，。；,;\n]*?)?)\s*(?=例\s*[0-9])",
+        r"((?:题型|题理|专题|方法|模型|考点|类型)\s*(?:[0-9]+|[零一二三四五六七八九十两]+)(?:\s*[：:、-]?\s*[^例，。；,;\n]*?)?)\s*(?=例\s*[0-9])",
         text,
     )
     if not match:
@@ -224,11 +371,11 @@ def resolve_section_anchor(*, book_title: str, chapter: str, query: str = "") ->
     combined = " ".join(part for part in (str(chapter or ""), str(query or "")) if part)
     numbers = re.findall(r"(?:第\s*)?(\d+(?:\.\d+)+)\s*(?:节)?", combined)
     if not numbers:
-        chapter_match = re.search(r"(?:第\s*)?(\d+)\s*章", combined)
+        chapter_match = re.search(r"(?:第\s*)?([0-9零一二三四五六七八九十两]+)\s*章", combined)
         return {
             "status": "not_requested",
             "requested_section": "",
-            "section_root": chapter_match.group(1) if chapter_match else "",
+            "section_root": str(_container_ordinal_value(chapter_match.group(1))) if chapter_match else "",
             "candidates": [],
         }
     requested = numbers[0]
@@ -966,11 +1113,11 @@ def find_unique_relation_for_scope(*, book_title: str, chapter: str, exercise_la
         return {}
     scope = str(section_anchor.get("section_root") or "")
     section_number = re.search(r"^\d+\.\d+$", scope)
-    chapter_number = re.search(r"(?:第\s*)?(\d+)\s*章", chapter)
+    chapter_number = re.search(r"(?:第\s*)?([0-9零一二三四五六七八九十两]+)\s*章", chapter)
     normalized_category = normalize_exercise_category(category or query)
     if not label or (not scope and not chapter_number):
         return {}
-    scope = scope or chapter_number.group(1)
+    scope = scope or str(_container_ordinal_value(chapter_number.group(1)))
     layout = kb_layout()
     sources = {
         str(item.get("source_id") or ""): str(item.get("source_name") or "")
@@ -994,7 +1141,18 @@ def find_unique_relation_for_scope(*, book_title: str, chapter: str, exercise_la
             else str(item.get("section_root") or "").split(".", 1)[0] == scope
         )
     ]
-    return matches[0] if len(matches) == 1 else {}
+    checked = []
+    for item in matches:
+        expected = requested_chapter_id(chapter_number=int(scope.split('.', 1)[0]), book_id=str(item.get("book_id") or ""), book_title=book_title)
+        actual = str(item.get("chapter_id") or "")
+        if expected and actual and expected != actual:
+            continue
+        if expected and not actual:
+            # 294 existing PDF relations have no chapter_id: the design's
+            # missing-data exception applies; section_root never proves ID.
+            logging.getLogger(__name__).warning("chapter check skipped: relation %s has no chapter_id", item.get("relation_id"))
+        checked.append(item)
+    return checked[0] if len(checked) == 1 else {}
 
 
 def find_exact_worked_example_relation(

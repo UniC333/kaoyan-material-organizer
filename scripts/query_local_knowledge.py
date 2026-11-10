@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from common import INDEX_DIRNAME, default_vault_root_arg, kb_layout, is_publishable_claim, is_publishable_source_evidence, learner_file_map, resolve_subject, runtime_context_payload, validate_entity_contract
-from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator
+from kaoyan_kb.domain.page_locator import evidence_matches_locator, load_page_locator_index, parse_exercise_label, resolve_page_locator, resolve_page_from_accepted_evidence
 from kaoyan_kb.domain.exercise_locator import assemble_exact_relation, container_path_from_query, find_exact_relation, find_exact_worked_example_relation, find_unique_relation_for_scope, list_exact_relations_for_question_page, list_exact_worked_example_relations, normalize_exercise_category, normalize_exercise_label, resolve_section_anchor
 from kaoyan_kb.domain.book_series import classify_source_request, has_exercise_request_signal, parse_exercise_request, resolve_answer_grounding, resolve_book_route, resolve_exercise_route
 from kaoyan_kb.domain.exercise_batch import BATCH_CONTRACT_VERSION, parse_exercise_batch_request, resolve_exercise_batch_targets
@@ -20,7 +20,7 @@ from kaoyan_kb.domain.query.request import (
     chinese_number_to_int, detect_intent, extract_explicit_concepts, parse_page_anchor,
     parse_requested_option, needs_exercise_identity, resolve_request, build_page_crosscheck,
     explicit_page_subject_error, build_page_verification_summary, build_textbook_location,
-    CURRENT_TASK_PATH, CONCEPT_SUFFIXES,
+    CURRENT_TASK_PATH, CONCEPT_SUFFIXES, split_teaching_requirement,
 )
 from kaoyan_kb.domain.query.topics import (
     tokenize, compare_parts, generic_topic_terms, topic_coverage, is_definition_request,
@@ -289,7 +289,9 @@ def apply_hard_page_route(
     )
     locator["requested_position"] = request.get("requested_position")
     locator["requested_container_path"] = list(request.get("requested_container_path") or [])
-    if locator["match_status"] != "exact_asset":
+    if locator["match_status"] in {"not_found", "unmapped"} and request.get("source_request_kind") == "exercise":
+        locator = resolve_page_from_accepted_evidence(subject=subject, book_title=book_title, printed_page=int(request["requested_page"]), locator=locator)
+    if locator["match_status"] not in {"exact_asset", "exact_evidence"}:
         return locator, [], [], []
 
     exact_evidences = exact_evidence_hits_for_locator(subject, chapter, locator)
@@ -1640,6 +1642,14 @@ def _find_formal_concept_evidence(
     )
 
 
+def _conservative_problem(payload: dict) -> str:
+    resolution = payload.get("request_resolution") or {}
+    if "problem_query" in resolution:
+        return str(resolution["problem_query"] or "")
+    # Legacy callers without this field still use the authoritative parser.
+    return split_teaching_requirement(payload.get("query", ""))[2]
+
+
 def build_concept_routes(result: dict[str, Any], *, topk: int) -> list[dict[str, Any]]:
     """Add a fail-closed, secondary-book concept route after an exact primary answer."""
     request_resolution = dict(result.get("request_resolution") or {})
@@ -1654,7 +1664,7 @@ def build_concept_routes(result: dict[str, Any], *, topk: int) -> list[dict[str,
         or _book_title_matches(primary_book, SUPPLEMENTAL_CALCULUS_BOOK_TITLE)
     ):
         return []
-    concepts = extract_explicit_concepts(str(result.get("query") or ""))
+    concepts = extract_explicit_concepts(_conservative_problem(result))
     if not concepts:
         return []
     primary_ids = {
@@ -1712,13 +1722,25 @@ def _query_single(
     exercise_label: str | None = None,
     *, confirmed_book_title: str | None = None,
 ) -> dict:
-    intent = detect_intent(query)
-    book_resolution = resolve_current_task_book(vault_root=vault_root, subject=subject, explicit_book_title=book_title, query=query, confirmed_book_title=confirmed_book_title)
+    preliminary = resolve_request(query=query, book_title=book_title, chapter=chapter, printed_page=printed_page, exercise_label=exercise_label)
+    problem_query = str(preliminary.get("problem_query") or "")
+    book_resolution = resolve_current_task_book(vault_root=vault_root, subject=subject, explicit_book_title=book_title, query=problem_query, confirmed_book_title=confirmed_book_title)
     effective_book_title = str(book_resolution.get("book_title") or "")
-    request_resolution = resolve_request(query=query, book_title=effective_book_title, chapter=chapter, printed_page=printed_page, exercise_label=exercise_label)
-    pair_request = request_resolution.get('exercise_scope') or parse_exercise_request(query)
-    book_route = resolve_book_route(query=query, book_title=effective_book_title, request=pair_request)
-    exercise_route = resolve_exercise_route(query=query, book_route=book_route, request=pair_request)
+    final_resolution = resolve_request(query=query, book_title=effective_book_title, chapter=chapter, printed_page=printed_page, exercise_label=exercise_label)
+    intent_fields = ("teaching_action", "problem_query", "teaching_fragments")
+    if all(preliminary.get(key) == final_resolution.get(key) for key in intent_fields):
+        request_resolution = final_resolution
+    else:
+        # Keep the first conservative interpretation; never replace its content
+        # or spans with a book-dependent interpretation after disagreement.
+        request_resolution = preliminary
+        request_resolution["teaching_action"] = "clarify"
+    # Identity, category and formal coverage consume conservative problem text.
+    # Original query remains available for retrieval and audit display only.
+    intent = detect_intent(problem_query)
+    pair_request = request_resolution.get('exercise_scope') or parse_exercise_request(problem_query)
+    book_route = resolve_book_route(query=problem_query, book_title=effective_book_title, request=pair_request)
+    exercise_route = resolve_exercise_route(query=problem_query, book_route=book_route, request=pair_request)
     if exercise_route.get('match_status') == 'exact_exercise' and exercise_route.get('pair_status') == 'exact_pair':
         book_id = (exercise_route.get('question') or {}).get('book_id')
         volumes = [v for s in catalogue() for v in s.get('volumes', []) if v.get('book_id') == book_id]
@@ -1734,6 +1756,7 @@ def _query_single(
                 request_resolution['book_title'] = effective_book_title
     request_resolution.setdefault('field_sources', {})['book_title'] = book_resolution.get('source', '')
     page_anchor_request = {
+        "source_request_kind": request_resolution.get("source_request_kind"),
         "requested_page": request_resolution["page"]["number"],
         "requested_position": request_resolution.get("requested_position"),
         "requested_exercise_label": request_resolution["exercise_label"],
@@ -1743,8 +1766,8 @@ def _query_single(
     resolved_label = str(request_resolution.get("exercise_label") or "")
     page_semantics = str(request_resolution["page"]["semantics"])
     generic_request = str(request_resolution.get("source_request_kind") or "generic") == "generic"
-    topic_terms = generic_topic_terms(query, intent) if generic_request else None
-    formal_only = generic_request and (is_definition_request(query, intent) or intent == "compare")
+    topic_terms = generic_topic_terms(problem_query, intent) if generic_request else None
+    formal_only = generic_request and (is_definition_request(problem_query, intent) or intent == "compare")
     require_topic_formal_coverage = generic_request and intent == "compare"
     scoped_exercise = bool(resolved_label and page_semantics != "exact_page" and not book_route.get("series_id"))
     if scoped_exercise:
@@ -1753,7 +1776,7 @@ def _query_single(
             chapter=effective_chapter,
             exercise_label=resolved_label,
             category=str(request_resolution.get("exercise_category") or ""),
-            query=query,
+            query=problem_query,
         )
         if page_anchor_request.get("requested_page") is not None:
             page_anchor, _, _, _ = apply_hard_page_route(subject=subject, chapter=effective_chapter, book_title=effective_book_title, request=page_anchor_request, retrieval_hits=[], claims=[])
@@ -1769,7 +1792,7 @@ def _query_single(
                 if ref.get("evidence_id") in set(exercise_anchor.get("question_evidence_ids", [])): ref["role"] = "question"
                 elif ref.get("evidence_id") in set(exercise_anchor.get("answer_evidence_ids", [])): ref["role"] = "answer"
             result = {"subject": subject, "chapter": effective_chapter, "book_title": effective_book_title, "book_resolution": book_resolution, "query": query, "intent": intent, "answer_mode": "accepted_evidence", "fallback_note": "", "syllabus_route": [], "retrieval_hits": [], "claim_hits": [], "evidence_hits": evidences, "fallback_hits": [], "references": references, "page_anchor": page_anchor, "page_crosscheck": page_crosscheck, "exercise_anchor": exercise_anchor, "query_path": {"exercise_relation_first": True, "retrieval_candidate_set_used": False, "retrieval_hit_count": 0, "hard_page_filter_applied": False}, "teaching_context": build_bounded_teaching_context(load_events(), subject=subject, chapter=effective_chapter, query=query), "request_resolution": request_resolution, "runtime_context": runtime_context_payload(vault_root_override=vault_root)}
-            result["answer_grounding"] = build_answer_grounding(query=query, book_title=effective_book_title, page_anchor=page_anchor, exercise_anchor=exercise_anchor, evidences=evidences, page_crosscheck=page_crosscheck)
+            result["answer_grounding"] = build_answer_grounding(query=problem_query, book_title=effective_book_title, page_anchor=page_anchor, exercise_anchor=exercise_anchor, evidences=evidences, page_crosscheck=page_crosscheck)
             result["textbook_location"] = build_textbook_location(request_resolution, exercise_anchor)
             if not result["answer_grounding"].get("can_conclude"):
                 result["answer_mode"] = "exercise_unconfirmed"
@@ -1794,7 +1817,7 @@ def _query_single(
             attach_exercise_index_runtime(result)
             return result
         result = {"subject": subject, "chapter": effective_chapter, "book_title": effective_book_title, "book_resolution": book_resolution, "query": query, "intent": intent, "answer_mode": "exercise_unconfirmed", "fallback_note": "题号问答需要在当前教材和当前章节中唯一匹配并裁剪出原题和答案；当前关系未覆盖、存在歧义或需要复核。", "syllabus_route": [], "retrieval_hits": [], "claim_hits": [], "evidence_hits": [], "fallback_hits": [], "references": [], "page_anchor": page_anchor, "page_crosscheck": page_crosscheck, "exercise_anchor": exercise_anchor, "query_path": {"exercise_relation_first": True, "retrieval_candidate_set_used": False, "retrieval_hit_count": 0, "hard_page_filter_applied": False}, "teaching_context": build_bounded_teaching_context(load_events(), subject=subject, chapter=effective_chapter, query=query), "request_resolution": request_resolution, "runtime_context": runtime_context_payload(vault_root_override=vault_root)}
-        result["answer_grounding"] = build_answer_grounding(query=query, book_title=effective_book_title, page_anchor=result["page_anchor"], exercise_anchor=exercise_anchor, evidences=[], page_crosscheck=page_crosscheck)
+        result["answer_grounding"] = build_answer_grounding(query=problem_query, book_title=effective_book_title, page_anchor=result["page_anchor"], exercise_anchor=exercise_anchor, evidences=[], page_crosscheck=page_crosscheck)
         result["textbook_location"] = build_textbook_location(request_resolution, exercise_anchor)
         result["teaching_bundle"] = build_teaching_bundle(result["answer_grounding"], request_resolution)
         result["page_content_bundle"] = build_page_content_bundle(
@@ -1817,7 +1840,7 @@ def _query_single(
         return result
     tokens = tokenize(query)
     full_query = normalize_text(query)
-    parts = compare_parts(query) if intent == "compare" else []
+    parts = compare_parts(problem_query) if intent == "compare" else []
     retrieval_hits, routed, claims, evidences, index_routed = _resolve_query_hits(
         subject,
         effective_chapter or None,
@@ -1861,11 +1884,11 @@ def _query_single(
         if (
             page_anchor.get("match_status") == "exact_evidence"
             and not resolved_label
-            and needs_exercise_identity(query, str(request_resolution.get("requested_option") or ""))
+            and needs_exercise_identity(problem_query, str(request_resolution.get("requested_option") or ""))
         ):
             exercise_resolution = infer_exercise_from_exact_page(
                 locator=page_anchor,
-                query=query,
+                query=problem_query,
                 category=str(request_resolution.get("exercise_category") or ""),
                 requested_option=str(request_resolution.get("requested_option") or ""),
             )
@@ -1876,7 +1899,7 @@ def _query_single(
                 pair_request['exercise_label'] = resolved_label if resolved_label.startswith('例') else ''
                 pair_request['exercise_number'] = int(resolved_label) if resolved_label.isdigit() else None
                 request_resolution['exercise_scope'] = pair_request
-                exercise_route = resolve_exercise_route(query=query, book_route=book_route, request=pair_request)
+                exercise_route = resolve_exercise_route(query=problem_query, book_route=book_route, request=pair_request)
                 page_anchor_request["requested_exercise_label"] = resolved_label
                 page_anchor["requested_exercise_label"] = resolved_label
         if resolved_label:
@@ -2053,7 +2076,7 @@ def _query_single(
         runtime_context["page_locator_unavailable_reason"] = str(page_anchor.get("unavailable_reason") or "")
     if book_route.get("series_id") or exercise_route.get("match_status") == "exact_exercise":
         answer_grounding = resolve_answer_grounding(
-            query=query,
+            query=problem_query,
             book_title=effective_book_title,
             page_anchor=page_anchor,
             book_route=book_route,
@@ -2069,7 +2092,7 @@ def _query_single(
             # Never promote an unavailable/conflicting page from answer evidence.
     else:
         answer_grounding = build_answer_grounding(
-            query=query,
+            query=problem_query,
             book_title=effective_book_title,
             page_anchor=page_anchor,
             exercise_anchor=exercise_anchor,

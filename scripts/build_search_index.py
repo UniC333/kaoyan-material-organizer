@@ -35,13 +35,14 @@ def normalize_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip().lower())
 
 
-def tokenize(text: str) -> list[str]:
+def tokenize(text: str, *, chinese_ngrams: bool = True) -> list[str]:
+    """Share token boundaries; identity anchors can keep Chinese runs whole."""
     tokens: list[str] = []
     for chunk in re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]+", text):
         normalized = normalize_text(chunk)
         if not normalized:
             continue
-        if re.fullmatch(r"[\u4e00-\u9fff]+", normalized):
+        if chinese_ngrams and re.fullmatch(r"[\u4e00-\u9fff]+", normalized):
             max_n = min(4, len(normalized))
             for size in range(1, max_n + 1):
                 for idx in range(0, len(normalized) - size + 1):

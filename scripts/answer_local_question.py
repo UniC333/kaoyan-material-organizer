@@ -358,6 +358,8 @@ def build_teaching_answer_view(
         "failure_reason": str(grounding.get("failure_reason") or ""),
         "next_action": str(grounding.get("next_action") or ""),
     }
+    if grounding.get("failure_code"):
+        compact_grounding["failure_code"] = grounding["failure_code"]
     view = {
         "teaching_view_version": TEACHING_VIEW_VERSION,
         "answer_contract_version": str(contract.get("answer_contract_version") or ""),
