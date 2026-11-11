@@ -8,7 +8,7 @@ from typing import Any
 from common import ensure_kb_layout, load_json_or_default, save_json
 from config import load_runtime_config
 from kaoyan_kb.domain.evidence_publication import is_publishable_source_evidence
-from kaoyan_kb.domain.exercise_locator import container_path_from_query, normalize_container_label, stable_container_label, requested_chapter_id, analyze_exercise_content
+from kaoyan_kb.domain.exercise_locator import container_path_from_query, normalize_container_label, stable_container_label, requested_chapter_id, analyze_exercise_content, guard_worked_solution_side, worked_solution_unit_boundaries
 
 
 BOOK_SERIES_INDEX_NAME = "book_series_index.json"
@@ -368,6 +368,11 @@ def worked_example_pairs_from_evidence(evidences: list[dict[str, Any]]) -> list[
                 if boundary_matches:
                     segment_end = min(match.start() for match in boundary_matches)
                     solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
+            if solution_markers:
+                boundaries = worked_solution_unit_boundaries(combined, solution_markers[0].start(), segment_end)
+                if boundaries:
+                    segment_end = boundaries[0]
+                    solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
             if len(solution_markers) == 1:
                 solution_start = solution_markers[0].start()
                 pair_status = "exact_pair"
@@ -381,7 +386,10 @@ def worked_example_pairs_from_evidence(evidences: list[dict[str, Any]]) -> list[
                 question_end = solution_markers[0].start()
                 solution_start = solution_markers[0].start()
             question = _span_side(records, intervals, marker.start(), question_end, combined)
-            solution = _span_side(records, intervals, solution_start, segment_end, combined) if solution_markers else {}
+            solution = guard_worked_solution_side(
+                _span_side(records, intervals, solution_start, segment_end, combined), question,
+                intervals, solution_start, segment_end, combined,
+            ) if solution_markers else {}
             question_pages = list(question.get("printed_pages", []))
             page_token = min(question_pages) if question_pages else 0
             printed_number = str(marker.group(1) or "").strip()

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import hashlib
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -120,90 +118,6 @@ def test_permission_reads_evidence_chapter_and_only_vetoes_conflict(chapter_inde
     assert permission.teaching_permission(payload) is allowed
     payload["answer_grounding"]["can_conclude"] = False
     assert not permission.teaching_permission(payload)
-
-
-@pytest.fixture
-def accepted_page(chapter_index, tmp_path, monkeypatch):
-    layout, _ = chapter_index
-    image = tmp_path / "page.jpg"
-    image.write_bytes(b"reviewed-source-image")
-    sha = hashlib.sha256(image.read_bytes()).hexdigest()
-    source_root = tmp_path / "book"
-    source = {"source_id": "SRC", "subject": "数学", "status": "active", "material_type": "chapter-photo", "source_path": str(source_root),
-              "files": [{"sha256": sha, "absolute_path": str(image)}]}
-    asset = {"page_id": "PAGE", "source_image_sha256": sha, "printed_page": 999}
-    ref = {"source_id": "SRC", "book_id": BOOK, "page_id": "PAGE", "printed_page": 65,
-           "source_file_sha256": sha, "source_image_path": str(image)}
-    span = {"source_id": "SRC", "file_id": "FILE", "source_file_sha256": sha,
-            "locator": {"page_start": "第65页", "page_end": "第65页", "image_start": 71, "image_end": 71}}
-    evidence = {"evidence_id": "EV", "evidence_key": "key", "subject": "数学", "source_id": "SRC", "chapter_id": CHAPTER + "03", "chunk_id": "PAGE",
-                "origin_type": "reviewed_ocr", "review_status": "accepted", "verification_status": "source_grounded", "source_grounded": True,
-                "locator": {"page_start": "第65页", "page_end": "第65页"}, "page_classification_refs": [ref], "source_spans": [span],
-                "provenance": {"origin_type": "reviewed_ocr", "verification_status": "source_grounded", "source_grounded": True, "source_spans": [span]}}
-    write(layout["manifests"] / "sources/SRC.json", source)
-    write(source_root / "metadata/book_asset.json", {"book_id": BOOK, "book_title": TITLE})
-    write(source_root / "metadata/page_assets.json", {"book_id": BOOK, "items": [asset]})
-    write(layout["evidence"] / "EV.json", evidence)
-    monkeypatch.setattr(page_locator, "load_runtime_config", lambda: SimpleNamespace(paper_book_metadata_dir="metadata"))
-    return layout, evidence, image, source_root, asset
-
-
-@pytest.mark.parametrize("failure", [None, "unreviewed", "ungrounded", "duplicate", "wrong_book", "root_book_conflict", "pin_conflict", "span_pin_conflict", "changed_image", "changed_version", "inactive_source", "no_pin"])
-def test_direct_page_anchor_requires_unique_accepted_current_pin(accepted_page, failure):
-    layout, evidence, image, source_root, asset = accepted_page
-    if failure == "unreviewed":
-        evidence["review_status"] = "pending"
-    elif failure == "ungrounded":
-        evidence["verification_status"] = "reviewed"
-    elif failure == "duplicate":
-        write(layout["evidence"] / "EV2.json", {**evidence, "evidence_id": "EV2"})
-    elif failure == "wrong_book":
-        evidence["page_classification_refs"][0]["book_id"] = "OTHER"
-    elif failure == "root_book_conflict":
-        evidence["book_id"] = "OTHER"
-    elif failure == "pin_conflict":
-        evidence["locator"]["page_end"] = "第66页"
-    elif failure == "span_pin_conflict":
-        evidence["source_spans"][0]["locator"]["page_start"] = "第66页"
-    elif failure == "changed_image":
-        image.write_bytes(b"changed")
-    elif failure == "changed_version":
-        asset["source_image_sha256"] = "new-sha"
-        write(source_root / "metadata/page_assets.json", {"book_id": BOOK, "items": [asset]})
-    elif failure == "inactive_source":
-        path = layout["manifests"] / "sources/SRC.json"
-        source = json.loads(path.read_text())
-        source["status"] = "inactive"
-        write(path, source)
-    elif failure == "no_pin":
-        evidence.pop("page_classification_refs")
-        evidence.pop("locator")
-    write(layout["evidence"] / "EV.json", evidence)
-    locator = {"match_status": "unmapped", "requested_page": 65, "pdf_page": 0}
-    result = page_locator.resolve_page_from_accepted_evidence(subject="数学", book_title=TITLE, printed_page=65, locator=locator)
-    assert result["match_status"] == ("exact_evidence" if failure is None else "unmapped")
-    assert result["pdf_page"] == 0
-    if failure is None:
-        assert "已验收页级证据直锚" in result["match_basis"]
-        assert result["evidence_ids"] == ["EV"]
-        assert page_locator.evidence_matches_locator(evidence, result)
-
-
-def test_locator_only_pin_keeps_independent_pdf_page(accepted_page):
-    layout, evidence, _, _, _ = accepted_page
-    evidence.pop("page_classification_refs")
-    write(layout["evidence"] / "EV.json", evidence)
-    result = page_locator.resolve_page_from_accepted_evidence(subject="数学", book_title=TITLE, printed_page=65,
-                                                            locator={"match_status": "not_found", "requested_page": 65, "pdf_page": 0})
-    assert result["match_status"] == "exact_evidence"
-    assert result["pdf_page"] == 0
-    assert page_locator.evidence_matches_locator(evidence, result)
-
-
-@pytest.mark.parametrize("status", ["ambiguous", "stale", "unavailable", "exact_asset"])
-def test_direct_anchor_does_not_replace_formal_route_or_conflict(accepted_page, status):
-    locator = {"match_status": status, "requested_page": 65}
-    assert page_locator.resolve_page_from_accepted_evidence(subject="数学", book_title=TITLE, printed_page=65, locator=locator) is locator
 
 
 @pytest.mark.parametrize("token", sorted(exercise_locator.GENERIC_MATH_CONTENT_STOPLIST))

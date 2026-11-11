@@ -295,6 +295,21 @@ def normalize_exercise_category(value: Any) -> str:
     return ""
 
 
+def _normalize_numbered_line(line: str) -> str:
+    """Unwrap paired bold numbering for matching only; source text is retained.
+
+    OCR pages sometimes emit labels as ``**17. B**``. Only a paired-bold
+    wrapper around a leading number is stripped, and only for label matching;
+    callers keep slicing the original lines, so evidence text never changes.
+    """
+    return re.sub(
+        r"^(\s*#?\s*)\*\*(\d{1,3}[.．、][^*]*)\*\*",
+        r"\1\2",
+        line,
+        count=1,
+    )
+
+
 def extract_exercise_block(content: Any, exercise_label: Any, *, category: str = "", phase: str = "") -> str:
     """Return one numbered exercise block, or an empty string when it is not unique."""
     label = normalize_exercise_label(exercise_label)
@@ -305,6 +320,7 @@ def extract_exercise_block(content: Any, exercise_label: Any, *, category: str =
     starts: list[int] = []
     labels: list[tuple[int, int]] = []
     section_boundaries: list[int] = []
+    category_change_boundaries: list[int] = []
     marker = re.compile(r"^\s*#{0,6}\s*(\d{1,3})[.．、]\s*")
     requested_category = normalize_exercise_category(category)
     has_requested_category_heading = bool(requested_category) and any(
@@ -322,6 +338,11 @@ def extract_exercise_block(content: Any, exercise_label: Any, *, category: str =
         if heading_category:
             active_category = heading_category
             category_closed = False
+        if requested_category and heading_category and heading_category != requested_category:
+            # A different-category heading ends the preceding category's block
+            # (e.g. a trailing "# 二、综合应用题" must not leak into the last
+            # single-choice answer).
+            category_change_boundaries.append(index)
         elif re.match(r"^\s*#{1,6}\s*\d+(?:\.\d+)+(?:\s|$)", line):
             # A numbered textbook section can follow an answer set on the
             # same OCR page (for example, ``# 5.2 二叉树的概念``).  It is
@@ -333,7 +354,7 @@ def extract_exercise_block(content: Any, exercise_label: Any, *, category: str =
             section_boundaries.append(index)
         if is_answer_section_heading:
             in_answer_section = True
-        match = marker.match(line)
+        match = marker.match(_normalize_numbered_line(line))
         if not match:
             continue
         number = int(match.group(1))
@@ -360,6 +381,10 @@ def extract_exercise_block(content: Any, exercise_label: Any, *, category: str =
             end = index
             break
     for index in section_boundaries:
+        if index > start:
+            end = min(end, index)
+            break
+    for index in category_change_boundaries:
         if index > start:
             end = min(end, index)
             break
@@ -467,6 +492,7 @@ def _heading(line: str) -> tuple[str, str] | None:
 
 
 def _label(line: str, *, answer: bool, category: str) -> str:
+    line = _normalize_numbered_line(line)
     pattern = r"^\s*#?\s*(\d{1,3})[.．、]\s*"
     match = re.match(pattern, line)
     if not match:
@@ -595,6 +621,158 @@ def _span_side(intervals: list[tuple[int, int, dict[str, Any]]], start: int, end
     }
 
 
+
+# Overflow audit 2026-11-07 §7 T1(a): whole lines, never substrings.
+def is_overflow_footer_line(line: str) -> bool:
+    return bool(re.fullmatch(r"(?:·\s*\d+\s*·|\d+)", line.strip()))
+
+
+def is_overflow_header_line(line: str, book_title: str = "") -> bool:
+    """Audit §7 T1(b); a formula, punctuation or a sentence is not a header."""
+    plain = line.strip()
+    if re.fullmatch(r"第[零一二三四五六七八九十百两0-9]+章\s+[^。；;=$\\]+", plain):
+        return True
+    normalize_title = lambda value: re.sub(r"[\s·《》]+", "", value)
+    if book_title and normalize_title(plain) == normalize_title(book_title):
+        return True
+    if re.fullmatch(r"考研数学高等数学辅导讲义[\w\s·《》（）()—-]*", plain):
+        return True
+    # Restrict isolated fragments to Han characters/digits: an isolated x, =,
+    # superscript or operator can be part of a legitimate formula.
+    return bool(re.fullmatch(r"[\u4e00-\u9fff0-9]", plain))
+
+
+def is_overflow_structure_line(line: str) -> bool:
+    """Audit §7 T1(c): title lines, including OCR title variants, unchanged."""
+    plain = line.strip()
+    if re.fullmatch(r"#{1,6}\s+.+", plain):
+        return True
+    if re.fullmatch(r"思路分析\s*[：:]?", plain):
+        return True
+    if plain in {"划重点", "本章学习诊断"}:
+        return True
+    section = re.fullmatch(
+        r"(?:[（(][一二三四五六七八九十百]+[）)]|[一二三四五六七八九十百]+[、．.])\s*(.+)", plain
+    )
+    title = re.fullmatch(
+        r"(?:情形|题型|题理|题码|方法)\s*[零一二三四五六七八九十百两0-9]+(?:[、，][0-9]+)*\s*[：:]?\s*(.*)", plain
+    )
+    body = section.group(1) if section else title.group(1) if title else None
+    # Alternative methods/case discussions are substantive solution lines;
+    # in particular, 方法二 令... and 情形一: 存在... must survive.
+    return body is not None and not re.search(
+        r"^(?:令|因为|由|存在|设|若|则|故|于是)|[。；;]|(?:得|即)\s*\$", body
+    )
+
+
+def strip_overflow_overlap(text: str, book_title: str = "") -> str:
+    """Strip only entire T1(a/b/c) lines from one evidence overlap."""
+    return "".join(
+        line for line in text.splitlines(keepends=True)
+        if line.strip() and not (
+            is_overflow_footer_line(line) or is_overflow_header_line(line, book_title)
+            or is_overflow_structure_line(line)
+        )
+    )
+
+
+# Audit §7 T2: proposition verbs after an unparenthesized knowledge-item number.
+# Longer verbs first; (1)/(2) subquestions are deliberately excluded.
+WORKED_PROPOSITION_VERBS = ("证明", "计算", "讨论", "已知", "设", "求", "证", "若")
+WORKED_KNOWLEDGE_ITEM_PATTERN = re.compile(
+    r"^\d+\s+(?:" + "|".join(WORKED_PROPOSITION_VERBS) + r")\S.*$"
+)
+
+
+def worked_solution_unit_boundaries(content: str, start: int, end: int) -> list[int]:
+    """Return confirmed T2 line starts, after the existing boundary pass.
+
+    The pre-implementation 182-pair scan found broad 方法/情形 patterns inside
+    legal proofs (including the true continuation p47 ex4). A structural title
+    therefore needs an explicit new-unit introduction on its next nonempty
+    line. Terminal titles belong to T3; alternative methods are not new units.
+    """
+    lines = content[start:end].splitlines(keepends=True)
+    boundaries: list[int] = []
+    offset = start
+    for index, line in enumerate(lines):
+        plain = line.strip()
+        if WORKED_KNOWLEDGE_ITEM_PATTERN.fullmatch(plain):
+            boundaries.append(offset)
+        elif not plain.startswith("#") and is_overflow_structure_line(plain):
+            following = next((value.strip() for value in lines[index + 1:] if value.strip()), "")
+            if (re.match(r"^(?:#{1,6}\s*)?(?:思路分析|定理|定义)(?=\s|\d|[：:]|$)", following)
+                    or WORKED_KNOWLEDGE_ITEM_PATTERN.fullmatch(following)):
+                boundaries.append(offset)
+        offset += len(line)
+    return boundaries
+
+
+def trim_worked_solution_tail(content: str) -> str:
+    """T3: remove trailing structural titles only, preserving substantive bytes.
+
+    Audit §7 T3 p26 ex2: a trailing formula fragment cannot safely be
+    distinguished from a valid final answer (p24 ends in =2.). Tolerate it.
+    """
+    lines = content.splitlines(keepends=True)
+    end = len(lines)
+    while end and not lines[end - 1].strip():
+        end -= 1
+    original_end = end
+    while end and is_overflow_structure_line(lines[end - 1]):
+        end -= 1
+        while end and not lines[end - 1].strip():
+            end -= 1
+    return "".join(lines[:end]).rstrip() if end != original_end else content
+
+
+def guard_worked_solution_side(
+    side: dict[str, Any], question: dict[str, Any],
+    intervals: list[tuple[int, int, dict[str, Any]]],
+    start: int, end: int, content: str,
+) -> dict[str, Any]:
+    """Pure T1/T3 projection shared by both builders; never edit the question."""
+    question_pages = question.get("printed_pages") or []
+    if not question_pages:
+        return side
+    last_question_page = max(question_pages)
+    overlaps = [(max(left, start), min(right, end), record)
+                for left, right, record in intervals if left < end and right > start]
+    dropped = [(left, right, record) for left, right, record in overlaps
+               if int(record["printed_page"]) > last_question_page
+               and not strip_overflow_overlap(content[left:right], str(record.get("book_title") or ""))]
+    if dropped:
+        # Remove by offsets, including a hypothetical nonterminal overlap;
+        # do not replace matching strings elsewhere or reformat retained bytes.
+        pieces: list[str] = []
+        cursor = start
+        for left, right, _record in dropped:
+            pieces.append(content[cursor:left])
+            cursor = right
+        pieces.append(content[cursor:end])
+        solution_content = "".join(pieces).strip()
+    else:
+        solution_content = side["content"]
+    retained = [record for left, right, record in overlaps
+                if not any(left == a and right == b and record is rec for a, b, rec in dropped)]
+    # T3 is scoped to retained overflow (the audited true continuations).
+    # Nonoverflow pair text, including pre-existing terminal titles, is unchanged.
+    if any(int(record["printed_page"]) > last_question_page for record in retained):
+        solution_content = trim_worked_solution_tail(solution_content)
+    if not dropped and solution_content == side["content"]:
+        return side  # Critical byte/object identity guarantee for unaffected spans.
+    result = {**side, "content": solution_content}
+    if dropped:
+        result["evidence_ids"] = list(dict.fromkeys(str(record["evidence_id"]) for record in retained))
+        result["printed_pages"] = sorted({int(record["printed_page"]) for record in retained})
+        paths = list(dict.fromkeys(str(record["source_image_path"]) for record in retained if record.get("source_image_path")))
+        result["source_image_paths"] = paths
+        result["source_image_path"] = paths[0] if paths else ""
+        if "evidence_id" in result:
+            result["evidence_id"] = next(iter(result["evidence_ids"]), "")
+    return result
+
+
 def build_worked_example_relations(evidences: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Derive unique same-book example/solution relations from grounded page evidence."""
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -649,6 +827,11 @@ def build_worked_example_relations(evidences: list[dict[str, Any]]) -> list[dict
                 if boundary_matches:
                     segment_end = min(match.start() for match in boundary_matches)
                     solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
+            if solution_markers:
+                boundaries = worked_solution_unit_boundaries(combined, solution_markers[0].start(), segment_end)
+                if boundaries:
+                    segment_end = boundaries[0]
+                    solution_markers = list(WORKED_SOLUTION_PATTERN.finditer(combined, marker.end(), segment_end))
             solution_start = solution_markers[0].start() if solution_markers else segment_end
             relation_status = "exact" if len(solution_markers) == 1 else "needs_review" if solution_markers else "question_only"
             question = _span_side(intervals, marker.start(), solution_start, combined)
@@ -690,7 +873,10 @@ def build_worked_example_relations(evidences: list[dict[str, Any]]) -> list[dict
                 "container_ordinal": container_ordinal,
                 "location_key": location_key,
                 "question": question,
-                "answer": _span_side(intervals, solution_start, segment_end, combined) if solution_markers else {},
+                "answer": guard_worked_solution_side(
+                    _span_side(intervals, solution_start, segment_end, combined), question,
+                    intervals, solution_start, segment_end, combined,
+                ) if solution_markers else {},
             })
 
     repeated_on_page: dict[tuple[str, str, int, tuple[str, ...], str], list[dict[str, Any]]] = defaultdict(list)

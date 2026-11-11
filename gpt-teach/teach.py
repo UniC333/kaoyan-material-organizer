@@ -206,7 +206,11 @@ def build_evidence_packet(view, mode="full"):
         pages = [x for x in (cit.get("problem_printed_pages") or [])
                  + (cit.get("solution_printed_pages") or []) if x]
         if pages:
-            lines.append("印刷页码：" + str(pages))
+            if mode in ("hint", "clarify"):
+                lines.append("印刷页码：" + str(pages))
+            else:
+                lines.append("题干印刷页码：" + str(cit.get("problem_printed_pages") or []))
+                lines.append("原书答案印刷页码：" + str(cit.get("solution_printed_pages") or []))
     pcb = view.get("page_content_bundle") or {}
     if pcb.get("status") not in ("", "not_applicable", None):
         lines.append("页面内容包状态：" + str(pcb.get("status")))
@@ -278,7 +282,7 @@ def build_prompt(args, packet, profile=None, mode="full", question=None):
             "最后的来源列表只支持明确标识的教材内容，不覆盖通用段或生成的独立推导；"
             "没有某类内容时不强制填充该类小节；无可用教材证据时优先遵守规则 2，不得为填充教材小节而编造教材内容。"
         )
-        rule5 = "用中文回答，结构清晰：先给结论，再讲关键思路，最后列出证据来源（书名、页码、题号）。"
+        rule5 = "用中文回答，结构清晰：先给结论，再讲关键思路，最后必须以“教材内容证据来源”为标题列出证据来源（书名、页码、题号）。"
     return textwrap.dedent(
         "你是考研指导老师，学科：%s。下面是本地考研知识库对用户问题的检索结果"
         "（含证据门禁状态），请基于它为用户讲解。\n\n"
